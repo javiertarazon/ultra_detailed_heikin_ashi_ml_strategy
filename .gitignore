@@ -137,19 +137,20 @@ config/mt5_config.yaml
 *.key
 *.pem
 
-# Trading data
+# Trading data - EXCLUDE from repo
 data/
 *.csv
 *.db
 *.sqlite
 *.sqlite3
 
-# Logs
+# Logs - EXCLUDE from repo
 logs/
 *.log
 log_*.txt
+data_downloader.log
 
-# Cache
+# Cache - EXCLUDE from repo
 cache/
 __pycache__/
 *.pyc
@@ -180,3 +181,18 @@ temp/
 *.bak
 *.backup
 *~
+
+# Bot Trader Copilot specific exclusions
+descarga_datos/data/
+descarga_datos/logs/
+descarga_datos/cache/
+descarga_datos/*.log
+descarga_datos/**/*.pyc
+descarga_datos/**/__pycache__/
+descarga_datos/data/**/*.db
+descarga_datos/data/**/*.csv
+descarga_datos/data/**/*.sqlite
+descarga_datos/data/**/*.sqlite3
+descarga_datos/data/backtest_results/
+descarga_datos/data/csv/
+descarga_datos/data/metrics/
