@@ -1,0 +1,71 @@
+# Configuración del Data Downloader
+# Puede ser "bybit" o "mt5"
+active_exchange: "bybit"
+
+exchanges:
+  bybit:
+    enabled: true
+    api_key: ""  # No necesitamos API key para descarga de datos históricos
+    secret: ""
+    timeframe: "1h"
+    start_date: "2024-01-01"
+    end_date: "2024-06-01"
+  
+# Incluir soporte para MT5 (MetaTrader 5)
+use_mt5: true  # Establecer en true para habilitar la descarga desde MT5
+
+default_symbols:
+  - "SOL/USDT"
+  - "XRP/USDT"
+  - "TSLA.US"
+  - "NVDA.US"
+
+data_types:
+  - "ohlcv"
+  - "trades"
+
+max_retries: 3
+retry_delay: 5
+
+log_level: "INFO"
+log_file: "data_downloader.log"
+
+storage:
+  path: "data"
+  csv:
+    enabled: true
+  sqlite:
+    enabled: true
+
+normalization:
+  enabled: true
+  method: "minmax"
+
+indicators:
+  volatility:
+    enabled: true
+    period: 14
+    method: "standard_deviation"
+  
+  heiken_ashi:
+    enabled: true
+    trend_period: 3
+    size_comparison_threshold: 1.2
+  
+  atr:
+    enabled: true
+    period: 14
+  
+  adx:
+    enabled: true
+    period: 14
+    threshold: 25
+  
+  ema:
+    enabled: true
+    periods: [10, 20, 200]
+  
+  parabolic_sar:
+    enabled: true
+    acceleration: 0.02
+    maximum: 0.2
