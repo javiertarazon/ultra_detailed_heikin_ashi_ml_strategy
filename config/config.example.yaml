@@ -1,0 +1,99 @@
+# Configuración de ejemplo para Bot Trader Copilot v1.0
+# COPIAR ESTE ARCHIVO A config/config.yaml Y CONFIGURAR CON TUS DATOS REALES
+
+# Configuración del sistema
+system:
+  name: "Bot Trader Copilot v1.0"
+  version: "1.0.0"
+  debug: false
+  log_level: "INFO"
+
+# Configuración de exchanges cripto
+exchanges:
+  bybit:
+    enableRateLimit: true
+    timeout: 30000
+    api_key: "TU_API_KEY_AQUI"
+    secret: "TU_SECRET_AQUI"
+    sandbox: false
+
+  binance:
+    enableRateLimit: true
+    timeout: 30000
+    api_key: "TU_API_KEY_AQUI"
+    secret: "TU_SECRET_AQUI"
+    sandbox: false
+
+# Configuración MT5 para acciones
+mt5:
+  server: "TU_SERVIDOR_MT5"
+  login: 123456
+  password: "TU_PASSWORD_MT5"
+  path: "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+  timeout: 60000
+
+# Símbolos a procesar
+symbols:
+  crypto:
+    - "SOL/USDT"
+    - "XRP/USDT"
+    - "BTC/USDT"
+    - "ETH/USDT"
+
+  stocks:
+    - "TSLA.US"
+    - "NVDA.US"
+    - "AAPL.US"
+    - "MSFT.US"
+
+# Configuración de backtesting
+backtesting:
+  initial_balance: 10000
+  commission: 0.001  # 0.1%
+  timeframe: "1h"
+  date_range:
+    start: "2024-01-01"
+    end: "2024-06-01"
+
+# Configuración de estrategias
+strategies:
+  ut_bot:
+    sensitivity: 1.0
+    atr_period: 10
+    adx_period: 14
+    ema_periods: [10, 20, 200]
+
+# Configuración de riesgo
+risk_management:
+  max_drawdown: 0.50  # 50%
+  max_daily_loss: 0.10  # 10%
+  max_position_size: 0.20  # 20% del capital
+  circuit_breaker_enabled: true
+
+# Configuración de almacenamiento
+storage:
+  path: "data"
+  format: "both"  # csv, db, both
+  compression: true
+  backup_enabled: true
+
+# Configuración de cache
+cache:
+  enabled: true
+  max_age_minutes: 30
+  max_size_mb: 100
+
+# Configuración de logging
+logging:
+  level: "INFO"
+  file: "logs/trading_bot.log"
+  max_size_mb: 10
+  backup_count: 5
+
+# Configuración de monitoreo
+monitoring:
+  enabled: true
+  metrics_dir: "metrics"
+  alert_email: "tu_email@ejemplo.com"
+  telegram_bot_token: "TU_BOT_TOKEN"
+  telegram_chat_id: "TU_CHAT_ID"
