@@ -21,9 +21,8 @@ import logging
 from enum import Enum
 import math
 
-from descarga_datos.config.config import Config
-from descarga_datos.utils.logger import setup_logging
-from descarga_datos.core.config_manager import get_config_manager
+from config.config import Config
+from utils.logger import setup_logging
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -40,6 +39,15 @@ class RiskConfig:
     stop_loss_atr_multiplier: float = 1.5
     take_profit_atr_multiplier: float = 3.0
     trailing_stop_activation: float = 0.01  # 1% para activar trailing stop
+    kelly_fraction: float = 0.1  # 10% fracción de Kelly por defecto
+
+    # Configuración del sistema de compensación
+    compensation_enabled: bool = True
+    compensation_threshold: float = 0.03  # 3% de pérdida para activar compensación
+    compensation_max_size: float = 0.5  # Máximo 50% del tamaño de la posición principal
+    compensation_risk_multiplier: float = 1.5  # Multiplicador de riesgo para compensación
+    compensation_take_profit_multiplier: float = 2.0  # Multiplicador TP para compensación
+    max_compensation_positions: int = 1  # Máximo 1 posición de compensación por principal
 
 class PositionSizeMethod(Enum):
     FIXED = "fixed"
@@ -63,6 +71,9 @@ class AlertType(Enum):
     KELLY_ADJUSTMENT = "kelly_adjustment"
     TRAILING_STOP_HIT = "trailing_stop_hit"
     MAX_EXPOSURE_EXCEEDED = "max_exposure_exceeded"
+    COMPENSATION_TRIGGERED = "compensation_triggered"
+    COMPENSATION_CLOSED = "compensation_closed"
+    REVERSAL_DETECTED = "reversal_detected"
 
 @dataclass
 class Position:
@@ -85,6 +96,24 @@ class Position:
     entry_confidence: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
     trailing_stop: Optional[float] = None
+
+@dataclass
+class CompensationPosition:
+    """Representa una posición de compensación"""
+    symbol: str
+    parent_position_id: str  # ID de la posición principal que compensa
+    entry_price: float
+    quantity: float
+    entry_time: datetime
+    position_type: str  # 'long' or 'short' (opuesto a la principal)
+    stop_loss: float
+    take_profit: float
+    current_price: float = 0.0
+    unrealized_pnl: float = 0.0
+    realized_pnl: float = 0.0
+    target_compensation_amount: float = 0.0  # Cantidad a compensar
+    compensation_achieved: float = 0.0  # Compensación lograda hasta ahora
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class RiskMetrics:
@@ -116,9 +145,9 @@ class PositionSizeResult:
 class AdvancedRiskManager:
     """Gestor avanzado de riesgo para trading cuantitativo"""
     
-    def __init__(self):
+    def __init__(self, config_manager=None):
         self.logger = logging.getLogger(__name__)
-        self.config_manager = get_config_manager()
+        self.config_manager = config_manager
         self.risk_config = RiskConfig()  # Usar configuración básica por defecto
         
         # Estado del portfolio
@@ -138,16 +167,34 @@ class AdvancedRiskManager:
         self.max_sector_exposure = 0.3  # 30% máximo por sector
         self.correlation_threshold = 0.7
         
+        # Sistema de compensación
+        self.compensation_positions: Dict[str, CompensationPosition] = {}
+        self.reversal_detection_enabled = True
+        self.compensation_pairs: Dict[str, str] = {}  # position_id -> compensation_id
+        
         self.logger.info("[OK] Advanced Risk Manager inicializado")
+    
+    def set_config_manager(self, config_manager):
+        """Configura el gestor de configuración"""
+        self.config_manager = config_manager
+        self.logger.info("[OK] Config manager configurado en Risk Manager")
     
     def calculate_position_size(self, symbol: str, entry_price: float, 
                               stop_loss_price: float, signal_strength: float = 1.0,
                               atr_value: Optional[float] = None) -> PositionSizeResult:
         """Calcula el tamaño óptimo de posición usando múltiples métodos"""
         try:
-            symbol_config = self.config_manager.get_symbol_config(symbol)
-            if not symbol_config:
-                return self._create_zero_position_result("Símbolo no configurado")
+            # Si no hay config_manager, usar configuración básica
+            if self.config_manager is None:
+                symbol_config = {
+                    'max_position_size': 1000.0,
+                    'min_position_size': 10.0,
+                    'leverage': 1.0
+                }
+            else:
+                symbol_config = self.config_manager.get_symbol_config(symbol)
+                if not symbol_config:
+                    return self._create_zero_position_result("Símbolo no configurado")
             
             # Validaciones iniciales
             if entry_price <= 0 or stop_loss_price <= 0:
@@ -161,7 +208,7 @@ class AdvancedRiskManager:
                 return self._create_zero_position_result("Límite de drawdown excedido")
             
             # Calcular riesgo por trade
-            risk_per_trade = self.portfolio_value * self.risk_config.max_risk_per_trade
+            risk_per_trade = self.portfolio_value * self.risk_config.risk_per_trade
             
             # Calcular tamaño base
             price_risk = abs(entry_price - stop_loss_price)
@@ -184,7 +231,8 @@ class AdvancedRiskManager:
             final_size = min(recommended_sizes)
             
             # Aplicar límites adicionales
-            max_position_value = self.portfolio_value * symbol_config.max_position_size
+            max_position_pct = symbol_config.get('max_position_size', 1000.0) / 100.0  # Convertir a porcentaje
+            max_position_value = self.portfolio_value * max_position_pct
             max_size_by_value = max_position_value / entry_price
             final_size = min(final_size, max_size_by_value)
             
@@ -288,7 +336,7 @@ class AdvancedRiskManager:
             volatility_adjustment = max(0.1, min(volatility_adjustment, 3.0))
             
             # Calcular tamaño base
-            base_risk = self.portfolio_value * self.risk_config.max_risk_per_trade
+            base_risk = self.portfolio_value * self.risk_config.risk_per_trade
             
             # Ajustar por volatilidad
             adjusted_size = (base_risk * volatility_adjustment) / entry_price
@@ -618,6 +666,355 @@ class AdvancedRiskManager:
         if alert_type == AlertType.DRAWDOWN_WARNING:
             if data.get('drawdown', 0) > self.risk_config.max_drawdown:
                 self.logger.error(f"EMERGENCIA: Drawdown critico detectado: {data.get('drawdown', 0):.2%}")
+    
+    # === SISTEMA DE COMPENSACIÓN DE OPERACIONES ===
+    
+    def check_compensation_opportunities(self) -> List[str]:
+        """
+        Verifica si alguna posición necesita compensación por reversión
+        
+        Returns:
+            Lista de símbolos que activaron compensación
+        """
+        if not self.risk_config.compensation_enabled:
+            return []
+        
+        compensation_triggers = []
+        
+        for symbol, position in self.positions.items():
+            # Solo procesar si no tiene compensación activa
+            if symbol in self.compensation_pairs:
+                continue
+                
+            # Verificar si la posición está en pérdida y supera el umbral
+            if self._should_trigger_compensation(position):
+                if self._create_compensation_position(symbol, position):
+                    compensation_triggers.append(symbol)
+                    self._trigger_alert(
+                        AlertType.COMPENSATION_TRIGGERED,
+                        f"Compensación activada para {symbol}",
+                        {
+                            'symbol': symbol,
+                            'position_type': position.position_type,
+                            'current_pnl': position.unrealized_pnl,
+                            'threshold': self.risk_config.compensation_threshold
+                        }
+                    )
+        
+        return compensation_triggers
+    
+    def _should_trigger_compensation(self, position: Position) -> bool:
+        """
+        Determina si una posición debe activar compensación
+        
+        Args:
+            position: Posición a evaluar
+            
+        Returns:
+            True si debe activar compensación
+        """
+        # Verificar que esté en pérdida
+        if position.unrealized_pnl >= 0:
+            return False
+        
+        # Calcular pérdida porcentual
+        loss_percentage = abs(position.unrealized_pnl) / (position.entry_price * position.quantity)
+        
+        # Verificar umbral de activación
+        if loss_percentage < self.risk_config.compensation_threshold:
+            return False
+        
+        # Verificar que no haya una compensación activa
+        if position.symbol in self.compensation_pairs:
+            return False
+        
+        # Verificar límite de posiciones de compensación
+        active_compensations = len(self.compensation_positions)
+        if active_compensations >= self.risk_config.max_compensation_positions:
+            return False
+        
+        return True
+    
+    def _create_compensation_position(self, symbol: str, parent_position: Position) -> bool:
+        """
+        Crea una posición de compensación para la posición principal
+        
+        Args:
+            symbol: Símbolo de la posición
+            parent_position: Posición principal a compensar
+            
+        Returns:
+            True si se creó exitosamente
+        """
+        try:
+            # Determinar tipo de compensación (opuesto a la principal)
+            compensation_type = 'short' if parent_position.position_type == 'long' else 'long'
+            
+            # Calcular tamaño de compensación (porcentaje de la posición principal)
+            compensation_size = parent_position.quantity * self.risk_config.compensation_max_size
+            
+            # Calcular precio de entrada para compensación
+            current_price = parent_position.current_price
+            
+            # Calcular stop loss y take profit para compensación
+            risk_distance = abs(parent_position.entry_price - parent_position.stop_loss)
+            compensation_risk_distance = risk_distance * self.risk_config.compensation_risk_multiplier
+            
+            if compensation_type == 'long':
+                compensation_stop = current_price - compensation_risk_distance
+                compensation_target = current_price + (compensation_risk_distance * self.risk_config.compensation_take_profit_multiplier)
+            else:
+                compensation_stop = current_price + compensation_risk_distance
+                compensation_target = current_price - (compensation_risk_distance * self.risk_config.compensation_take_profit_multiplier)
+            
+            # Calcular cantidad a compensar (pérdida actual de la posición principal)
+            target_compensation = abs(parent_position.unrealized_pnl)
+            
+            # Crear ID único para la compensación
+            compensation_id = f"{symbol}_comp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Crear posición de compensación
+            compensation_position = CompensationPosition(
+                symbol=symbol,
+                parent_position_id=symbol,  # Usar el symbol como ID de la posición principal
+                entry_price=current_price,
+                quantity=compensation_size,
+                entry_time=datetime.now(),
+                position_type=compensation_type,
+                stop_loss=compensation_stop,
+                take_profit=compensation_target,
+                current_price=current_price,
+                target_compensation_amount=target_compensation,
+                metadata={
+                    'compensation_reason': 'reversal_loss_compensation',
+                    'parent_position_type': parent_position.position_type,
+                    'trigger_threshold': self.risk_config.compensation_threshold,
+                    'loss_at_trigger': parent_position.unrealized_pnl
+                }
+            )
+            
+            # Registrar la compensación
+            self.compensation_positions[compensation_id] = compensation_position
+            self.compensation_pairs[symbol] = compensation_id
+            
+            self.logger.info(f"[COMPENSATION] Posición de compensación creada: {compensation_id}")
+            self.logger.info(f"[COMPENSATION] Tipo: {compensation_type}, Tamaño: {compensation_size}")
+            self.logger.info(f"[COMPENSATION] Objetivo de compensación: ${target_compensation:.2f}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"[ERROR] Error creando compensación para {symbol}: {e}")
+            return False
+    
+    def update_compensation_positions(self) -> List[str]:
+        """
+        Actualiza todas las posiciones de compensación y verifica cierres
+        
+        Returns:
+            Lista de IDs de compensaciones cerradas
+        """
+        closed_compensations = []
+        
+        for comp_id, compensation in list(self.compensation_positions.items()):
+            # Actualizar precio actual
+            if compensation.symbol in self.positions:
+                parent_position = self.positions[compensation.symbol]
+                compensation.current_price = parent_position.current_price
+                
+                # Calcular PnL de la compensación
+                if compensation.position_type == 'long':
+                    compensation.unrealized_pnl = (compensation.current_price - compensation.entry_price) * compensation.quantity
+                else:
+                    compensation.unrealized_pnl = (compensation.entry_price - compensation.current_price) * compensation.quantity
+                
+                # Verificar si se alcanzó el objetivo de compensación
+                if self._check_compensation_target_achieved(compensation, parent_position):
+                    closed_compensations.append(comp_id)
+                    self._close_compensation_pair(comp_id, compensation, parent_position, "compensation_target_achieved")
+                
+                # Verificar stops de compensación
+                elif self._check_compensation_stops(compensation):
+                    closed_compensations.append(comp_id)
+                    self._close_compensation_pair(comp_id, compensation, parent_position, "compensation_stop_hit")
+        
+        return closed_compensations
+    
+    def _check_compensation_target_achieved(self, compensation: CompensationPosition, 
+                                          parent_position: Position) -> bool:
+        """
+        Verifica si se ha alcanzado el objetivo de compensación
+        
+        Args:
+            compensation: Posición de compensación
+            parent_position: Posición principal
+            
+        Returns:
+            True si se debe cerrar la pareja
+        """
+        # Calcular pérdida total combinada
+        total_combined_loss = parent_position.unrealized_pnl + compensation.unrealized_pnl
+        
+        # Si las pérdidas se han compensado (total cercano a cero o positivo)
+        if total_combined_loss >= -1.0:  # Tolerancia de $1
+            compensation.compensation_achieved = abs(parent_position.unrealized_pnl)
+            return True
+        
+        return False
+    
+    def _check_compensation_stops(self, compensation: CompensationPosition) -> bool:
+        """
+        Verifica si la compensación alcanzó sus stops
+        
+        Args:
+            compensation: Posición de compensación
+            
+        Returns:
+            True si debe cerrarse por stop
+        """
+        if compensation.position_type == 'long':
+            return compensation.current_price <= compensation.stop_loss
+        else:
+            return compensation.current_price >= compensation.stop_loss
+    
+    def _close_compensation_pair(self, compensation_id: str, 
+                               compensation: CompensationPosition,
+                               parent_position: Position, 
+                               reason: str) -> None:
+        """
+        Cierra una pareja de posiciones (principal + compensación)
+        
+        Args:
+            compensation_id: ID de la compensación
+            compensation: Posición de compensación
+            parent_position: Posición principal
+            reason: Razón del cierre
+        """
+        try:
+            symbol = compensation.symbol
+            
+            # Cerrar posición principal
+            parent_trade = self.close_position(symbol, parent_position.current_price, 
+                                             f"Compensation: {reason}")
+            
+            # Cerrar posición de compensación
+            compensation_trade = self._close_compensation_position(compensation_id, 
+                                                                 compensation.current_price,
+                                                                 reason)
+            
+            # Calcular resultado neto
+            total_pnl = (parent_trade['realized_pnl'] if parent_trade else 0) + \
+                       (compensation_trade['realized_pnl'] if compensation_trade else 0)
+            
+            # Limpiar registros
+            if symbol in self.compensation_pairs:
+                del self.compensation_pairs[symbol]
+            
+            if compensation_id in self.compensation_positions:
+                del self.compensation_positions[compensation_id]
+            
+            self.logger.info(f"[COMPENSATION] Pareja cerrada: {symbol}")
+            self.logger.info(f"[COMPENSATION] PnL Principal: ${parent_trade['realized_pnl']:.2f}" if parent_trade else "[COMPENSATION] Error cerrando principal")
+            self.logger.info(f"[COMPENSATION] PnL Compensación: ${compensation_trade['realized_pnl']:.2f}" if compensation_trade else "[COMPENSATION] Error cerrando compensación")
+            self.logger.info(f"[COMPENSATION] PnL Total: ${total_pnl:.2f}")
+            
+            self._trigger_alert(
+                AlertType.COMPENSATION_CLOSED,
+                f"Pareja de compensación cerrada: {symbol}",
+                {
+                    'symbol': symbol,
+                    'reason': reason,
+                    'total_pnl': total_pnl,
+                    'compensation_achieved': compensation.compensation_achieved
+                }
+            )
+            
+        except Exception as e:
+            self.logger.error(f"[ERROR] Error cerrando pareja de compensación {compensation_id}: {e}")
+    
+    def _close_compensation_position(self, compensation_id: str, 
+                                   exit_price: float, 
+                                   reason: str) -> Optional[Dict]:
+        """
+        Cierra una posición de compensación
+        
+        Args:
+            compensation_id: ID de la compensación
+            exit_price: Precio de salida
+            reason: Razón del cierre
+            
+        Returns:
+            Registro del trade o None si error
+        """
+        if compensation_id not in self.compensation_positions:
+            return None
+        
+        compensation = self.compensation_positions[compensation_id]
+        
+        # Calcular PnL realizado
+        if compensation.position_type == 'long':
+            realized_pnl = (exit_price - compensation.entry_price) * compensation.quantity
+        else:
+            realized_pnl = (compensation.entry_price - exit_price) * compensation.quantity
+        
+        # Crear registro del trade
+        trade_record = {
+            'symbol': compensation.symbol,
+            'entry_price': compensation.entry_price,
+            'exit_price': exit_price,
+            'quantity': compensation.quantity,
+            'position_type': compensation.position_type,
+            'entry_time': compensation.entry_time,
+            'exit_time': datetime.now(),
+            'realized_pnl': realized_pnl,
+            'return_pct': (realized_pnl / (compensation.entry_price * compensation.quantity)) * 100,
+            'exit_reason': f"Compensation: {reason}",
+            'risk_amount': 0,  # Las compensaciones tienen riesgo separado
+            'max_drawdown': 0,
+            'compensation_id': compensation_id,
+            'parent_position_id': compensation.parent_position_id
+        }
+        
+        # Actualizar portfolio
+        self.portfolio_value += realized_pnl
+        self.trade_history.append(trade_record)
+        
+        self.logger.info(f"[COMPENSATION] Posición cerrada: {compensation_id} PnL: ${realized_pnl:.2f}")
+        
+        return trade_record
+    
+    def get_compensation_status(self) -> Dict[str, Any]:
+        """
+        Obtiene el estado actual del sistema de compensación
+        
+        Returns:
+            Diccionario con información del sistema de compensación
+        """
+        active_compensations = []
+        
+        for comp_id, compensation in self.compensation_positions.items():
+            active_compensations.append({
+                'id': comp_id,
+                'symbol': compensation.symbol,
+                'parent_position': compensation.parent_position_id,
+                'type': compensation.position_type,
+                'entry_price': compensation.entry_price,
+                'current_price': compensation.current_price,
+                'quantity': compensation.quantity,
+                'unrealized_pnl': compensation.unrealized_pnl,
+                'target_compensation': compensation.target_compensation_amount,
+                'progress_pct': min(100, (compensation.compensation_achieved / 
+                                         max(compensation.target_compensation_amount, 1)) * 100)
+            })
+        
+        return {
+            'compensation_enabled': self.risk_config.compensation_enabled,
+            'active_compensations': len(self.compensation_positions),
+            'max_compensation_positions': self.risk_config.max_compensation_positions,
+            'compensation_threshold': self.risk_config.compensation_threshold,
+            'compensation_details': active_compensations,
+            'compensation_pairs': dict(self.compensation_pairs)
+        }
         
         # Aquí podría ir código para enviar notificaciones,
         # guardar en base de datos, etc.

@@ -196,3 +196,69 @@ descarga_datos/data/**/*.sqlite3
 descarga_datos/data/backtest_results/
 descarga_datos/data/csv/
 descarga_datos/data/metrics/
+
+# Resultados de backtesting
+backtest_results.json
+results/
+output/
+metrics/
+performance_data/
+
+# Logs del sistema
+logs/
+*.log
+log_*.txt
+
+# Configuraciones sensibles
+config/secrets.yaml
+config/local_config.yaml
+config/api_keys.yaml
+config/credentials.yaml
+
+# Archivos temporales
+temp_*.py
+*.tmp
+*.temp
+temp_backtest.py
+
+# MT5
+mt5_terminal/
+MetaTrader5/
+.mt5/
+
+# Datos de mercado
+market_data/
+historical_data/
+*.csv.gz
+*.pkl
+
+# Backups
+*.bak
+*.backup
+backup_*/
+
+# IDE y editores
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS específicos
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Archivos de datos grandes
+data/large_files/
+*.h5
+*.feather

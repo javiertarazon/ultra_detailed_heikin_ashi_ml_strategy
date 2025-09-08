@@ -1,417 +1,507 @@
+#!/usr/bin/env python3
+"""
+Advanced Data Downloader - Sistema completo para descarga de datos
+Soporta CCXT (criptomonedas) y MT5 (acciones) con paralelización,
+manejo de errores, normalización y almacenamiento múltiple.
+"""
 import ccxt
-import time
+import ccxt.async_support as ccxt_async
 import asyncio
-import os
-import numpy as np
-from typing import Optional, Dict, Any, List, Tuple
 import pandas as pd
-import ccxt.async_support as ccxt  # Import async version
-from datetime import datetime
-from ..config.config import Config
-from ..utils.logger import setup_logging, get_logger
-from ..utils.storage import save_to_csv, DataStorage
-from ..utils.retry_manager import RetryManager, with_retry
-from ..utils.monitoring import PerformanceMonitor
-from ..utils.data_validator import DataValidator
-from ..utils.cache_manager import CacheManager
-from datetime import timedelta
+import numpy as np
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List, Tuple
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import os
 
-class DataDownloader:
-    def __init__(self, config: Config):
+from .mt5_downloader import MT5Downloader
+from utils.storage import DataStorage, save_to_csv
+from utils.normalization import DataNormalizer
+
+class AdvancedDataDownloader:
+    """
+    Downloader avanzado que maneja múltiples fuentes de datos:
+    - CCXT para criptomonedas (Bybit, Binance, etc.)
+    - MT5 para acciones (AAPL.US, TSLA.US, etc.)
+    """
+
+    def __init__(self, config):
         self.config = config
-        self.exchanges = {}
-        setup_logging(config)
-        self.logger = get_logger(__name__)
-        
-        # Inicializar sistemas de soporte
-        self.retry_manager = RetryManager(
-            max_retries=config.max_retries,
-            base_delay=config.retry_delay,
-            max_delay=60.0
-        )
-        self.monitor = PerformanceMonitor(
-            metrics_dir=os.path.join(config.storage.path, "metrics")
-        )
-        self.validator = DataValidator(config)
-        self.cache = CacheManager(
-            cache_dir=os.path.join(config.storage.path, "cache"),
-            max_age=timedelta(minutes=30)  # Configurable según necesidades
-        )
+        self.logger = logging.getLogger(__name__)
 
-    async def setup_exchanges(self):
-        """Initialize exchange instances based on the configuration."""
-        for ex_name, ex_config in self.config.exchanges.items():
+        # Componentes
+        self.ccxt_exchanges = {}
+        self.mt5_downloader = MT5Downloader(config.mt5) if hasattr(config, 'mt5') else None
+        self.storage = DataStorage(f"{config.storage.path}/data.db")
+        self.normalizer = DataNormalizer()
+
+        # Configuración
+        self.max_retries = getattr(config, 'max_retries', 3)
+        self.retry_delay = getattr(config, 'retry_delay', 5)
+        self.max_workers = 4  # Para paralelización
+
+    async def initialize(self) -> bool:
+        """Inicializa todas las conexiones"""
+        try:
+            # Inicializar CCXT exchanges
+            ccxt_success = await self._setup_ccxt_exchanges()
+
+            # Inicializar MT5
+            mt5_success = self.mt5_downloader.initialize() if self.mt5_downloader else False
+
+            if ccxt_success or mt5_success:
+                self.logger.info("AdvancedDataDownloader inicializado correctamente")
+                return True
+            else:
+                self.logger.error("No se pudo inicializar ningún downloader")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Error en inicialización: {e}")
+            return False
+
+    async def _setup_ccxt_exchanges(self) -> bool:
+        """Configura exchanges CCXT activos"""
+        try:
+            success_count = 0
+
+            # Configurar Bybit
+            if 'bybit' in self.config.exchanges and self.config.exchanges['bybit'].enabled:
+                exchange_config = self.config.exchanges['bybit']
+                self.ccxt_exchanges['bybit'] = ccxt_async.bybit({
+                    'apiKey': exchange_config.api_key or '',
+                    'secret': exchange_config.api_secret or '',
+                    'sandbox': exchange_config.sandbox,
+                    'timeout': exchange_config.timeout,
+                })
+                success_count += 1
+                self.logger.info("Bybit configurado")
+
+            # Configurar Binance
+            if 'binance' in self.config.exchanges and self.config.exchanges['binance'].enabled:
+                exchange_config = self.config.exchanges['binance']
+                self.ccxt_exchanges['binance'] = ccxt_async.binance({
+                    'apiKey': exchange_config.api_key or '',
+                    'secret': exchange_config.api_secret or '',
+                    'sandbox': exchange_config.sandbox,
+                    'timeout': exchange_config.timeout,
+                })
+                success_count += 1
+                self.logger.info("Binance configurado")
+
+            return success_count > 0
+
+        except Exception as e:
+            self.logger.error(f"Error configurando CCXT: {e}")
+            return False
+
+    async def download_multiple_symbols(self, symbols: List[str], timeframe: str = "1h",
+                                      start_date: str = None, end_date: str = None) -> Dict[str, pd.DataFrame]:
+        """
+        Descarga datos de múltiples símbolos en paralelo
+
+        Args:
+            symbols: Lista de símbolos
+            timeframe: Timeframe para descarga
+            start_date: Fecha inicio (YYYY-MM-DD)
+            end_date: Fecha fin (YYYY-MM-DD)
+
+        Returns:
+            Diccionario símbolo -> DataFrame
+        """
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        self.logger.info(f"Descargando {len(symbols)} símbolos en paralelo...")
+
+        # Crear tareas para paralelización
+        tasks = []
+        for symbol in symbols:
+            task = self._download_symbol_with_retry(symbol, timeframe, start_date, end_date)
+            tasks.append(task)
+
+        # Ejecutar en paralelo
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Procesar resultados
+        symbol_data = {}
+        for i, result in enumerate(results):
+            symbol = symbols[i]
+            if isinstance(result, Exception):
+                self.logger.error(f"Error descargando {symbol}: {result}")
+            elif result is not None:
+                symbol_data[symbol] = result
+                self.logger.info(f"✅ {symbol}: {len(result)} velas descargadas")
+
+        return symbol_data
+
+    async def _download_symbol_with_retry(self, symbol: str, timeframe: str,
+                                        start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """Descarga un símbolo con manejo de errores y reintentos"""
+        for attempt in range(self.max_retries):
             try:
-                exchange_class = getattr(ccxt, ex_name)
-                
-                # Start with basic config
-                ccxt_config = {
-                    'enableRateLimit': ex_config.get('enableRateLimit', True),
-                }
+                # Determinar si es cripto o acción
+                if self._is_crypto_symbol(symbol):
+                    return await self._download_crypto_symbol(symbol, timeframe, start_date, end_date)
+                else:
+                    return self._download_stock_symbol(symbol, timeframe, start_date, end_date)
 
-                # Add API keys only if they are provided and not placeholders
-                api_key = ex_config.get('api_key')
-                secret = ex_config.get('secret')
-
-                if api_key and api_key != 'your_api_key_here':
-                    ccxt_config['apiKey'] = api_key
-                
-                if secret and secret != 'your_secret_here':
-                    ccxt_config['secret'] = secret
-
-                self.exchanges[ex_name] = exchange_class(ccxt_config)
-                self.logger.info(f"Initialized {ex_name} exchange.")
-            except AttributeError:
-                self.logger.error(f"Exchange {ex_name} not found in ccxt.")
             except Exception as e:
-                self.logger.error(f"Error initializing {ex_name}: {e}")
+                if attempt < self.max_retries - 1:
+                    self.logger.warning(f"Intento {attempt + 1} para {symbol} falló: {e}. Reintentando...")
+                    await asyncio.sleep(self.retry_delay)
+                else:
+                    self.logger.error(f"Todos los intentos fallaron para {symbol}: {e}")
+                    return None
+
+    def _is_crypto_symbol(self, symbol: str) -> bool:
+        """Determina si un símbolo es de criptomoneda"""
+        # Criptos tienen formato BASE/QUOTE (ej: BTC/USDT)
+        return '/' in symbol
+
+    async def _download_crypto_symbol(self, symbol: str, timeframe: str,
+                                    start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """Descarga datos de criptomoneda desde CCXT"""
+        if not self.ccxt_exchanges:
+            raise Exception("No hay exchanges CCXT configurados")
+
+        # Usar el primer exchange disponible
+        exchange_name = list(self.ccxt_exchanges.keys())[0]
+        exchange = self.ccxt_exchanges[exchange_name]
+
+        try:
+            # Convertir fechas
+            since = int(pd.Timestamp(start_date).timestamp() * 1000)
+
+            # Descargar datos
+            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
+
+            if not ohlcv:
+                return None
+
+            # Convertir a DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+
+            # Filtrar por fecha fin
+            end_dt = pd.Timestamp(end_date)
+            df = df[df['timestamp'] <= end_dt]
+
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error descargando {symbol} desde {exchange_name}: {e}")
+            raise e
+
+    def _download_stock_symbol(self, symbol: str, timeframe: str,
+                             start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """Descarga datos de acciones desde MT5"""
+        if not self.mt5_downloader or not self.mt5_downloader.connected:
+            raise Exception("MT5 no está disponible")
+
+        return self.mt5_downloader.download_symbol_data(symbol, timeframe, start_date, end_date)
+
+    async def process_and_save_data(self, symbol_data: Dict[str, pd.DataFrame],
+                                  timeframe: str, save_csv: bool = True) -> Dict[str, pd.DataFrame]:
+        """
+        Procesa, normaliza y guarda los datos descargados
+
+        Args:
+            symbol_data: Diccionario símbolo -> DataFrame
+            timeframe: Timeframe de los datos
+            save_csv: Si guardar también en CSV
+
+        Returns:
+            Diccionario con los datos procesados (símbolo -> DataFrame normalizado)
+        """
+        processed_data = {}
+        
+        try:
+            for symbol, df in symbol_data.items():
+                if df is None or df.empty:
+                    continue
+
+                # Calcular indicadores técnicos
+                df_with_indicators = self._calculate_technical_indicators(df)
+
+                # Normalizar y escalar
+                df_normalized = self._normalize_and_scale(df_with_indicators)
+
+                # Guardar en SQLite (para uso del sistema)
+                table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
+                success_sql = self.storage.save_to_sqlite(df_normalized, table_name)
+
+                # Guardar en CSV (para verificación visual)
+                if save_csv and success_sql:
+                    csv_path = f"{self.config.storage.path}/csv"
+                    os.makedirs(csv_path, exist_ok=True)
+                    csv_file = f"{csv_path}/{table_name}.csv"
+                    success_csv = save_to_csv(df_normalized, csv_file)
+
+                    if success_csv:
+                        self.logger.info(f"✅ {symbol}: Datos guardados en SQLite y CSV")
+                    else:
+                        self.logger.warning(f"⚠️ {symbol}: Datos guardados en SQLite, error en CSV")
+
+                # Almacenar datos procesados para devolver
+                processed_data[symbol] = df_normalized
+
+            return processed_data
+
+        except Exception as e:
+            self.logger.error(f"Error procesando datos: {e}")
+            return False
+
+    def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calcula indicadores técnicos completos"""
+        try:
+            # Copia del DataFrame
+            result_df = df.copy()
+
+            # ATR (Average True Range)
+            high_low = result_df['high'] - result_df['low']
+            high_close = np.abs(result_df['high'] - result_df['close'].shift(1))
+            low_close = np.abs(result_df['low'] - result_df['close'].shift(1))
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            result_df['atr'] = tr.ewm(span=14, adjust=False).mean()
+
+            # ADX (Average Directional Index)
+            high_diff = result_df['high'].diff()
+            low_diff = result_df['low'].diff()
+            plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
+            minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
+            atr_val = result_df['atr']
+            plus_di = 100 * (pd.Series(plus_dm).ewm(span=14, adjust=False).mean() / atr_val)
+            minus_di = 100 * (pd.Series(minus_dm).ewm(span=14, adjust=False).mean() / atr_val)
+            dx = 100 * np.abs((plus_di - minus_di) / ((plus_di + minus_di) + 1e-9))
+            result_df['adx'] = dx.ewm(span=14, adjust=False).mean()
+
+            # SAR (Parabolic SAR) - Implementación simplificada
+            result_df['sar'] = self._calculate_sar(result_df)
+
+            # RSI
+            delta = result_df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            result_df['rsi'] = 100 - (100 / (1 + rs))
+
+            # MACD
+            ema_12 = result_df['close'].ewm(span=12, adjust=False).mean()
+            ema_26 = result_df['close'].ewm(span=26, adjust=False).mean()
+            result_df['macd'] = ema_12 - ema_26
+            result_df['macd_signal'] = result_df['macd'].ewm(span=9, adjust=False).mean()
+
+            # EMAs necesarias para las estrategias UT Bot
+            result_df['ema_10'] = result_df['close'].ewm(span=10, adjust=False).mean()
+            result_df['ema_20'] = result_df['close'].ewm(span=20, adjust=False).mean()
+            result_df['ema_200'] = result_df['close'].ewm(span=200, adjust=False).mean()
+
+            # Bollinger Bands
+            sma_20 = result_df['close'].rolling(window=20).mean()
+            std_20 = result_df['close'].rolling(window=20).std()
+            result_df['bb_upper'] = sma_20 + (std_20 * 2)
+            result_df['bb_lower'] = sma_20 - (std_20 * 2)
+
+            # Llenar NaN con 0
+            result_df = result_df.fillna(0)
+
+            return result_df
+
+        except Exception as e:
+            self.logger.error(f"Error calculando indicadores: {e}")
+            return df
+
+    def _calculate_sar(self, df: pd.DataFrame) -> pd.Series:
+        """Calcula Parabolic SAR simplificado"""
+        try:
+            length = len(df)
+            sar = np.zeros(length)
+            high = df['high'].values
+            low = df['low'].values
+
+            if length > 0:
+                sar[0] = low[0]  # Comenzar con el primer low
+
+            # Parámetros SAR
+            acceleration = 0.02
+            max_acceleration = 0.2
+
+            # Variables de estado
+            trend = 1  # 1 = uptrend, -1 = downtrend
+            extreme_point = high[0] if trend == 1 else low[0]
+            acceleration_factor = acceleration
+
+            for i in range(1, length):
+                # Calcular nuevo SAR
+                sar[i] = sar[i-1] + acceleration_factor * (extreme_point - sar[i-1])
+
+                # Determinar cambio de tendencia
+                if trend == 1:  # Uptrend
+                    if low[i] <= sar[i]:
+                        trend = -1
+                        sar[i] = extreme_point
+                        extreme_point = low[i]
+                        acceleration_factor = acceleration
+                    else:
+                        if high[i] > extreme_point:
+                            extreme_point = high[i]
+                            acceleration_factor = min(acceleration_factor + acceleration, max_acceleration)
+                        sar[i] = min(sar[i], low[i-1], low[i])
+                else:  # Downtrend
+                    if high[i] >= sar[i]:
+                        trend = 1
+                        sar[i] = extreme_point
+                        extreme_point = high[i]
+                        acceleration_factor = acceleration
+                    else:
+                        if low[i] < extreme_point:
+                            extreme_point = low[i]
+                            acceleration_factor = min(acceleration_factor + acceleration, max_acceleration)
+                        sar[i] = max(sar[i], high[i-1], high[i])
+
+            return pd.Series(sar, index=df.index)
+
+        except Exception as e:
+            self.logger.error(f"Error calculando SAR: {e}")
+            return pd.Series([0.0] * len(df), index=df.index)
+
+    def _normalize_and_scale(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normaliza y escala los datos"""
+        try:
+            # Columnas que NO deben ser normalizadas (valores absolutos para estrategias)
+            exclude_cols = [
+                'open', 'high', 'low', 'close', 'volume',  # Precios y volumen
+                'atr', 'adx', 'sar', 'rsi', 'macd', 'macd_signal',  # Indicadores técnicos
+                'bb_upper', 'bb_lower',  # Bandas de Bollinger
+                'ema_10', 'ema_20', 'ema_200'  # EMAs necesarias para estrategias
+            ]
+
+            # Identificar columnas numéricas (excluir timestamp y columnas excluidas)
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_cols = [col for col in numeric_cols if col not in exclude_cols and col != 'timestamp']
+
+            if not numeric_cols:
+                return df
+
+            # Normalizar solo columnas que no afectan las estrategias
+            df_normalized = df.copy()
+            for col in numeric_cols:
+                # Min-Max scaling solo para columnas permitidas
+                min_val = df[col].min()
+                max_val = df[col].max()
+                if max_val > min_val:
+                    df_normalized[col] = (df[col] - min_val) / (max_val - min_val)
+
+            return df_normalized
+
+        except Exception as e:
+            self.logger.error(f"Error en normalización: {e}")
+            return df
+
+    async def get_data_from_db(self, symbol: str, timeframe: str,
+                             start_date: str = None, end_date: str = None) -> Optional[pd.DataFrame]:
+        """
+        Obtiene datos desde la base de datos SQLite
+
+        Args:
+            symbol: Símbolo
+            timeframe: Timeframe
+            start_date: Fecha inicio (opcional)
+            end_date: Fecha fin (opcional)
+
+        Returns:
+            DataFrame con datos o None
+        """
+        try:
+            table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
+
+            # Query para obtener datos
+            query = f"SELECT * FROM {table_name}"
+
+            # Aquí iría la lógica para ejecutar la query
+            # Por ahora retornamos None para indicar que no está implementado
+            self.logger.warning(f"get_data_from_db no implementado aún para {table_name}")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error obteniendo datos de DB: {e}")
+            return None
+
+    async def shutdown(self):
+        """Cierra todas las conexiones"""
+        try:
+            # Cerrar exchanges CCXT
+            for exchange in self.ccxt_exchanges.values():
+                await exchange.close()
+
+            # Cerrar MT5
+            if self.mt5_downloader:
+                self.mt5_downloader.shutdown()
+
+            self.logger.info("AdvancedDataDownloader cerrado correctamente")
+
+        except Exception as e:
+            self.logger.error(f"Error en shutdown: {e}")
+
+        except Exception as e:
+            self.logger.error(f"[ERROR] Error configurando exchanges: {e}")
+            return False
+
+    async def async_download_ohlcv(self, symbol: str, exchange_name: str,
+                                 timeframe: str = '1h', limit: int = 1000) -> tuple:
+        """
+        Descarga datos OHLCV de un exchange
+        """
+        if exchange_name not in self.exchanges:
+            raise ValueError(f"Exchange {exchange_name} no configurado")
+
+        exchange = self.exchanges[exchange_name]
+
+        try:
+            # Descargar datos
+            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+
+            if not ohlcv:
+                return None, {"error": "No data received"}
+
+            # Convertir a DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            # No establecer timestamp como índice para mantenerlo como columna
+            # df.set_index('timestamp', inplace=True)
+
+            # Convertir tipos de datos
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            stats = {
+                'exchange': exchange_name,
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'records': len(df),
+                'start_date': df.index.min(),
+                'end_date': df.index.max()
+            }
+
+            return df, stats
+
+        except Exception as e:
+            self.logger.error(f"[ERROR] Error descargando {symbol} desde {exchange_name}: {e}")
+            return None, {"error": str(e)}
 
     async def close_exchanges(self):
-        """Close all active exchange sessions."""
-        for exchange in self.exchanges.values():
-            if hasattr(exchange, 'close'):
+        """Cierra todas las conexiones de exchanges"""
+        for exchange_name, exchange in self.exchanges.items():
+            try:
                 await exchange.close()
-        self.logger.info("All exchange sessions closed.")
-
-    def _get_exchange(self, exchange_name: str):
-        """Get an initialized exchange instance."""
-        exchange = self.exchanges.get(exchange_name)
-        if not exchange:
-            raise ValueError(f"Exchange {exchange_name} not initialized.")
-        return exchange
-        
-    async def _download_paginated(self, symbol: str, exchange_name: str, timeframe: str = '1h',
-                                since: Optional[int] = None, until: Optional[int] = None) -> List[Dict]:
-        """
-        Descarga datos de un símbolo usando paginación para obtener el rango completo.
-        
-        Args:
-            symbol: Símbolo a descargar
-            exchange_name: Nombre del exchange
-            timeframe: Intervalo de tiempo
-            since: Timestamp inicial en milisegundos
-            until: Timestamp final en milisegundos
-            
-        Returns:
-            List[Dict]: Lista de datos OHLCV
-        """
-        exchange = self._get_exchange(exchange_name)
-        all_data = []
-        
-        # Obtener la duración del timeframe en milisegundos
-        timeframe_ms = self._get_timeframe_ms(timeframe)
-        
-        # Configurar el tamaño de página y límite
-        page_limit = 1000  # Número máximo de registros por petición
-        current_since = since
-        
-        while True:
-            try:
-                # Descargar datos para el período actual
-                ohlcv = await exchange.fetch_ohlcv(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    since=current_since,
-                    limit=page_limit
-                )
-                
-                if not ohlcv:
-                    break
-                    
-                # Añadir datos a la lista
-                all_data.extend(ohlcv)
-                
-                # Actualizar el timestamp inicial para la siguiente página
-                last_timestamp = ohlcv[-1][0]
-                
-                # Si hemos llegado al final del período o no hay más datos, terminar
-                if last_timestamp >= until or len(ohlcv) < page_limit:
-                    break
-                    
-                # Avanzar al siguiente período
-                current_since = last_timestamp + timeframe_ms
-                
-                # Esperar un poco para no sobrecargar la API
-                await asyncio.sleep(exchange.rateLimit / 1000)
-                
+                self.logger.info(f"[INFO] Exchange {exchange_name} cerrado")
             except Exception as e:
-                self.logger.error(f"Error downloading data for {symbol}: {str(e)}")
-                break
-                
-        return all_data
-        
-    def _get_timeframe_ms(self, timeframe: str) -> int:
-        """
-        Convierte un timeframe (e.g., '1h', '1d') a milisegundos.
-        """
-        unit = timeframe[-1]
-        value = int(timeframe[:-1])
-        
-        if unit == 'm':
-            return value * 60 * 1000
-        elif unit == 'h':
-            return value * 60 * 60 * 1000
-        elif unit == 'd':
-            return value * 24 * 60 * 60 * 1000
-        else:
-            raise ValueError(f"Unsupported timeframe unit: {unit}")
-        
-    async def download_multiple_symbols(self, symbols: List[str], exchange_name: str, 
-                                     timeframe: str = '1h', since: Optional[int] = None, 
-                                     until: Optional[int] = None, batch_size: int = 5) -> Dict[str, pd.DataFrame]:
-        """
-        Descarga datos para múltiples símbolos en paralelo usando paginación.
-        
-        Args:
-            symbols: Lista de símbolos a descargar
-            exchange_name: Nombre del exchange
-            timeframe: Intervalo de tiempo
-            since: Timestamp inicial en milisegundos
-            until: Timestamp final en milisegundos (opcional, por defecto hasta el presente)
-            batch_size: Número máximo de descargas simultáneas
-            
-        Returns:
-            Dict[str, DataFrame]: Diccionario con los datos por símbolo
-        """
-        # Si until no está especificado, usar el tiempo actual
-        if until is None:
-            until = int(datetime.now().timestamp() * 1000)
-            
-        results = {}
-        tasks = []
-        
-        for symbol in symbols:
-            task = asyncio.create_task(self._download_paginated(
-                symbol=symbol,
-                exchange_name=exchange_name,
-                timeframe=timeframe,
-                since=since,
-                until=until
-            ))
-            tasks.append(task)
-            
-            # Procesar en lotes para no sobrecargar el exchange
-            if len(tasks) >= batch_size:
-                completed = await asyncio.gather(*tasks)
-                for symbol_data, symbol_name in zip(completed, symbols[-batch_size:]):
-                    if symbol_data is not None and len(symbol_data) > 0:
-                        results[symbol_name] = pd.DataFrame(symbol_data)
-                tasks = []
-        
-        # Procesar el resto de las tareas si las hay
-        if tasks:
-            completed = await asyncio.gather(*tasks)
-            for symbol_data, symbol_name in zip(completed, symbols[-len(tasks):]):
-                if symbol_data is not None and len(symbol_data) > 0:
-                    results[symbol_name] = pd.DataFrame(symbol_data)
-        
-        return results
+                self.logger.error(f"[ERROR] Error cerrando {exchange_name}: {e}")
 
-    @with_retry()
-    async def async_download_ohlcv(self, symbol: str, exchange_name: str, timeframe: str = '1d', 
-                                 since: Optional[int] = None, limit: int = 1000, 
-                                 params: dict = {}, use_cache: bool = True) -> Tuple[Optional[pd.DataFrame], Dict[str, Any]]:
-        """
-        Descarga datos OHLCV con manejo de reintentos, monitoreo y validación.
-        Implementa paginación para obtener todos los datos del rango solicitado.
-        
-        Returns:
-            Tuple[DataFrame, Dict]: DataFrame con datos y diccionario con métricas
-        """
-        # Iniciar monitoreo de la operación
-        operation_id = self.monitor.start_operation(symbol, exchange_name)
-        
-        # Si since no está definido, usar la fecha de inicio de la configuración
-        if since is None:
-            config = self.config.exchanges.get(exchange_name, {})
-            start_date = config.get('start_date')
-            if start_date:
-                since = int(pd.Timestamp(start_date).timestamp() * 1000)
-        
-        try:
-            # Verificar si necesitamos datos completos basados en la configuración
-            config = self.config.exchanges.get(exchange_name, {})
-            start_date = config.get('start_date')
-            end_date = config.get('end_date')
-            if start_date and end_date:
-                start_ts = pd.Timestamp(start_date)
-                end_ts = pd.Timestamp(end_date)
-                # Si el rango es más de 7 días, no usar caché
-                if (end_ts - start_ts).days > 7:
-                    use_cache = False
-            
-            # Intentar obtener datos del caché si está habilitado
-            if use_cache:
-                cached_data = self.cache.get_from_cache(exchange_name, symbol, timeframe)
-                if cached_data is not None:
-                    self.logger.info(f"Datos obtenidos del caché para {symbol}")
-                    validation_result = self.validator.validate_ohlcv_data(cached_data)
-                    return cached_data, validation_result.stats
-            
-            exchange = self._get_exchange(exchange_name)
-            
-            # Si no se proporciona since, usar un tiempo por defecto
-            if since is None:
-                # Calcular timestamp para los últimos períodos
-                now = pd.Timestamp.now()
-                if timeframe == '1h':
-                    # Para datos horarios, obtener las últimas 100 horas
-                    since = int((now - pd.Timedelta(hours=limit)).timestamp() * 1000)
-                else:
-                    # Para otros timeframes, obtener los últimos días
-                    since = int((now - pd.Timedelta(days=limit)).timestamp() * 1000)
-            
-            # Implementar paginación para obtener todos los datos
-            all_ohlcv = []
-            current_since = since
-            config = self.config.exchanges.get(exchange_name, {})
-            end_date = config.get('end_date')
-            end_timestamp = int(pd.Timestamp(end_date).timestamp() * 1000) if end_date else None
-            
-            while True:
-                try:
-                    # Descargar datos con paginación
-                    ohlcv = await exchange.fetch_ohlcv(
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        since=current_since,
-                        limit=1000  # Máximo permitido por la API
-                    )
-                    
-                    if not ohlcv:
-                        break
-                        
-                    # Filtrar datos por fecha final si está especificada
-                    if end_timestamp:
-                        ohlcv = [candle for candle in ohlcv if candle[0] <= end_timestamp]
-                        if not ohlcv:
-                            break
-                    
-                    all_ohlcv.extend(ohlcv)
-                    
-                    # Si hemos alcanzado o superado la fecha final, terminar
-                    last_timestamp = ohlcv[-1][0]
-                    if end_timestamp and last_timestamp >= end_timestamp:
-                        break
-                    
-                    # Calcular el siguiente timestamp basado en el último recibido
-                    timeframe_ms = self._get_timeframe_ms(timeframe)
-                    current_since = last_timestamp + timeframe_ms
-                    
-                    # Esperar para respetar los límites de la API
-                    await asyncio.sleep(exchange.rateLimit / 1000)
-                except Exception as e:
-                    self.logger.error(f"Error descargando datos para {symbol}: {str(e)}")
-                    break
-            
-            if not all_ohlcv:
-                self.monitor.update_metrics(
-                    operation_id,
-                    errors=["No data received from exchange"]
-                )
-                return None, {}
-
-            # Crear DataFrame y validar datos
-            df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            # Asegurarnos de que el timestamp sea entero
-            df['timestamp'] = df['timestamp'].astype('int64')
-            validation_result = self.validator.validate_ohlcv_data(df)
-            
-            # Actualizar métricas con resultados de validación
-            self.monitor.update_metrics(
-                operation_id,
-                rows_downloaded=len(df),
-                data_validation_passed=validation_result.passed,
-                errors=validation_result.errors,
-                stats=validation_result.stats
-            )
-
-            if not validation_result.passed:
-                self.logger.warning(
-                    f"Validación fallida para {symbol} en {exchange_name}: "
-                    f"{', '.join(validation_result.errors)}"
-                )
-            
-            # Guardar datos si pasan validación
-            if validation_result.passed:
-                self._save_data(df, exchange_name, symbol, 'ohlcv', timeframe)
-                
-                # Guardar en caché si está habilitado
-                if use_cache:
-                    self.cache.save_to_cache(df, exchange_name, symbol, timeframe)
-                
-                self.monitor.complete_operation(operation_id, success=True)
-                return df, validation_result.stats
-            else:
-                self.monitor.complete_operation(operation_id, success=False)
-                return None, validation_result.stats
-
-        except Exception as e:
-            self.monitor.update_metrics(
-                operation_id,
-                errors=[str(e)]
-            )
-            self.monitor.complete_operation(operation_id, success=False)
-            raise  # RetryManager manejará la excepción
-
-    async def async_download_trades(self, symbol: str, exchange_name: str, since: Optional[int] = None, limit: int = 100, params: dict = {}):
-        """Download trade data asynchronously with retries and automatic storage."""
-        for attempt in range(self.config.max_retries):
-            try:
-                exchange = self._get_exchange(exchange_name)
-                trades = await exchange.fetch_trades(symbol, since=since, limit=limit, params=params)
-
-                if trades:
-                    df = pd.DataFrame(trades)
-                    self._save_data(df, exchange_name, symbol, 'trades')
-                    return df
-
-                return pd.DataFrame()
-            except Exception as e:
-                self.logger.warning(f"Attempt {attempt + 1} failed for {symbol} on {exchange_name}: {e}")
-                await asyncio.sleep(self.config.retry_delay)
-        self.logger.error(f"Failed to download trades for {symbol} after {self.config.max_retries} attempts.")
-        return None
-
-    def _save_data(self, data: pd.DataFrame, exchange_name: str, symbol: str, data_type: str, timeframe: Optional[str] = None):
-        """Save data to CSV and SQLite."""
-        try:
-            # Crear una copia del DataFrame para no modificar el original
-            df_to_save = data.copy()
-            
-            # Asegurarse de que los timestamps estén en el formato correcto
-            if 'timestamp' in df_to_save.columns:
-                if isinstance(df_to_save['timestamp'].iloc[0], (int, float)):
-                    df_to_save['timestamp'] = pd.to_datetime(df_to_save['timestamp'], unit='ms')
-            
-            # Generate filename
-            symbol_safe = symbol.replace('/', '_')
-            timeframe_safe = f"_{timeframe}" if timeframe else ""
-            csv_filename = f"{exchange_name}_{symbol_safe}{timeframe_safe}_{data_type}.csv"
-
-            # Get storage path from config
-            storage_path = self.config.storage.path
-            
-            # Create CSV directory if it doesn't exist
-            csv_dir = os.path.join(storage_path, 'csv')
-            os.makedirs(csv_dir, exist_ok=True)
-            csv_path = os.path.join(csv_dir, csv_filename)
-
-            # Para SQLite, mantener timestamps en milisegundos
-            df_sqlite = df_to_save.copy()
-            if isinstance(df_sqlite['timestamp'].iloc[0], pd.Timestamp):
-                df_sqlite['timestamp'] = df_sqlite['timestamp'].astype(np.int64) // 10**6
-            
-            # Save to CSV (con timestamps legibles)
-            save_to_csv(df_to_save, csv_path)
-
-            # Save to SQLite (con timestamps en milisegundos)
-            table_name = f"{exchange_name}_{symbol_safe}{timeframe_safe}_{data_type}"
-            db_path = os.path.join(storage_path, 'data.db')
-            storage = DataStorage(db_path)
-            storage.save_to_sqlite(df_sqlite, table_name)
-
-            self.logger.info(f"{data_type} data saved for {symbol} on {exchange_name}")
-
-        except Exception as e:
-            self.logger.error(f"Error saving {data_type} data for {symbol}: {e}")
+        self.exchanges.clear()

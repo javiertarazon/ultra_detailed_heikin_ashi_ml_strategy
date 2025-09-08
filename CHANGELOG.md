@@ -1,5 +1,58 @@
 # 📋 Changelog - Bot Trader Copilot
 
+## [1.1.0] - 2025-09-08
+
+### 🚀 **Mejoras Críticas y Nuevas Características**
+
+#### ✨ **Dashboard Profesional con Sistema de Medallas**
+- **🥇🥈🥉 Sistema de Medallas**: Ranking visual con medallas de oro, plata y bronce
+- **📊 Gráficas Interactivas Completas**: Ahora muestra TODOS los símbolos en las gráficas
+- **🏆 Ranking Corregido**: Las medallas se asignan correctamente a los primeros lugares
+- **🎯 Filtros Dinámicos**: Detección automática de estrategias disponibles
+- **📈 Curva de Equity Mejorada**: Visualización de 8 símbolos principales
+- **🚀 Lanzamiento Automático**: Dashboard se abre automáticamente con limpieza agresiva de puertos
+
+#### ⚡ **Optimización de Temporalidad**
+- **1 Hora como Temporalidad Principal**: Mejor rendimiento que 4h y 15m
+- **P&L Total**: $30,518.59 (vs $21,732.02 en 4h)
+- **Win Rate Promedio**: 47.8% consistente
+- **Procesamiento Optimizado**: Manejo eficiente de mayor volumen de datos
+
+#### 🔧 **Sistema de Limpieza de Puertos Mejorado**
+- **Limpieza Agresiva**: Terminación automática de procesos conflictivos
+- **Verificación Robusta**: Múltiples métodos de verificación de puerto 8501
+- **Recuperación Automática**: Fallback inteligente en caso de fallos
+- **Logging Detallado**: Seguimiento completo del proceso de limpieza
+
+#### 📊 **Mejoras en Resultados de Backtesting**
+- **NVDA.US**: $11,240.45 (46.5% WR) - 🥇 Mejor rendimiento
+- **MSFT.US**: $7,453.89 (50.8% WR) - 🥈 Plata
+- **TSLA.US**: $5,896.04 (50.0% WR) - 🥉 Bronce
+- **13/13 Símbolos Rentables**: 100% de efectividad
+- **Mejor Ratio Riesgo/Recompensa**: Optimización de estrategias
+
+#### 🛠️ **Mejoras Técnicas**
+- **Dashboard Corregido**: Todas las gráficas muestran datos completos
+- **Sistema de Ranking**: Medallas asignadas correctamente por rendimiento
+- **Configuración Actualizada**: Temporalidad 1h como predeterminada
+- **Dependencias Optimizadas**: Requirements.txt actualizado con nuevas librerías
+- **Documentación Mejorada**: README actualizado con resultados actuales
+
+### 🔧 **Correcciones de Bugs**
+- ✅ Dashboard muestra todos los símbolos en gráficas
+- ✅ Medallas asignadas correctamente (oro/plata/bronce a primeros lugares)
+- ✅ Ranking ordenado por P&L ajustado descendente
+- ✅ Filtros dinámicos detectan estrategias automáticamente
+- ✅ Limpieza de puertos funciona en Windows correctamente
+
+### 📈 **Mejoras de Performance**
+- ⚡ Procesamiento más rápido con temporalidad 1h
+- 🚀 Dashboard carga más rápido con datos optimizados
+- 💾 Mejor manejo de memoria en backtesting masivo
+- 🔄 Actualizaciones en tiempo real más fluidas
+
+---
+
 ## [1.0.0] - 2024-09-04
 
 ### 🎉 **Lanzamiento Inicial**

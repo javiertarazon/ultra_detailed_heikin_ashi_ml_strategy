@@ -1,22 +1,8 @@
 """
 Versión ultra-conservadora de UT Bot + PSAR Strategy
-Implementación literal del Pine Script con filtros adicional        # Filtros adicionales de calidad (más permisivos)
-        if self.trend_filter:
-            # Filtro de tendencia: usar EMA 200 si existe
-            if 'ema_200' in df.columns:
-                strong_uptrend = df['src'] > df['ema_200'] * 0.99  # 1% por encima (más permisivo)
-                strong_downtrend = df['src'] < df['ema_200'] * 1.01  # 1% por debajo (más permisivo)
-            else:
-                # Calcular EMA 200 si no existe
-                df['ema_200'] = talib.EMA(df['src'], timeperiod=200)
-                strong_uptrend = df['src'] > df['ema_200'] * 0.99
-                strong_downtrend = df['src'] < df['ema_200'] * 1.01
-        else:
-            strong_uptrend = True
-            strong_downtrend = True
-        
-        # Filtro de volatilidad: solo señales cuando ATR es suficiente (más permisivo)
-        atr_filter = df['atr'] > df['atr'].rolling(10).mean() * 0.5  # 50% del promedioumpy as np
+Implementación literal del Pine Script con filtros adicionales de calidad
+"""
+import numpy as np
 import pandas as pd
 import talib
 
@@ -25,8 +11,8 @@ class UTBotPSARConservativeStrategy:
     Implementación conservadora basada en análisis del Pine Script.
     Reduce sobretrading y mejora calidad de señales.
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
                  sensitivity=1,
                  atr_period=10,
                  use_heikin_ashi=False,
@@ -46,6 +32,9 @@ class UTBotPSARConservativeStrategy:
         self.sl_atr_multiplier = sl_atr_multiplier
         self.psar_start = psar_start
         self.psar_increment = psar_increment
+        self.psar_max = psar_max
+        self.min_atr_filter = min_atr_filter
+        self.trend_filter = trend_filter
         self.psar_max = psar_max
         self.min_atr_filter = min_atr_filter
         self.trend_filter = trend_filter
@@ -268,3 +257,114 @@ class UTBotPSARConservativeStrategy:
                 'consecutive_signal_filter': True
             }
         }
+
+    def run(self, data: pd.DataFrame, symbol: str) -> dict:
+        """
+        Método principal para ejecutar la estrategia conservadora
+        """
+        try:
+            # Calcular señales usando el método existente
+            df_signals = self.calculate_signals(data)
+
+            # Simular trading
+            capital = 10000  # Capital inicial
+            position = 0
+            trades = []
+            entry_price = 0
+
+            for i in range(len(df_signals)):
+                current_price = df_signals['close'].iloc[i]
+
+                # Verificar señales de entrada
+                if position == 0:
+                    if df_signals['buy_signal'].iloc[i]:
+                        # Entrar en posición long
+                        position = 1
+                        entry_price = current_price
+                        stop_loss = self.calculate_stop_loss(df_signals.iloc[i:i+1], position).iloc[0]
+                        take_profit = self.calculate_take_profit(df_signals.iloc[i:i+1], position).iloc[0]
+
+                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+
+                    elif df_signals['sell_signal'].iloc[i]:
+                        # Entrar en posición short
+                        position = -1
+                        entry_price = current_price
+                        stop_loss = self.calculate_stop_loss(df_signals.iloc[i:i+1], position).iloc[0]
+                        take_profit = self.calculate_take_profit(df_signals.iloc[i:i+1], position).iloc[0]
+
+                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+
+                # Verificar condiciones de salida
+                elif position == 1:  # Posición long
+                    if current_price >= take_profit or current_price <= stop_loss:
+                        # Cerrar posición
+                        exit_price = current_price
+                        pnl = (exit_price - entry_price) * position_size
+                        capital += pnl
+
+                        trades.append({
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'pnl': pnl,
+                            'type': 'long'
+                        })
+
+                        position = 0
+
+                elif position == -1:  # Posición short
+                    if current_price <= take_profit or current_price >= stop_loss:
+                        # Cerrar posición
+                        exit_price = current_price
+                        pnl = (entry_price - exit_price) * position_size
+                        capital += pnl
+
+                        trades.append({
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'pnl': pnl,
+                            'type': 'short'
+                        })
+
+                        position = 0
+
+            # Calcular métricas
+            total_trades = len(trades)
+            winning_trades = len([t for t in trades if t['pnl'] > 0])
+            losing_trades = total_trades - winning_trades
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
+            total_pnl = sum(t['pnl'] for t in trades)
+
+            # Calcular drawdown máximo
+            if trades:
+                cumulative_pnl = [sum(t['pnl'] for t in trades[:i+1]) for i in range(len(trades))]
+                peak = max(cumulative_pnl) if cumulative_pnl else 0
+                max_drawdown = min(cumulative_pnl) - peak if cumulative_pnl else 0
+            else:
+                max_drawdown = 0.0
+
+            return {
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'win_rate': win_rate,
+                'total_pnl': total_pnl,
+                'max_drawdown': max_drawdown,
+                'sharpe_ratio': 0.0,  # Placeholder
+                'symbol': symbol,
+                'trades': trades
+            }
+
+        except Exception as e:
+            print(f"Error ejecutando estrategia UTBotPSARConservativeStrategy: {e}")
+            return {
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'win_rate': 0.0,
+                'total_pnl': 0.0,
+                'max_drawdown': 0.0,
+                'sharpe_ratio': 0.0,
+                'symbol': symbol,
+                'trades': []
+            }

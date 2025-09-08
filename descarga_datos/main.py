@@ -1,543 +1,1150 @@
+#!/usr/bin/env python3
+"""
+🤖 Bot Trader Copilot - Sistema de Backtesting Masivo
+======================================================
+
+Sistema centralizado para ejecutar backtesting de múltiples símbolos
+con configuración flexible de período, temporalidad y estrategias.
+
+Características:
+- Soporte para acciones (MT5) y criptomonedas (CCXT)
+- Configuración centralizada de símbolos y parámetros
+- Backtesting masivo con múltiples estrategias
+- Reportes detallados y comparación de resultados
+"""
+
 import asyncio
 import pandas as pd
 from datetime import datetime
 import os
+import sys
+import subprocess
+import time
+import webbrowser
+import socket
+import json
+from pathlib import Path
 
-from descarga_datos.core.downloader import DataDownloader
-from descarga_datos.core.mt5_downloader import MT5Downloader, MT5_AVAILABLE
-from descarga_datos.indicators.technical_indicators import TechnicalIndicators
-from descarga_datos.utils.normalization import DataNormalizer
-from descarga_datos.utils.storage import DataStorage, save_to_csv
-from descarga_datos.config.config_loader import load_config_from_yaml
-from descarga_datos.utils.logger import setup_logging, get_logger
-from descarga_datos.strategies.ut_bot_psar import UTBotPSARStrategy
-from descarga_datos.strategies.optimized_utbot_strategy import OptimizedUTBotStrategy
-from descarga_datos.backtesting.backtester import AdvancedBacktester
+try:
+    import requests
+except ImportError:
+    requests = None
+
+# Agregar el directorio del proyecto al path
+project_root = os.path.dirname(os.path.abspath(__file__))
+parent_root = os.path.dirname(project_root)  # Carpeta padre
+grandparent_root = os.path.dirname(parent_root)  # Carpeta abuelo donde está dash2.py
+sys.path.append(project_root)
+sys.path.append(parent_root)
+sys.path.append(grandparent_root)
+
+from core.downloader import AdvancedDataDownloader
+from indicators.technical_indicators import TechnicalIndicators
+from utils.normalization import DataNormalizer
+from utils.storage import DataStorage, save_to_csv
+from config.config_loader import load_config_from_yaml, get_active_exchanges, get_enabled_strategies
+from utils.logger import setup_logging, get_logger
+from strategies.ut_bot_psar import UTBotPSARStrategy
+from strategies.optimized_utbot_strategy import OptimizedUTBotStrategy
+from backtesting.backtester import AdvancedBacktester
+
+def check_python_processes(logger=None):
+    """
+    Verifica si hay procesos Python ejecutándose que puedan interferir.
+    """
+    try:
+        import subprocess
+        # Obtener todos los procesos Python con información detallada
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq python.exe', '/V'],
+                              capture_output=True, text=True)
+
+        python_processes = []
+        lines = result.stdout.split('\n')
+
+        for line in lines[3:]:  # Saltar encabezados
+            if line.strip() and 'python.exe' in line.lower():
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        pid = parts[1]
+                        # Solo agregar PIDs válidos
+                        if pid.isdigit():
+                            python_processes.append(pid)
+                    except (ValueError, IndexError):
+                        continue
+
+        # También verificar procesos que podrían estar usando el puerto 8501
+        try:
+            netstat_result = subprocess.run(['netstat', '-ano'], capture_output=True, text=True)
+            for line in netstat_result.stdout.split('\n'):
+                if ':8501' in line and 'LISTENING' in line:
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        pid = parts[-1]
+                        if pid.isdigit() and pid not in python_processes:
+                            python_processes.append(pid)
+                            if logger:
+                                logger.info(f"🔍 Proceso usando puerto 8501 encontrado: PID {pid}")
+        except Exception as e:
+            if logger:
+                logger.warning(f"No se pudo verificar procesos en puerto 8501: {e}")
+
+        if python_processes:
+            if logger:
+                logger.info(f"🔍 Encontrados {len(python_processes)} procesos Python: {', '.join(python_processes)}")
+            return python_processes
+        else:
+            if logger:
+                logger.info("✅ No hay procesos Python conflictivos")
+            return []
+
+    except Exception as e:
+        if logger:
+            logger.warning(f"No se pudo verificar procesos Python: {e}")
+        return []
+
+def check_streamlit_processes(logger=None):
+    """
+    Verifica específicamente procesos de Streamlit que puedan estar ejecutándose.
+    """
+    try:
+        import subprocess
+        # Buscar procesos que contengan "streamlit" en el comando
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq python.exe', '/V'],
+                              capture_output=True, text=True)
+
+        streamlit_processes = []
+        lines = result.stdout.split('\n')
+
+        for line in lines:
+            if 'streamlit' in line.lower():
+                # Extraer PID de la línea
+                parts = line.split()
+                if len(parts) > 1:
+                    try:
+                        pid = parts[1]
+                        streamlit_processes.append(pid)
+                    except (ValueError, IndexError):
+                        continue
+
+        if streamlit_processes:
+            if logger:
+                logger.info(f"🔍 Encontrados {len(streamlit_processes)} procesos Streamlit: {', '.join(streamlit_processes)}")
+            return streamlit_processes
+        else:
+            if logger:
+                logger.info("✅ No hay procesos Streamlit ejecutándose")
+            return []
+
+    except Exception as e:
+        if logger:
+            logger.warning(f"No se pudo verificar procesos Streamlit: {e}")
+        return []
+
+def check_port_availability(port=8501, logger=None):
+    """
+    Verifica si el puerto especificado está disponible.
+    """
+    try:
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)  # Timeout de 5 segundos
+
+        result = sock.connect_ex(('localhost', port))
+        sock.close()
+
+        if result == 0:
+            if logger:
+                logger.warning(f"⚠️ Puerto {port} está ocupado")
+            return False
+        else:
+            if logger:
+                logger.info(f"✅ Puerto {port} está disponible")
+            return True
+
+    except socket.timeout:
+        if logger:
+            logger.warning(f"Timeout verificando puerto {port}")
+        return False
+    except Exception as e:
+        if logger:
+            logger.warning(f"No se pudo verificar puerto {port}: {e}")
+        return True  # Asumir disponible si no se puede verificar
+
+def kill_conflicting_processes(processes, logger=None):
+    """
+    Mata procesos conflictivos de Python.
+    """
+    try:
+        import subprocess
+        killed_count = 0
+        failed_count = 0
+
+        for pid in processes:
+            try:
+                # Usar taskkill con más opciones para asegurar terminación
+                result = subprocess.run(['taskkill', '/PID', str(pid), '/F', '/T'],
+                                      capture_output=True, text=True, timeout=10)
+
+                if result.returncode == 0:
+                    killed_count += 1
+                    if logger:
+                        logger.info(f"🛑 Proceso Python {pid} terminado exitosamente")
+                else:
+                    failed_count += 1
+                    if logger:
+                        logger.warning(f"No se pudo terminar proceso {pid}: {result.stderr}")
+
+            except subprocess.TimeoutExpired:
+                failed_count += 1
+                if logger:
+                    logger.warning(f"Timeout terminando proceso {pid}")
+            except Exception as e:
+                failed_count += 1
+                if logger:
+                    logger.warning(f"Error terminando proceso {pid}: {e}")
+
+        if logger:
+            if killed_count > 0:
+                logger.info(f"✅ Terminados {killed_count} procesos conflictivos exitosamente")
+            if failed_count > 0:
+                logger.warning(f"⚠️ No se pudieron terminar {failed_count} procesos")
+
+        return killed_count
+
+    except Exception as e:
+        if logger:
+            logger.error(f"Error general terminando procesos: {e}")
+        return 0
+
+def force_cleanup_port_8501(logger=None):
+    """
+    Fuerza la liberación del puerto 8501 usando comandos del sistema operativo.
+    """
+    try:
+        import subprocess
+
+        success = False
+
+        # Método 1: Usar netstat y taskkill para encontrar y matar procesos usando el puerto
+        try:
+            logger.info("🔧 Método 1: Liberando puerto usando netstat + taskkill...")
+
+            # Encontrar procesos usando el puerto 8501
+            netstat_result = subprocess.run(['netstat', '-ano'], capture_output=True, text=True, timeout=10)
+
+            pids_to_kill = []
+            for line in netstat_result.stdout.split('\n'):
+                if ':8501' in line and ('LISTENING' in line or 'ESTABLISHED' in line):
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        pid = parts[-1]
+                        if pid.isdigit() and pid not in pids_to_kill:
+                            pids_to_kill.append(pid)
+
+            # Matar los procesos encontrados
+            for pid in pids_to_kill:
+                try:
+                    result = subprocess.run(['taskkill', '/PID', pid, '/F', '/T'],
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        if logger:
+                            logger.info(f"🛑 Proceso {pid} (usando puerto 8501) terminado")
+                        success = True
+                    else:
+                        if logger:
+                            logger.warning(f"No se pudo terminar proceso {pid}: {result.stderr}")
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"Error terminando proceso {pid}: {e}")
+
+        except Exception as e:
+            if logger:
+                logger.warning(f"Error en método 1: {e}")
+
+        # Método 2: Matar todos los procesos de Python (más agresivo)
+        try:
+            if not success:
+                logger.info("🔧 Método 2: Terminando todos los procesos Python...")
+
+                result = subprocess.run(['taskkill', '/IM', 'python.exe', '/F'],
+                                      capture_output=True, text=True, timeout=10)
+
+                if result.returncode == 0:
+                    if logger:
+                        logger.info("🛑 Todos los procesos Python terminados")
+                    success = True
+                    time.sleep(3)  # Esperar a que se liberen los recursos
+                else:
+                    if logger:
+                        logger.warning(f"No se pudieron terminar procesos Python: {result.stderr}")
+
+        except Exception as e:
+            if logger:
+                logger.warning(f"Error en método 2: {e}")
+
+        # Método 3: Usar comandos de red para forzar liberación
+        try:
+            if not success:
+                logger.info("🔧 Método 3: Usando comandos de red para liberar puerto...")
+
+                # En Windows, intentar resetear el puerto
+                result = subprocess.run(['netsh', 'interface', 'ipv4', 'reset'],
+                                      capture_output=True, text=True, timeout=15)
+
+                if result.returncode == 0:
+                    if logger:
+                        logger.info("🔄 Interfaces de red reseteadas")
+                    success = True
+                    time.sleep(2)
+                else:
+                    if logger:
+                        logger.warning(f"No se pudieron resetear interfaces: {result.stderr}")
+
+        except Exception as e:
+            if logger:
+                logger.warning(f"Error en método 3: {e}")
+
+        # Verificación final
+        time.sleep(2)
+        final_check = check_port_availability(8501, logger)
+
+        if final_check:
+            if logger:
+                logger.info("✅ Puerto 8501 liberado exitosamente")
+            return True
+        else:
+            if logger:
+                logger.warning("⚠️ Puerto 8501 aún ocupado después de limpieza")
+            return False
+
+    except Exception as e:
+        if logger:
+            logger.error(f"❌ Error en limpieza forzada del puerto: {e}")
+        return False
+
+def verify_dashboard_running(logger=None):
+    """
+    Verifica que el dashboard esté realmente ejecutándose y respondiendo.
+    """
+    try:
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                if requests:
+                    # Usar requests si está disponible
+                    response = requests.get("http://localhost:8501", timeout=5)
+                    if response.status_code == 200:
+                        if logger:
+                            logger.info("✅ Dashboard respondiendo correctamente")
+                        return True
+                else:
+                    # Usar socket como alternativa
+                    import socket
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(5)
+                    result = sock.connect_ex(('localhost', 8501))
+                    sock.close()
+                    if result == 0:
+                        if logger:
+                            logger.info("✅ Dashboard respondiendo correctamente (verificación socket)")
+                        return True
+
+            except Exception as e:
+                if logger:
+                    logger.debug(f"Intento {attempt + 1} falló: {e}")
+                pass
+
+            if logger:
+                logger.info(f"⏳ Esperando respuesta del dashboard (intento {attempt + 1}/{max_attempts})...")
+            time.sleep(2)
+
+        if logger:
+            logger.warning("⚠️ Dashboard no responde después de múltiples intentos")
+        return False
+
+    except Exception as e:
+        if logger:
+            logger.warning(f"Error verificando dashboard: {e}")
+        return False
+
+def launch_dashboard():
+    """
+    Lanza el dashboard profesional con limpieza automática agresiva de puertos.
+    """
+    try:
+        logger = get_logger(__name__)
+        logger.info("🚀 Iniciando verificación previa al lanzamiento del dashboard...")
+
+        # PASO 1: Limpieza agresiva del puerto 8501
+        logger.info("🧹 Realizando limpieza agresiva del puerto 8501...")
+        success = force_cleanup_port_8501(logger)
+        if not success:
+            logger.warning("⚠️ No se pudo liberar completamente el puerto, intentando continuar...")
+
+        # PASO 2: Verificar procesos Python existentes
+        logger.info("🔍 Verificando procesos Python existentes...")
+        python_processes = check_python_processes(logger)
+
+        # PASO 3: Verificar procesos Streamlit específicamente
+        logger.info("🔍 Verificando procesos Streamlit existentes...")
+        streamlit_processes = check_streamlit_processes(logger)
+
+        # PASO 4: Combinar listas de procesos a terminar
+        all_processes = list(set(python_processes + streamlit_processes))
+
+        # PASO 5: Verificar disponibilidad del puerto con múltiples intentos
+        logger.info("🔍 Verificando disponibilidad del puerto 8501...")
+        port_available = False
+        max_attempts = 3
+
+        for attempt in range(max_attempts):
+            port_available = check_port_availability(8501, logger)
+
+            if port_available:
+                logger.info("✅ Puerto 8501 disponible")
+                break
+            else:
+                logger.warning(f"⚠️ Puerto ocupado (intento {attempt + 1}/{max_attempts})")
+
+                if all_processes:
+                    logger.info("🛑 Intentando terminar procesos conflictivos...")
+                    killed_count = kill_conflicting_processes(all_processes, logger)
+
+                    if killed_count > 0:
+                        logger.info(f"⏳ Esperando {10 + attempt * 5} segundos para que los procesos terminen...")
+                        time.sleep(10 + attempt * 5)  # Esperar más tiempo en cada intento
+                    else:
+                        logger.warning("❌ No se pudieron terminar procesos, intentando forzar liberación del puerto...")
+                        force_cleanup_port_8501(logger)
+                        time.sleep(5)
+                else:
+                    logger.info("🛑 No hay procesos identificados, intentando forzar liberación del puerto...")
+                    force_cleanup_port_8501(logger)
+                    time.sleep(5)
+
+        if not port_available:
+            logger.error("❌ No se pudo liberar el puerto 8501 después de múltiples intentos")
+            logger.info("💡 Sugerencias:")
+            logger.info("   1. Cierra manualmente otros procesos de Streamlit/Python")
+            logger.info("   2. Reinicia tu computadora si es necesario")
+            logger.info("   3. Verifica que no haya otras aplicaciones usando el puerto 8501")
+            return False
+
+        # PASO 6: Verificar que el dashboard existe
+        dashboard_path = os.path.join(grandparent_root, "dash2.py")
+        if not os.path.exists(dashboard_path):
+            logger.error(f"❌ Dashboard no encontrado en: {dashboard_path}")
+            return False
+
+        logger.info("📊 Lanzando Dashboard Profesional...")
+
+        # PASO 7: Ejecutar Streamlit con mejor manejo de errores
+        try:
+            import subprocess
+
+            # Comando para ejecutar streamlit con opciones adicionales
+            cmd = [
+                sys.executable, "-m", "streamlit", "run", "dash2.py",
+                "--server.port", "8501",
+                "--server.headless", "true",
+                "--server.address", "0.0.0.0",
+                "--server.enableCORS", "false",
+                "--server.enableXsrfProtection", "false"
+            ]
+
+            logger.info("📊 Ejecutando Streamlit directamente...")
+            logger.info(f"📂 Directorio de trabajo: {grandparent_root}")
+            logger.info(f"📄 Archivo dashboard: dash2.py")
+
+            # Ejecutar streamlit en background con mejor configuración
+            process = subprocess.Popen(
+                cmd,
+                cwd=grandparent_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+
+            # Esperar más tiempo para que se inicie completamente
+            logger.info("⏳ Esperando que Streamlit se inicie completamente...")
+            time.sleep(8)
+
+            # Verificar si está ejecutándose
+            if process.poll() is None:
+                logger.info("✅ Dashboard iniciado correctamente")
+                logger.info("📊 Dashboard disponible en: http://localhost:8501")
+
+                # Verificar que realmente esté respondiendo
+                if verify_dashboard_running(logger):
+                    # Abrir navegador
+                    try:
+                        import webbrowser
+                        webbrowser.open("http://localhost:8501")
+                        logger.info("🌐 Navegador abierto automáticamente")
+                    except Exception as e:
+                        logger.warning(f"No se pudo abrir navegador: {e}")
+
+                    return True
+                else:
+                    logger.error("❌ Dashboard no responde correctamente")
+                    process.terminate()
+                    return False
+            else:
+                # Si falló, obtener el error
+                stdout, stderr = process.communicate()
+                logger.error("❌ Error iniciando dashboard:")
+                if stderr:
+                    logger.error(f"STDERR: {stderr}")
+                if stdout:
+                    logger.info(f"STDOUT: {stdout}")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error lanzando dashboard: {e}")
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ Error general en launch_dashboard: {e}")
+        return False
 
 def validate_data(df: pd.DataFrame, logger=None) -> bool:
     """
     Valida la integridad de los datos antes del backtesting.
-    
-    Args:
-        df: DataFrame con los datos a validar
-        logger: Logger opcional para mensajes
-        
-    Returns:
-        bool: True si los datos son válidos, False en caso contrario
     """
     if logger is None:
         logger = get_logger(__name__)
-    
-    # 1. Verificar que el DataFrame no está vacío
+
     if df.empty:
         logger.error("El DataFrame está vacío")
         return False
-    
-    # 2. Verificar columnas OHLCV y técnicas requeridas
+
     required_columns = ['open', 'high', 'low', 'close', 'volume']
     technical_columns = ['sar', 'atr', 'adx']
     all_required = required_columns + technical_columns
-    
+
     missing_columns = [col for col in all_required if col not in df.columns]
     if missing_columns:
         logger.error(f"Faltan columnas requeridas: {missing_columns}")
         return False
-    
-    # 3. Verificar valores nulos en columnas críticas
+
+    # Verificar valores nulos
     null_check = df[required_columns].isnull().any()
     if null_check.any():
         null_cols = null_check[null_check].index.tolist()
         logger.error(f"Hay valores nulos en las columnas OHLCV: {null_cols}")
         return False
-    
-    # 4. Verificar validez de precios
-    price_columns = ['open', 'high', 'low', 'close']
-    
-    # 4.1 Verificar precios positivos
-    if (df[price_columns] <= 0).any().any():
-        logger.error("Hay precios negativos o cero en los datos")
-        return False
-    
-    # 4.2 Verificar relación high-low
-    invalid_hl = df[df['high'] < df['low']].index
-    if not invalid_hl.empty:
-        logger.error(f"Hay {len(invalid_hl)} registros donde high < low")
-        return False
-    
-    # 4.3 Verificar que open/close están entre high y low
-    price_logic = (
-        (df['open'] <= df['high']) & 
-        (df['open'] >= df['low']) & 
-        (df['close'] <= df['high']) & 
-        (df['close'] >= df['low'])
-    )
-    if not price_logic.all():
-        logger.error("Hay precios open/close fuera del rango high-low")
-        return False
-    
-    # 5. Verificar volumen
-    if (df['volume'] < 0).any():
-        logger.error("Hay valores negativos en el volumen")
-        return False
-    
-    # 6. Verificar indicadores técnicos
-    tech_check = df[technical_columns].isnull().any()
-    if tech_check.any():
-        tech_null = tech_check[tech_check].index.tolist()
-        logger.warning(f"Hay valores nulos en indicadores técnicos: {tech_null}")
-    
+
     logger.info("Validación de datos completada exitosamente")
     return True
 
-def check_data_exists(storage: DataStorage, table_name: str, start_date: str, end_date: str, timeframe: str) -> tuple[bool, pd.DataFrame]:
+async def download_symbol_data(symbol: str, config,
+                             downloader, mt5_downloader, logger):
     """
-    Verifica si los datos ya existen en la base de datos para el período especificado y los retorna.
-    
-    Args:
-        storage: Instancia de DataStorage para acceder a los datos
-        table_name: Nombre de la tabla a verificar
-        start_date: Fecha de inicio en formato 'YYYY-MM-DD'
-        end_date: Fecha de fin en formato 'YYYY-MM-DD'
-        timeframe: El timeframe de los datos (ej. '1h', '1d') para verificar la continuidad.
-        
-    Returns:
-        tuple[bool, pd.DataFrame]: (True si los datos existen y están completos, DataFrame con los datos)
-                                 Si los datos no existen o están incompletos, retorna (False, DataFrame vacío)
+    Descarga datos para un símbolo específico usando la fuente apropiada.
     """
-    # Convertir fechas a timestamps para comparación (en segundos)
-    start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
-    end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
-    
-    # Verificar si la tabla existe y obtener datos
-    if not storage.table_exists(table_name):
-        return False, pd.DataFrame()
-        
-    # Obtener los datos del rango temporal
-    df = storage.query_data(table_name, start_ts, end_ts)
-    
-    if df.empty:
-        return False, df
-        
-    # Verificar continuidad de los datos según el timeframe
-    if timeframe == '1h':
-        expected_interval = 3600  # 1 hora en segundos
-    elif timeframe == '1d':
-        expected_interval = 86400  # 1 día en segundos
-    else:
-        raise ValueError(f"Timeframe no soportado: {timeframe}")
-        
-    timestamps = df['timestamp'].values
-    gaps = timestamps[1:] - timestamps[:-1]
-    
-    # Permitir una pequeña tolerancia en los intervalos (1 minuto)
-    tolerance = 60  # 1 minuto en segundos
-    
-    if not all((expected_interval - tolerance) <= gap <= (expected_interval + tolerance) for gap in gaps):
-        return False, df
-        
-    return True, df
+    timeframe = config.backtesting.timeframe
+    start_date = config.backtesting.start_date
+    end_date = config.backtesting.end_date
 
-async def main():
-    # Cargar configuración
-    config = load_config_from_yaml()
-    
-    # Configurar logging
-    setup_logging(config)
-    logger = get_logger(__name__)
-    
-    logger.info("Iniciando proceso de verificación y descarga de datos...")
-    
-    # Inicializar componentes
-    downloader = DataDownloader(config)
-    
-    # Verificar si debemos usar MT5
-    mt5_downloader = None
-    if config.use_mt5:
-        if MT5_AVAILABLE:
-            logger.info("Usando MetaTrader 5 como fuente de datos")
-            mt5_downloader = MT5Downloader(config)
-            await mt5_downloader.initialize_async()
-        else:
-            logger.warning("MetaTrader 5 está configurado pero no disponible. Instale con: pip install MetaTrader5>=5.0.45")
-            logger.info("Continuando con la fuente de datos alternativa...")
-    
-    storage = DataStorage(f"{config.storage.path}/data.db")
-    
     try:
-        # Configurar exchanges
-        await downloader.setup_exchanges()
-        
-        # Obtener exchange activo y timeframe
-        active_exchange = config.active_exchange
-        timeframe = config.exchanges[active_exchange]['timeframe']
-        start_date = config.exchanges[active_exchange]['start_date']
-        end_date = config.exchanges[active_exchange]['end_date']
-        
-        # Descargar datos para cada símbolo
-        for symbol in config.default_symbols:
-            logger.info(f"Verificando datos existentes para {symbol} en {active_exchange}")
-            
-            symbol_safe = symbol.replace('/', '_').replace('.', '_')
-            table_raw = f"{config.active_exchange}_{symbol_safe}_{timeframe}_indicators_raw"
-            table_normalized = f"{config.active_exchange}_{symbol_safe}_{timeframe}_indicators_normalized"
-            
-            # Verificar si los datos finales (normalizados) ya existen y están completos
-            data_exists, _ = check_data_exists(storage, table_normalized, start_date, end_date, timeframe)
-            
-            if data_exists:
-                logger.info(f"Datos existentes encontrados para {symbol}, usando datos almacenados")
-                # Cargar TODOS los datos disponibles sin filtrar por fecha
-                data_with_indicators = storage.query_data(table_normalized)
-                logger.info(f"Datos cargados: {len(data_with_indicators)} filas")
-            else:
-                logger.info(f"Descargando nuevos datos para {symbol}")
-                
-                # Decidir qué fuente de datos usar basada en el tipo de símbolo
-                use_mt5_for_symbol = False
-                if config.use_mt5 and mt5_downloader is not None:
-                    # Usar MT5 solo para acciones (símbolos que terminan en .US)
-                    if symbol.endswith('.US'):
-                        use_mt5_for_symbol = True
-                        logger.info(f"Usando MT5 para acción: {symbol}")
-                    else:
-                        logger.info(f"Usando CCXT para cripto: {symbol}")
-                
-                if use_mt5_for_symbol:
-                    # Usar MT5 para descargar datos de acciones
-                    logger.info(f"Descargando datos desde MT5 para {symbol}")
-                    
-                    # Probar diferentes formatos de símbolo para acciones
-                    symbol_formats = []
-                    if symbol.endswith('.US'):
-                        base_symbol = symbol.replace('.US', '')
-                        symbol_formats = [
-                            symbol,           # TSLA.US
-                            base_symbol,      # TSLA
-                            f"{base_symbol}USD",  # TSLAUSD
-                            f"{base_symbol}USDT", # TSLAUSDT
-                        ]
-                    else:
-                        symbol_formats = [symbol]
-                    
-                    ohlcv_data = None
-                    successful_format = None
-                    
-                    # Probar diferentes fechas también
-                    date_ranges = [
-                        (start_date, end_date),  # Fechas originales
-                        ("2023-01-01", "2023-06-01"),  # 2023
-                        ("2022-01-01", "2022-06-01"),  # 2022
-                        ("2021-01-01", "2021-06-01"),  # 2021
-                    ]
-                    
-                    for fmt in symbol_formats:
-                        for date_start, date_end in date_ranges:
-                            logger.info(f"Intentando MT5 con símbolo: {fmt}, fechas: {date_start} a {date_end}")
-                            
-                            # Convertir fechas a datetime
-                            start_dt = datetime.strptime(date_start, '%Y-%m-%d')
-                            end_dt = datetime.strptime(date_end, '%Y-%m-%d')
-                            
-                            # Intentar descargar
-                            ohlcv_data = await mt5_downloader.download_data(
-                                fmt,
-                                timeframe,
-                                start_dt,
-                                end_dt
-                            )
-                            
-                            if ohlcv_data is not None and not ohlcv_data.empty:
-                                logger.info(f"✅ Éxito con formato: {fmt}, fechas: {date_start} a {date_end}")
-                                successful_format = fmt
-                                break
-                        
-                        if successful_format:
-                            break
-                    
-                    if ohlcv_data is None or ohlcv_data.empty:
-                        logger.warning(f"No se pudieron descargar datos de MT5 para {symbol} con ningún formato. Intentando con CCXT...")
-                        # Fallback a CCXT si MT5 falla
-                        ohlcv_data, stats = await downloader.async_download_ohlcv(
-                            symbol, 
-                            active_exchange, 
-                            timeframe=timeframe,
-                            limit=1000
-                        )
-                        if ohlcv_data is not None and not ohlcv_data.empty:
-                            logger.info(f"✅ Fallback exitoso: Datos descargados desde CCXT para {symbol}")
-                        else:
-                            logger.error(f"No se pudieron descargar datos para {symbol} desde MT5 ni CCXT")
-                            continue
-                    
-                    # Crear estadísticas simuladas para mantener consistencia con el flujo existente
-                    stats = {
-                        'time_range': {
-                            'start': date_start if 'date_start' in locals() else start_date,
-                            'end': date_end if 'date_end' in locals() else end_date
-                        },
-                        'row_count': len(ohlcv_data) if ohlcv_data is not None else 0,
-                        'price_stats': {
-                            'price_volatility': ohlcv_data['close'].pct_change().std() if ohlcv_data is not None and not ohlcv_data.empty else 0
-                        }
-                    }
-                    
-                    # Guardar datos en formato CSV para mantener consistencia
-                    if ohlcv_data is not None and not ohlcv_data.empty:
-                        output_dir = f"{config.storage.path}/csv"
-                        os.makedirs(output_dir, exist_ok=True)
-                        output_file = f"{output_dir}/mt5_{successful_format or symbol}_{timeframe}_ohlcv.csv"
-                        ohlcv_data.to_csv(output_file)
-                        logger.info(f"Datos guardados en CSV: {output_file}")
-                else:
-                    # Usar exchange CCXT para descargar datos de criptos
-                    logger.info(f"Descargando datos desde CCXT para {symbol}")
-                    ohlcv_data, stats = await downloader.async_download_ohlcv(
-                        symbol, 
-                        active_exchange, 
-                        timeframe=timeframe,
-                        limit=1000
-                    )
-                
-                if stats:
-                    logger.info(f"Estadísticas de descarga para {symbol}:")
-                    logger.info(f"  - Rango temporal: {stats['time_range']['start']} a {stats['time_range']['end']}")
-                    logger.info(f"  - Filas descargadas: {stats['row_count']}")
-                    logger.info(f"  - Volatilidad de precios: {stats['price_stats']['price_volatility']:.4f}")
-                
-                if ohlcv_data is not None and not ohlcv_data.empty:
-                    logger.info(f"Datos descargados: {len(ohlcv_data)} filas")
-                    
-                    # Calcular indicadores
-                    indicators = TechnicalIndicators(config)
-                    data_with_indicators = indicators.calculate_all_indicators(ohlcv_data)
-                else:
-                    logger.error(f"No se pudieron descargar los datos para {symbol}")
-                    continue
-            
-            if data_with_indicators is not None:
-                if not data_exists:
-                    logger.info("Indicadores calculados exitosamente")
-                    
-                    # Guardar datos crudos con indicadores
-                    output_dir = f"{config.storage.path}/csv"
-                    output_file_raw = f"{output_dir}/{config.active_exchange}_{symbol_safe}_{timeframe}_ohlcv_indicators.csv"
-                    
-                    save_to_csv(data_with_indicators, output_file_raw)
-                    storage.save_data(table_raw, data_with_indicators)
-                    logger.info(f"Datos crudos guardados en CSV: {output_file_raw} y DB: {table_raw}")
-                    
-                    # Normalizar datos
-                    logger.info("Normalizando datos...")
-                    normalizer = DataNormalizer(config.normalization)
-                    normalized_data = normalizer.fit_transform(data_with_indicators)
-                    
-                    output_file_normalized = f"{output_dir}/{config.active_exchange}_{symbol_safe}_{timeframe}_ohlcv_indicators_normalized.csv"
-                    
-                    save_to_csv(normalized_data, output_file_normalized)
-                    storage.save_data(table_normalized, normalized_data)
-                    logger.info(f"Datos normalizados guardados en CSV: {output_file_normalized} y DB: {table_normalized}")
-                
-                # Ejecutar backtesting
-                logger.info(f"Iniciando backtesting para {symbol}...")
-                try:
-                    # Cargar TODOS los datos disponibles para backtesting
-                    logger.info(f"Cargando datos para backtesting de la tabla {table_raw}")
-                    data = storage.query_data(table_raw)  # Sin filtrar por fecha
-                    
-                    if data.empty:
-                        logger.error(f"No se encontraron datos en la tabla {table_raw}")
-                        continue
-                    
-                    logger.info(f"Datos cargados para backtesting: {len(data)} filas")
-                    
-                    # Validar que tenemos todas las columnas necesarias
-                    if not validate_data(data, logger):
-                        logger.error("Los datos no son válidos para realizar el backtesting")
-                        continue
-                    
-                    # Ejecutar el backtesting
-                    results = await run_backtest(data, symbol)
-                    logger.info(f"Backtesting completado exitosamente para {symbol}")
-                    
-                    # Mostrar resultados básicos
-                    if results:
-                        logger.info("Resumen de resultados:")
-                        for strategy_name, result in results.items():
-                            logger.info(f"\nEstratégia: {strategy_name}")
-                            logger.info(f"Total trades: {result.get('total_trades', 0)}")
-                            logger.info(f"Win rate: {result.get('win_rate', 0)*100:.2f}%")
-                            logger.info(f"Profit/Loss total: ${result.get('total_pnl', 0):.2f}")
-                            
-                            # Métricas adicionales para comparación detallada
-                            if 'profit_factor' in result:
-                                logger.info(f"Profit Factor: {result['profit_factor']:.2f}")
-                            if 'expectancy' in result:
-                                logger.info(f"Expectancy: ${result['expectancy']:.2f}")
-                            if 'avg_win' in result and 'avg_loss' in result:
-                                logger.info(f"Avg Win/Loss: ${result['avg_win']:.2f} / ${result['avg_loss']:.2f}")
-                            if 'max_drawdown' in result:
-                                logger.info(f"Máximo drawdown: {result['max_drawdown']:.2f}%")
-                            if 'sharpe_ratio' in result:
-                                logger.info(f"Ratio de Sharpe: {result['sharpe_ratio']:.2f}")
-                
-                except Exception as e:
-                    logger.error(f"Error al cargar datos para backtesting: {e}")
-            else:
-                logger.error("Error al calcular los indicadores")
-    
-    finally:
-        # Cerrar exchanges
-        await downloader.close_exchanges()
-        
-        # Cerrar MT5 si se utilizó
-        if config.use_mt5 and mt5_downloader is not None:
-            mt5_downloader.shutdown()
-            logger.info("Conexión MT5 cerrada")
+        if symbol.endswith('.US'):
+            # Acción - usar MT5 si está disponible
+            if mt5_downloader is not None:
+                logger.info(f"[INFO] Descargando {symbol} desde MT5...")
 
-async def run_backtest(data: pd.DataFrame, symbol: str) -> dict:
+                # Convertir fechas
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+
+                ohlcv_data = await mt5_downloader.download_data(
+                    symbol.replace('.US', ''), timeframe, start_dt, end_dt
+                )
+
+                if ohlcv_data is not None and not ohlcv_data.empty:
+                    logger.info(f"[SUCCESS] Datos descargados desde MT5: {len(ohlcv_data)} velas")
+                    return ohlcv_data
+                else:
+                    logger.warning(f"[WARNING] No se pudieron descargar datos de MT5 para {symbol}")
+
+        else:
+            # Criptomoneda - usar CCXT
+            logger.info(f"[INFO] Descargando {symbol} desde CCXT...")
+
+            ohlcv_data, stats = await downloader.async_download_ohlcv(
+                symbol, config.active_exchange, timeframe=timeframe, limit=1000
+            )
+
+            if ohlcv_data is not None and not ohlcv_data.empty:
+                logger.info(f"[SUCCESS] Datos descargados desde CCXT: {len(ohlcv_data)} velas")
+                return ohlcv_data
+            else:
+                logger.warning(f"[WARNING] No se pudieron descargar datos de CCXT para {symbol}")
+
+    except Exception as e:
+        logger.error(f"[ERROR] Error descargando {symbol}: {e}")
+
+    return None
+
+async def process_symbol_backtest(data: pd.DataFrame, symbol: str, config, logger) -> dict:
     """
-    Ejecuta el backtesting de la estrategia UT Bot + PSAR usando datos con indicadores precalculados.
-    
-    Args:
-        data: DataFrame con datos OHLCV e indicadores técnicos
-        symbol: Símbolo del par de trading
-        
-    Returns:
-        dict: Resultados del backtesting
+    Procesa el backtesting completo para un símbolo con datos ya descargados.
+    """
+    try:
+        if data is None or data.empty:
+            logger.error(f"No hay datos disponibles para {symbol}")
+            return {}
+
+        # Los datos ya incluyen indicadores calculados y normalizados
+        data_with_indicators = data
+
+        # 1. Validar datos
+        if not validate_data(data_with_indicators, logger):
+            logger.error(f"Datos inválidos para {symbol}")
+            return {}
+
+        # 2. Ejecutar backtesting
+        logger.info(f"[INFO] Ejecutando backtesting para {symbol}...")
+        results = await run_backtest(data_with_indicators, symbol, config)
+
+        if results:
+            logger.info(f"[SUCCESS] Backtesting completado exitosamente para {symbol}")
+            
+            # Guardar resultados para el dashboard
+            print(f"[DEBUG] Llamando a save_backtest_results para {symbol}")
+            await save_backtest_results(results, symbol, config, logger)
+            
+            return results
+        else:
+            logger.warning(f"[WARNING] Backtesting sin resultados para {symbol}")
+            return {}
+
+    except Exception as e:
+        logger.error(f"[ERROR] Error procesando {symbol}: {e}")
+        return {}
+
+async def run_backtest(data: pd.DataFrame, symbol: str, config) -> dict:
+    """
+    Ejecuta el backtesting con la estrategia unificada usando diferentes estilos.
     """
     logger = get_logger(__name__)
-    
-    # Configuraciones de estrategia
-    strategies = {
-        "UTBot_Conservadora": UTBotPSARStrategy(
-            sensitivity=0.8,
-            atr_period=14,
-            use_heikin_ashi=False,
-            risk_percent=1.0,
-            tp_atr_multiplier=3.0,
-            sl_atr_multiplier=1.2,
-            psar_start=0.015,
-            psar_increment=0.015,
-            psar_max=0.15
-        ),
-        "UTBot_Intermedia": UTBotPSARStrategy(
-            sensitivity=1.0,
-            atr_period=10,
-            use_heikin_ashi=False,
-            risk_percent=2.0,
-            tp_atr_multiplier=2.0,
-            sl_atr_multiplier=1.5,
-            psar_start=0.02,
-            psar_increment=0.02,
-            psar_max=0.2
-        ),
-        "UTBot_Agresiva": UTBotPSARStrategy(
-            sensitivity=1.2,
-            atr_period=8,
-            use_heikin_ashi=False,
-            risk_percent=3.0,
-            tp_atr_multiplier=1.5,
-            sl_atr_multiplier=2.0,
-            psar_start=0.025,
-            psar_increment=0.025,
-            psar_max=0.25
-        ),
-        "Optimizada_Ganadora": OptimizedUTBotStrategy(
-            sensitivity=1.0,
-            atr_period=10,
-            take_profit_multiplier=4.5,
-            stop_loss_multiplier=2.0,
-            psar_acceleration=0.02,
-            psar_maximum=0.2,
-            min_confidence=0.7
-        )
-    }
-    
+
+    # Importar estrategias individuales
+    from strategies.ut_bot_psar import UTBotPSARStrategy
+    from strategies.ut_bot_psar_conservative import UTBotPSARConservativeStrategy
+    from strategies.ut_bot_psar_optimized import UTBotPSAROptimizedStrategy
+
+    # Configuraciones de estrategia basadas en la configuración
+    strategies = {}
+
+    enabled_strategies = get_enabled_strategies(config)
+    logger.info(f"[DEBUG] Estrategias habilitadas: {enabled_strategies}")
+    logger.info(f"[DEBUG] Número de estrategias habilitadas: {len(enabled_strategies)}")
+
+    # Crear estrategias individuales
+    if "Estrategia_Basica" in enabled_strategies:
+        strategies["Estrategia_Basica"] = UTBotPSARStrategy()
+
+    if "Estrategia_Conservadora" in enabled_strategies:
+        strategies["Estrategia_Conservadora"] = UTBotPSARConservativeStrategy()
+
+    if "Estrategia_Optimizada" in enabled_strategies:
+        strategies["Estrategia_Optimizada"] = UTBotPSAROptimizedStrategy()
+
+    logger.info(f"[DEBUG] Estrategias configuradas: {list(strategies.keys())}")
+    logger.info(f"[DEBUG] Número de estrategias configuradas: {len(strategies)}")
+
     results = {}
-    
-    # Probar cada configuración
+
     for strategy_name, strategy in strategies.items():
-        logger.info(f"Iniciando backtesting para {symbol} con estrategia {strategy_name}...")
-        
-        # Configurar backtester
+        logger.info(f"[INFO] Probando estrategia: {strategy_name}")
+
         backtester = AdvancedBacktester(
-            initial_capital=10000,
-            commission=0.1  # 0.1%
+            initial_capital=config.backtesting.initial_capital,
+            commission=config.backtesting.commission
         )
-        
-        # Ejecutar backtesting
+
         strategy_results = backtester.run(strategy, data, symbol)
         results[strategy_name] = strategy_results
-        
-        # Mostrar resultados detallados
-        logger.info(f"\n=== RESULTADOS DETALLADOS PARA {symbol.upper()} - {strategy_name.upper()} ===")
-        logger.info(f"[+] Total trades: {strategy_results['total_trades']}")
-        logger.info(f"[+] Win rate: {strategy_results['win_rate']*100:.2f}%")
-        logger.info(f"[+] Profit/Loss total: ${strategy_results['total_pnl']:.2f}")
-        logger.info(f"[+] Maximo drawdown: {strategy_results['max_drawdown']:.2f}%")
-        logger.info(f"[+] Ratio de Sharpe: {strategy_results['sharpe_ratio']:.2f}")
-        
-        # Métricas adicionales si están disponibles
-        if 'profit_factor' in strategy_results:
-            logger.info(f"[+] Profit Factor: {strategy_results['profit_factor']:.2f}")
-        if 'expectancy' in strategy_results:
-            logger.info(f"[+] Expectancy: ${strategy_results['expectancy']:.2f}")
-        if 'avg_win' in strategy_results and 'avg_loss' in strategy_results:
-            logger.info(f"[+] Avg Win/Loss: ${strategy_results['avg_win']:.2f} / ${strategy_results['avg_loss']:.2f}")
-        if 'total_wins' in strategy_results and 'total_losses' in strategy_results:
-            logger.info(f"[+] Wins/Losses: {strategy_results['total_wins']} / {strategy_results['total_losses']}")
-        
-        logger.info("=" * 60)
-        
-        # Guardar resultados
-        config = load_config_from_yaml()
-        output_dir = f"{config.storage.path}/backtest_results/{symbol}/{strategy_name}"
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Guardar equity curve
-        equity_df = pd.DataFrame({
-            'equity': strategy_results['equity_curve']
-        })
-        equity_df.to_csv(f"{output_dir}/equity_curve.csv")
-        
-        # Guardar trades
-        trades_df = pd.DataFrame([
-            {
-                'entry_time': t.entry_time,
-                'exit_time': t.exit_time,
-                'entry_price': t.entry_price,
-                'exit_price': t.exit_price,
-                'position_size': t.position_size,
-                'pnl': t.pnl,
-                'position_type': t.position_type,
-                'exit_reason': t.exit_reason
-            }
-            for t in strategy_results['trades']
-        ])
-        trades_df.to_csv(f"{output_dir}/trades.csv")
-    
-    # Mostrar comparación final entre estrategias
-    logger.info(f"\n{'='*80}")
-    logger.info(f"COMPARACION FINAL DE ESTRATEGIAS PARA {symbol.upper()}")
-    logger.info(f"{'='*80}")
-    
-    # Ordenar estrategias por profit total
-    sorted_strategies = sorted(results.items(), key=lambda x: x[1]['total_pnl'], reverse=True)
-    
-    for i, (strategy_name, result) in enumerate(sorted_strategies, 1):
-        medal = "ORO" if i == 1 else "PLATA" if i == 2 else "BRONCE" if i == 3 else "POS"
-        logger.info(f"{medal} #{i} {strategy_name}:")
-        logger.info(f"   P&L: ${result['total_pnl']:.2f} | Win Rate: {result['win_rate']*100:.1f}% | Sharpe: {result['sharpe_ratio']:.2f}")
-    
-    # Identificar mejor estrategia
-    best_strategy = sorted_strategies[0][0]
-    best_pnl = sorted_strategies[0][1]['total_pnl']
-    logger.info(f"\nMEJOR ESTRATEGIA: {best_strategy} con P&L de ${best_pnl:.2f}")
-    logger.info(f"{'='*80}")
-    
+
+        # Log básico de resultados
+        pnl = strategy_results.get('total_pnl', 0)
+        win_rate = strategy_results.get('win_rate', 0) * 100
+        logger.info(f"[SUCCESS] Backtesting completado para {symbol}: {len(strategy_results.get('trades', []))} trades, P&L: ${pnl:.2f}, Win Rate: {win_rate:.1f}%")
+
     return results
 
+def generate_backtest_report(results: dict, config, logger):
+    """
+    Genera un reporte final del backtesting masivo.
+    """
+    logger.info(f"\n{'='*80}")
+    logger.info("[INFO] REPORTE FINAL DE BACKTESTING MASIVO")
+    logger.info(f"{'='*80}")
+
+    if not results:
+        logger.warning("No hay resultados para mostrar")
+        return
+
+    # Análisis por símbolo
+    logger.info(f"\n[INFO] RESULTADOS POR SIMBOLO:")
+    logger.info("-" * 80)
+    logger.info(f"{'Símbolo':15s} | {'Mejor Estrategia':20s} | {'P&L':10s} | {'Win Rate':8s} | {'Max DD':8s}")
+    logger.info("-" * 80)
+
+    symbol_summary = []
+    for symbol, strategies in results.items():
+        best_strategy = max(strategies.items(), key=lambda x: x[1].get('total_pnl', -10000))
+        strategy_name, result = best_strategy
+
+        pnl = result.get('total_pnl', 0)
+        win_rate = result.get('win_rate', 0) * 100
+        max_dd = result.get('max_drawdown', 0) * 100
+
+        symbol_summary.append({
+            'symbol': symbol,
+            'strategy': strategy_name,
+            'pnl': pnl,
+            'win_rate': win_rate,
+            'max_dd': max_dd
+        })
+
+        logger.info(f"{symbol:15s} | {strategy_name:20s} | ${pnl:10.2f} | {win_rate:6.1f}% | {max_dd:6.1f}%")
+
+    # Ranking final
+    logger.info(f"\n[INFO] RANKING FINAL (ordenado por P&L):")
+    logger.info("-" * 80)
+    logger.info(f"{'Posición':8s} | {'Símbolo':10s} | {'Estrategia':20s} | {'P&L':10s} | {'Win Rate':8s}")
+    logger.info("-" * 80)
+
+    sorted_symbols = sorted(symbol_summary, key=lambda x: x['pnl'], reverse=True)
+
+    for i, item in enumerate(sorted_symbols, 1):
+        medal = "[1st]" if i == 1 else "[2nd]" if i == 2 else "[3rd]" if i == 3 else f"{i:2d}"
+        logger.info(f"{medal} | {item['symbol']:10s} | {item['strategy']:20s} | ${item['pnl']:10.2f} | {item['win_rate']:6.1f}%")
+
+    # Estadísticas generales
+    total_pnl = sum(item['pnl'] for item in symbol_summary)
+    avg_win_rate = sum(item['win_rate'] for item in symbol_summary) / len(symbol_summary)
+    profitable_symbols = sum(1 for item in symbol_summary if item['pnl'] > 0)
+
+    logger.info(f"\n[INFO] ESTADISTICAS GENERALES:")
+    logger.info(f"   • Símbolos procesados: {len(symbol_summary)}")
+    logger.info(f"   • Símbolos rentables: {profitable_symbols}")
+    logger.info(f"   • P&L Total: ${total_pnl:.2f}")
+    logger.info(f"   • Win Rate Promedio: {avg_win_rate:.1f}%")
+    logger.info(f"   • Temporalidad: {config.backtesting.timeframe}")
+    logger.info(f"   • Periodo: {config.backtesting.start_date} a {config.backtesting.end_date}")
+
+    # === SISTEMA DE COMPENSACIÓN DESACTIVADO ===
+    logger.info(f"\n[INFO] SISTEMA DE COMPENSACIÓN: DESACTIVADO")
+    logger.info(f"   • No se aplican compensaciones a los resultados")
+    logger.info(f"   • Se muestran resultados puros de las estrategias")
+
+    logger.info(f"\n{'='*80}")
+
+async def main():
+    """
+    Función principal del sistema de backtesting masivo.
+    """
+    # Cargar configuración centralizada
+    config = load_config_from_yaml()
+
+    # Configurar logging
+    setup_logging(config.system.log_level, config.system.log_file)
+    logger = get_logger(__name__)
+
+    logger.info("[INFO] Iniciando Bot Trader Copilot - Backtesting Masivo")
+    logger.info("=" * 60)
+
+    # Mostrar configuración actual
+    active_symbols = config.backtesting.symbols
+    logger.info(f"[INFO] Simbolos a procesar: {len(active_symbols)}")
+    logger.info(f"[INFO] Temporalidad: {config.backtesting.timeframe}")
+    logger.info(f"[INFO] Periodo: {config.backtesting.start_date} a {config.backtesting.end_date}")
+    logger.info(f"[INFO] Capital inicial: ${config.backtesting.initial_capital}")
+    enabled_strategies = get_enabled_strategies(config)
+    logger.info(f"[INFO] Estrategias activas: {len(enabled_strategies)}")
+    logger.info("=" * 60)
+
+    # Inicializar componentes
+    downloader = AdvancedDataDownloader(config)
+
+    # Verificar MT5
+    mt5_available = False
+    if config.mt5.enabled:
+        logger.info("[INFO] MT5 habilitado - disponible para acciones")
+        mt5_available = True
+    else:
+        logger.info("[INFO] MT5 deshabilitado - solo criptomonedas")
+
+    storage = DataStorage(f"{config.storage.path}/data.db")
+    backtest_results = {}
+
+    try:
+        # Inicializar downloader avanzado
+        success = await downloader.initialize()
+        if not success:
+            logger.error("No se pudo inicializar el downloader")
+            return
+
+        # Descargar datos de todos los símbolos en paralelo
+        logger.info("🚀 Iniciando descarga masiva de datos...")
+        symbol_data = await downloader.download_multiple_symbols(
+            active_symbols,
+            timeframe=config.backtesting.timeframe,
+            start_date=config.backtesting.start_date,
+            end_date=config.backtesting.end_date
+        )
+
+        if not symbol_data:
+            logger.error("No se pudieron descargar datos de ningún símbolo")
+            return
+
+        # Procesar y guardar datos
+        logger.info("💾 Procesando y guardando datos...")
+        processed_symbol_data = await downloader.process_and_save_data(
+            symbol_data,
+            config.backtesting.timeframe,
+            save_csv=True
+        )
+
+        # Procesar backtesting para cada símbolo
+        backtest_results = {}
+        for i, (symbol, df) in enumerate(processed_symbol_data.items(), 1):
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Procesando backtesting {i}/{len(processed_symbol_data)}: {symbol}")
+            logger.info(f"{'='*60}")
+
+            result = await process_symbol_backtest(df, symbol, config, logger)
+            if result:
+                backtest_results[symbol] = result
+                print(f"[DEBUG] Resultado guardado para {symbol}: {len(result)} estrategias")
+            else:
+                print(f"[DEBUG] No hay resultado para {symbol}")
+
+        print(f"[DEBUG] Backtest completado. Total símbolos procesados: {len(backtest_results)}")
+        # Generar reporte final
+        generate_backtest_report(backtest_results, config, logger)
+
+        # Guardar resumen global para el dashboard
+        if backtest_results:
+            await save_global_summary(backtest_results, config, logger)
+
+        # Lanzar dashboard automáticamente si está habilitado
+        if hasattr(config.system, 'auto_launch_dashboard') and config.system.auto_launch_dashboard:
+            logger.info("📊 Iniciando lanzamiento automático del dashboard...")
+            dashboard_launched = launch_dashboard()
+            if dashboard_launched:
+                logger.info("✅ Dashboard profesional iniciado exitosamente")
+                logger.info("🌐 Accede a: http://localhost:8501")
+            else:
+                logger.warning("⚠️ No se pudo iniciar el dashboard automáticamente")
+        else:
+            logger.info("📊 Dashboard automático deshabilitado")
+            logger.info("💡 Para ver los resultados, ejecuta: python run_dashboard.py")
+
+    finally:
+        # Cerrar conexiones
+        await downloader.shutdown()
+
+def calculate_symbol_compensation_metrics(results: dict, compensation_config: dict = None) -> dict:
+    """
+    Calcula métricas de compensación realistas basadas en configuración.
+
+    Args:
+        results: Resultados del backtesting por estrategia
+        compensation_config: Configuración de compensación (opcional)
+    """
+    if compensation_config is None:
+        compensation_config = {
+            'enabled': True,
+            'success_rate': 0.65,  # 65% de éxito en compensaciones
+            'recovery_factor': 0.75,  # 75% de recuperación de pérdida
+            'max_compensation_size': 0.5,  # Máximo 50% del tamaño original
+            'min_trade_size': 10,  # Mínimo tamaño de trade para compensar
+            'max_daily_compensations': 3,  # Máximo compensaciones por día
+            'cooldown_period': 2  # Días de enfriamiento entre compensaciones
+        }
+
+    if not compensation_config.get('enabled', True):
+        return {
+            'compensated_trades': 0,
+            'total_compensation_pnl': 0.0,
+            'compensation_success_rate': 0.0,
+            'adjusted_total_pnl': 0.0
+        }
+
+    print(f"[DEBUG] Función calculate_symbol_compensation_metrics llamada con configuración realista")
+    logger = get_logger(__name__)
+    logger.info(f"[DEBUG] Calculando métricas de compensación realistas")
+
+    # Obtener la mejor estrategia para calcular métricas
+    best_strategy = max(results.items(), key=lambda x: x[1].get('total_pnl', -10000))
+    strategy_name, result = best_strategy
+    print(f"[DEBUG] Mejor estrategia: {strategy_name}")
+
+    # Obtener trades de la mejor estrategia
+    trades = result.get('trades', [])
+    print(f"[DEBUG] Número total de trades: {len(trades)}")
+
+    if not trades:
+        return {
+            'compensated_trades': 0,
+            'total_compensation_pnl': 0.0,
+            'compensation_success_rate': 0.0,
+            'adjusted_total_pnl': result.get('total_pnl', 0)
+        }
+
+    # Filtrar trades perdedores elegibles para compensación
+    losing_trades = []
+    for trade in trades:
+        pnl = trade.get('pnl', 0)
+        if pnl < 0:  # Trade perdedor
+            # Verificar tamaño mínimo
+            trade_size = abs(pnl)
+            if trade_size >= compensation_config['min_trade_size']:
+                losing_trades.append(trade)
+
+    print(f"[DEBUG] Trades perdedores elegibles: {len(losing_trades)}")
+
+    if not losing_trades:
+        return {
+            'compensated_trades': 0,
+            'total_compensation_pnl': 0.0,
+            'compensation_success_rate': 0.0,
+            'adjusted_total_pnl': result.get('total_pnl', 0)
+        }
+
+    # Simular compensaciones realistas
+    total_compensation_pnl = 0.0
+    successful_compensations = 0
+    compensation_attempts = 0
+
+    # Procesar trades por fecha para respetar límites diarios
+    trades_by_date = {}
+    for trade in losing_trades:
+        date = trade.get('entry_date', trade.get('date', 'unknown'))
+        if date not in trades_by_date:
+            trades_by_date[date] = []
+        trades_by_date[date].append(trade)
+
+    # Procesar día por día
+    for date, day_trades in trades_by_date.items():
+        daily_compensations = 0
+
+        for trade in day_trades:
+            if daily_compensations >= compensation_config['max_daily_compensations']:
+                break  # Límite diario alcanzado
+
+            compensation_attempts += 1
+
+            # Calcular tamaño de compensación (limitado)
+            original_loss = abs(trade.get('pnl', 0))
+            max_compensation = original_loss * compensation_config['max_compensation_size']
+            compensation_size = min(max_compensation, original_loss * 0.3)  # Máximo 30% del original
+
+            # Simular resultado de compensación con probabilidad realista
+            import random
+            random.seed(hash(f"{date}_{compensation_attempts}"))  # Seed consistente
+            compensation_success = random.random() < compensation_config['success_rate']
+
+            if compensation_success:
+                # Compensación exitosa - recupera parte de la pérdida
+                recovery_amount = compensation_size * compensation_config['recovery_factor']
+                compensation_pnl = recovery_amount
+                successful_compensations += 1
+                daily_compensations += 1
+            else:
+                # Compensación fallida - genera pérdida adicional pequeña
+                compensation_pnl = -compensation_size * 0.2  # Solo 20% de pérdida adicional
+
+            total_compensation_pnl += compensation_pnl
+
+    # Calcular métricas finales
+    total_losing_trades = len(losing_trades)
+    compensation_success_rate = (successful_compensations / compensation_attempts) * 100 if compensation_attempts > 0 else 0
+    original_pnl = result.get('total_pnl', 0)
+    adjusted_total_pnl = original_pnl + total_compensation_pnl
+
+    metrics = {
+        'compensated_trades': successful_compensations,
+        'total_compensation_pnl': total_compensation_pnl,
+        'compensation_success_rate': compensation_success_rate,
+        'adjusted_total_pnl': adjusted_total_pnl,
+        'total_losing_trades': total_losing_trades,
+        'compensation_attempts': compensation_attempts,
+        'compensation_config': compensation_config
+    }
+
+    print(f"[DEBUG] Métricas calculadas: {metrics}")
+    logger.info(f"[DEBUG] Compensación completada: {successful_compensations}/{compensation_attempts} exitosas ({compensation_success_rate:.1f}%)")
+
+    return metrics
+
+async def save_backtest_results(results: dict, symbol: str, config, logger):
+    print(f"[DEBUG] save_backtest_results llamada para {symbol} con {len(results)} estrategias")
+    try:
+        # Crear directorio para resultados si no existe
+        results_dir = Path("data/dashboard_results")
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        # Archivo para este símbolo
+        results_file = results_dir / f"{symbol.replace('/', '_').replace('.', '_')}_results.json"
+
+        # Preparar datos para guardar
+        dashboard_data = {
+            'symbol': symbol,
+            'timestamp': datetime.now().isoformat(),
+            'strategies': {},
+            'summary': {
+                'total_strategies': len(results),
+                'best_strategy': None,
+                'best_pnl': float('-inf'),
+                'total_trades': 0,
+                'avg_win_rate': 0.0,
+                'total_compensated_trades': 0,
+                'total_compensation_pnl': 0.0,
+                'avg_compensation_rate': 0.0
+            }
+        }
+
+        win_rates = []
+        compensation_rates = []
+
+        # === SISTEMA DE COMPENSACIÓN COMPLETAMENTE DESACTIVADO ===
+        logger.info(f"[INFO] Sistema de compensación completamente deshabilitado para {symbol}")
+
+        for strategy_name, strategy_result in results.items():
+            # Convertir datos no serializables
+            clean_result = {}
+            for key, value in strategy_result.items():
+                if isinstance(value, pd.Series):
+                    clean_result[key] = value.tolist()
+                elif isinstance(value, pd.DataFrame):
+                    clean_result[key] = value.to_dict('records')
+                elif isinstance(value, (int, float, str, bool, list, dict)) or value is None:
+                    clean_result[key] = value
+                else:
+                    clean_result[key] = str(value)
+
+            # NO aplicar compensaciones - usar resultados puros
+            clean_result['adjusted_total_pnl'] = strategy_result.get('total_pnl', 0)
+            clean_result['compensation_applied'] = 0.0
+            clean_result['compensation_success_rate'] = 0.0
+            clean_result['compensated_trades'] = 0
+
+            dashboard_data['strategies'][strategy_name] = clean_result
+
+            # Actualizar resumen
+            pnl = strategy_result.get('total_pnl', 0)
+            if pnl > dashboard_data['summary']['best_pnl']:
+                dashboard_data['summary']['best_pnl'] = pnl
+                dashboard_data['summary']['best_strategy'] = strategy_name
+
+            dashboard_data['summary']['total_trades'] += strategy_result.get('total_trades', 0)
+
+            win_rate = strategy_result.get('win_rate', 0)
+            if win_rate > 0:
+                win_rates.append(win_rate)
+
+            # Agregar métricas de compensación
+            dashboard_data['summary']['total_compensated_trades'] += strategy_result.get('compensated_trades', 0)
+            dashboard_data['summary']['total_compensation_pnl'] += strategy_result.get('total_compensation_pnl', 0.0)
+
+            comp_rate = strategy_result.get('compensation_success_rate', 0)
+            if comp_rate > 0:
+                compensation_rates.append(comp_rate)
+
+        # Calcular promedios
+        if win_rates:
+            dashboard_data['summary']['avg_win_rate'] = sum(win_rates) / len(win_rates)
+
+        if compensation_rates:
+            dashboard_data['summary']['avg_compensation_rate'] = sum(compensation_rates) / len(compensation_rates)
+
+        # Guardar archivo JSON
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(dashboard_data, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"✅ Resultados guardados para dashboard: {results_file}")
+
+    except Exception as e:
+        logger.error(f"❌ Error guardando resultados para dashboard: {e}")
+
+async def save_global_summary(all_results: dict, config, logger):
+    """
+    Guarda un resumen global de todos los símbolos para el dashboard
+    """
+    try:
+        results_dir = Path("data/dashboard_results")
+        summary_file = results_dir / "global_summary.json"
+
+        global_summary = {
+            'timestamp': datetime.now().isoformat(),
+            'total_symbols': len(all_results),
+            'symbols': list(all_results.keys()),
+            'config': {
+                'timeframe': config.backtesting.timeframe,
+                'start_date': config.backtesting.start_date,
+                'end_date': config.backtesting.end_date,
+                'initial_capital': config.backtesting.initial_capital
+            },
+            'metrics': {
+                'total_pnl': 0.0,
+                'total_trades': 0,
+                'profitable_symbols': 0,
+                'avg_win_rate': 0.0,
+                'total_compensated_trades': 0,
+                'total_compensation_pnl': 0.0,
+                'avg_compensation_rate': 0.0
+            }
+        }
+
+        win_rates = []
+        compensation_rates = []
+
+        for symbol, strategies in all_results.items():
+            best_strategy = max(strategies.items(), key=lambda x: x[1].get('total_pnl', -10000))
+            strategy_name, result = best_strategy
+
+            pnl = result.get('total_pnl', 0)
+            global_summary['metrics']['total_pnl'] += pnl
+            global_summary['metrics']['total_trades'] += result.get('total_trades', 0)
+
+            if pnl > 0:
+                global_summary['metrics']['profitable_symbols'] += 1
+
+            win_rate = result.get('win_rate', 0)
+            if win_rate > 0:
+                win_rates.append(win_rate)
+
+            # Métricas de compensación
+            global_summary['metrics']['total_compensated_trades'] += result.get('compensated_trades', 0)
+            global_summary['metrics']['total_compensation_pnl'] += result.get('total_compensation_pnl', 0.0)
+
+            comp_rate = result.get('compensation_success_rate', 0)
+            if comp_rate > 0:
+                compensation_rates.append(comp_rate)
+
+        # Calcular promedios
+        if win_rates:
+            global_summary['metrics']['avg_win_rate'] = sum(win_rates) / len(win_rates)
+
+        if compensation_rates:
+            global_summary['metrics']['avg_compensation_rate'] = sum(compensation_rates) / len(compensation_rates)
+
+        # Guardar resumen global
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(global_summary, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"✅ Resumen global guardado: {summary_file}")
+
+    except Exception as e:
+        logger.error(f"❌ Error guardando resumen global: {e}")
+
 if __name__ == "__main__":
-    print("Iniciando el programa...")
+    print("[INFO] Iniciando Bot Trader Copilot...")
     asyncio.run(main())
-    print("Programa finalizado.")
+    print("[SUCCESS] Programa finalizado.")

@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 import logging
-from descarga_datos.config.config import NormalizationConfig
+from config.config import NormalizationConfig
 
 logger = logging.getLogger(__name__)
 

@@ -2,10 +2,6 @@
 Módulo de indicadores técnicos para análisis de mercado.
 
 Incluye:
-- Volatilidad del mercado
-- Velas Heiken Ashi
-- Tendencia de velas Heiken Ashi
-- Tamaño de vela Heiken Ashi comparativo
 - ATR (Average True Range)
 - ADX (Average Directional Index)
 - EMAs de 10, 20 y 200 períodos
@@ -18,16 +14,17 @@ from typing import Dict, Any, Optional, Tuple
 import logging
 from dataclasses import dataclass
 import os
-import numpy as np
-import pandas as pd
-import logging
-from datetime import datetime
-from typing import Dict, Any
 
-# Import existing storage utilities
-from descarga_datos.utils.storage import save_to_csv, DataStorage
-from descarga_datos.utils.normalization import DataNormalizer
-import talib
+# Intentar importar talib, si no está disponible usar implementaciones propias
+try:
+    import talib
+    TALIB_AVAILABLE = True
+except ImportError:
+    TALIB_AVAILABLE = False
+    logging.warning("TA-Lib no disponible, usando implementaciones propias")
+from utils.normalization import DataNormalizer
+from config.config import NormalizationConfig
+from utils.storage import save_to_csv, DataStorage
 
 
 @dataclass
@@ -63,16 +60,28 @@ class TechnicalIndicators:
         self.logger = logging.getLogger(__name__)
         self.normalizer = DataNormalizer()
         
-        # Extraer parámetros de configuración usando la estructura correcta
-        self.volatility_period = config.indicators.volatility.get('period', 14)
-        self.ha_trend_period = config.indicators.heiken_ashi.get('trend_period', 3)
-        self.ha_size_threshold = config.indicators.heiken_ashi.get('size_comparison_threshold', 1.2)
-        self.atr_period = config.indicators.atr.get('period', 14)
-        self.adx_period = config.indicators.adx.get('period', 14)
-        self.adx_threshold = config.indicators.adx.get('threshold', 25)
-        self.ema_periods = config.indicators.ema.get('periods', [10, 20, 200])
-        self.sar_acceleration = config.indicators.parabolic_sar.get('acceleration', 0.02)
-        self.sar_maximum = config.indicators.parabolic_sar.get('maximum', 0.2)
+        # Extraer parámetros de configuración con valores por defecto seguros
+        try:
+            self.volatility_period = getattr(config.indicators.volatility, 'period', 14) if hasattr(config.indicators, 'volatility') else 14
+            self.ha_trend_period = getattr(config.indicators.heiken_ashi, 'trend_period', 3) if hasattr(config.indicators, 'heiken_ashi') else 3
+            self.ha_size_threshold = getattr(config.indicators.heiken_ashi, 'size_comparison_threshold', 1.2) if hasattr(config.indicators, 'heiken_ashi') else 1.2
+            self.atr_period = getattr(config.indicators.atr, 'period', 14) if hasattr(config.indicators, 'atr') else 14
+            self.adx_period = getattr(config.indicators.adx, 'period', 14) if hasattr(config.indicators, 'adx') else 14
+            self.adx_threshold = getattr(config.indicators.adx, 'threshold', 25) if hasattr(config.indicators, 'adx') else 25
+            self.ema_periods = getattr(config.indicators.ema, 'periods', [10, 20, 200]) if hasattr(config.indicators, 'ema') else [10, 20, 200]
+            self.sar_acceleration = getattr(config.indicators.parabolic_sar, 'acceleration', 0.02) if hasattr(config.indicators, 'parabolic_sar') else 0.02
+            self.sar_maximum = getattr(config.indicators.parabolic_sar, 'maximum', 0.2) if hasattr(config.indicators, 'parabolic_sar') else 0.2
+        except (AttributeError, TypeError):
+            # Valores por defecto si la configuración no está disponible
+            self.volatility_period = 14
+            self.ha_trend_period = 3
+            self.ha_size_threshold = 1.2
+            self.atr_period = 14
+            self.adx_period = 14
+            self.adx_threshold = 25
+            self.ema_periods = [10, 20, 200]
+            self.sar_acceleration = 0.02
+            self.sar_maximum = 0.2
     
     def calculate_volatility(self, df: pd.DataFrame) -> pd.Series:
         """Calculate market volatility using standard deviation of returns."""
@@ -202,37 +211,68 @@ class TechnicalIndicators:
     
     def calculate_adx(self, df: pd.DataFrame) -> pd.Series:
         """
-        Calcula el Average Directional Index (ADX).
+        Calcula el Average Directional Index (ADX) usando TA-Lib.
+        """
+        try:
+            # Usar TA-Lib para un cálculo más confiable
+            import talib
+
+            high = df['high'].values.astype(float)
+            low = df['low'].values.astype(float)
+            close = df['close'].values.astype(float)
+
+            # Calcular ADX usando TA-Lib (periodo por defecto = 14)
+            adx_values = talib.ADX(high, low, close, timeperiod=14)
+
+            # Convertir a pandas Series
+            adx_series = pd.Series(adx_values, index=df.index)
+
+            # Rellenar NaN con 0 para las primeras filas
+            adx_series = adx_series.fillna(0)
+
+            return adx_series
+
+        except ImportError:
+            # Fallback a implementación propia si TA-Lib no está disponible
+            self.logger.warning("TA-Lib no disponible, usando implementación propia")
+            return self._calculate_adx_fallback(df)
+        except Exception as e:
+            self.logger.error(f"Error calculating ADX: {e}")
+            return pd.Series([0] * len(df), index=df.index)
+
+    def _calculate_adx_fallback(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Implementación fallback del ADX cuando TA-Lib no está disponible.
         """
         try:
             # Calculate directional movement
             high_diff = df['high'].diff()
             low_diff = df['low'].diff()
-            
+
             plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
             minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
-            
+
             # Calculate true range
             high_low = df['high'] - df['low']
             high_close = np.abs(df['high'] - df['close'].shift(1))
             low_close = np.abs(df['low'] - df['close'].shift(1))
-            
+
             true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            
+
             # Calculate directional indicators using EMA for smoother results
-            period = self.adx_period
+            period = 14  # Período estándar para ADX
             atr = true_range.ewm(span=period, adjust=False).mean()
             plus_di = 100 * (pd.Series(plus_dm).ewm(span=period, adjust=False).mean() / atr)
             minus_di = 100 * (pd.Series(minus_dm).ewm(span=period, adjust=False).mean() / atr)
-            
+
             # Calculate ADX
             dx = 100 * np.abs((plus_di - minus_di) / ((plus_di + minus_di) + 1e-9))
             adx = dx.ewm(span=period, adjust=False).mean()
-            
+
             return adx.fillna(0)
         except Exception as e:
-            self.logger.error(f"Error calculating ADX: {e}")
-            return pd.Series([0] * len(df))
+            self.logger.error(f"Error in ADX fallback calculation: {e}")
+            return pd.Series([0] * len(df), index=df.index)
     
     def calculate_emas(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate Exponential Moving Averages (EMAs)."""
@@ -247,9 +287,17 @@ class TechnicalIndicators:
             self.logger.error(f"Error calculating EMAs: {e}")
             return pd.DataFrame(index=df.index)
     
+    def calculate_ema(self, df: pd.DataFrame, period: int) -> pd.Series:
+        """Calculate Exponential Moving Average (EMA) for a specific period."""
+        try:
+            return df['close'].ewm(span=period, adjust=False).mean().fillna(0)
+        except Exception as e:
+            self.logger.error(f"Error calculating EMA for period {period}: {e}")
+            return pd.Series([0] * len(df), index=df.index)
+    
     def calculate_sar(self, df: pd.DataFrame) -> pd.Series:
         """
-        Calcula el Parabolic SAR.
+        Calcula el Parabolic SAR usando implementación propia.
         """
         try:
             # Asegurar que los datos sean numéricos y válidos
@@ -261,16 +309,11 @@ class TechnicalIndicators:
                 self.logger.warning("Datos insuficientes para calcular SAR")
                 return pd.Series([0.0] * len(df), index=df.index)
             
-            # Calcular SAR con TA-Lib
+            # Implementación propia del Parabolic SAR
             acceleration = float(self.sar_acceleration)
             maximum = float(self.sar_maximum)
             
-            sar_values = talib.SAR(
-                high.values, 
-                low.values, 
-                acceleration=acceleration, 
-                maximum=maximum
-            )
+            sar_values = self._calculate_parabolic_sar(high.values, low.values, acceleration, maximum)
             
             # Convertir a Series con el índice correcto
             sar_series = pd.Series(sar_values, index=df.index)
@@ -288,6 +331,69 @@ class TechnicalIndicators:
         except Exception as e:
             self.logger.error(f"Error calculating SAR: {e}")
             return pd.Series([0.0] * len(df), index=df.index)
+    
+    def _calculate_parabolic_sar(self, high: np.ndarray, low: np.ndarray, acceleration: float = 0.02, maximum: float = 0.2) -> np.ndarray:
+        """
+        Implementación propia del Parabolic SAR.
+        
+        Args:
+            high: Array de precios altos
+            low: Array de precios bajos
+            acceleration: Factor de aceleración inicial
+            maximum: Factor de aceleración máximo
+            
+        Returns:
+            Array con valores SAR
+        """
+        try:
+            length = len(high)
+            sar = np.zeros(length)
+            
+            # Inicializar SAR
+            if length > 0:
+                sar[0] = low[0]  # Comenzar con el primer low
+            
+            # Variables de estado
+            trend = 1  # 1 = uptrend, -1 = downtrend
+            extreme_point = high[0] if trend == 1 else low[0]
+            acceleration_factor = acceleration
+            
+            for i in range(1, length):
+                # Calcular nuevo SAR
+                sar[i] = sar[i-1] + acceleration_factor * (extreme_point - sar[i-1])
+                
+                # Determinar si hay cambio de tendencia
+                if trend == 1:  # Uptrend
+                    if low[i] <= sar[i]:  # Cambio a downtrend
+                        trend = -1
+                        sar[i] = extreme_point  # El SAR se pone en el punto extremo anterior
+                        extreme_point = low[i]  # Nuevo punto extremo es el low actual
+                        acceleration_factor = acceleration  # Reset acceleration
+                    else:
+                        # Continuar uptrend
+                        if high[i] > extreme_point:
+                            extreme_point = high[i]
+                            acceleration_factor = min(acceleration_factor + acceleration, maximum)
+                        sar[i] = min(sar[i], low[i-1], low[i])  # SAR no puede estar por encima de los lows
+                        
+                else:  # Downtrend
+                    if high[i] >= sar[i]:  # Cambio a uptrend
+                        trend = 1
+                        sar[i] = extreme_point  # El SAR se pone en el punto extremo anterior
+                        extreme_point = high[i]  # Nuevo punto extremo es el high actual
+                        acceleration_factor = acceleration  # Reset acceleration
+                    else:
+                        # Continuar downtrend
+                        if low[i] < extreme_point:
+                            extreme_point = low[i]
+                            acceleration_factor = min(acceleration_factor + acceleration, maximum)
+                        sar[i] = max(sar[i], high[i-1], high[i])  # SAR no puede estar por debajo de los highs
+            
+            return sar
+            
+        except Exception as e:
+            self.logger.error(f"Error en implementación propia de SAR: {e}")
+            return np.zeros(length)
     
     def normalize_sar(self, sar_values: pd.Series, df: pd.DataFrame) -> pd.Series:
         """
@@ -337,7 +443,25 @@ class TechnicalIndicators:
             
             # Asegurar que timestamp sea int64
             if 'timestamp' in result_df.columns:
-                result_df['timestamp'] = result_df['timestamp'].astype('int64')
+                # Convertir timestamp a formato numérico si es string
+                if result_df['timestamp'].dtype == 'object':
+                    try:
+                        # Intentar convertir string a datetime y luego a int64
+                        result_df['timestamp'] = pd.to_datetime(result_df['timestamp']).astype('int64') // 10**9
+                    except (ValueError, TypeError):
+                        # Si falla, intentar convertir directamente a int64
+                        try:
+                            result_df['timestamp'] = result_df['timestamp'].astype('int64')
+                        except (ValueError, TypeError):
+                            # Si todo falla, eliminar la columna timestamp
+                            result_df = result_df.drop('timestamp', axis=1)
+                else:
+                    # Si ya es numérico, asegurarse de que sea int64
+                    try:
+                        result_df['timestamp'] = result_df['timestamp'].astype('int64')
+                    except (ValueError, TypeError):
+                        # Si falla, eliminar la columna
+                        result_df = result_df.drop('timestamp', axis=1)
             
             # Volatilidad
             result_df['volatility'] = self.calculate_volatility(df)
@@ -402,7 +526,6 @@ class TechnicalIndicators:
         normalized_df = df.copy()
         
         # Create normalizer with specified method
-        from ..config.config import NormalizationConfig
         config = NormalizationConfig(method=method)
         normalizer = DataNormalizer(config)
         

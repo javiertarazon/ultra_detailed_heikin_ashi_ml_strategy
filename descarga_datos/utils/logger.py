@@ -6,57 +6,61 @@ Configura el logging basado en la configuración proporcionada.
 import logging
 import os
 from typing import Optional
-from ..config.config import Config
 
-def setup_logging(config: Config) -> None:
+def setup_logging(log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> None:
     """
-    Configura el sistema de logging basado en la configuración.
-    
+    Configura el sistema de logging con parámetros simples.
+
     Args:
-        config: Instancia de Config con parámetros de logging.
+        log_level: Nivel de logging (DEBUG, INFO, WARNING, ERROR)
+        log_file: Ruta del archivo de log
     """
     # Crear directorio de logs si no existe
-    log_dir = os.path.dirname(config.log_file)
+    log_dir = os.path.dirname(log_file)
     if log_dir and not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    
+
     # Configurar el nivel de logging
-    log_level = getattr(logging, config.log_level.upper(), logging.INFO)
-    
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
     # Configurar el logger root
     root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-    
-    # Limpiar handlers existentes
-    root_logger.handlers = []
-    
-    # Configurar el formato del log
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    # Configurar handler para consola
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(log_level)
-    root_logger.addHandler(console_handler)
-    
-    # Handler para archivo
-    file_handler = logging.FileHandler(config.log_file)
-    file_handler.setFormatter(formatter)
-    
-    # Handler para consola
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    
-    # Configurar el logger raíz
-    root_logger = logging.getLogger()
-    
+    root_logger.setLevel(level)
+
     # Limpiar handlers existentes
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
-    
-    # Configurar el nuevo logger
+
+    # Crear formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Handler para consola
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # Handler para archivo si se especifica
+    if log_file:
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+def get_logger(name: str) -> logging.Logger:
+    """
+    Retorna un logger configurado con el nombre especificado.
+
+    Args:
+        name: Nombre del logger
+
+    Returns:
+        Logger configurado
+    """
+    return logging.getLogger(name)    # Configurar el nuevo logger
     root_logger.setLevel(log_level)
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)

@@ -13,7 +13,329 @@
 - **📈 Backtesting Profesional**: Métricas avanzadas y comparación de estrategias
 - **💾 Almacenamiento Unificado**: SQLite + CSV con normalización de datos
 - **🔧 Gestión de Riesgos**: Circuit breaker y validación de datos
-- **📊 Dashboard de Métricas**: Monitoreo en tiempo real del rendimiento
+- **📊 Dashboard Profesional**: Monitoreo en tiempo real con medallas de rendimiento
+- **🚀 Lanzamiento Automático**: Dashboard con limpieza agresiva de puertos
+- **⚡ Alto Rendimiento**: Optimizado para temporalidad de 1 hora
+
+---
+
+## 🏗️ Arquitectura del Sistema
+
+### 📁 Estructura de Directorios
+
+```
+bot trader copilot version 1.0/
+├── descarga_datos/                 # 🎯 Núcleo del sistema
+│   ├── main.py                     # 🚀 Punto de entrada principal
+│   ├── core/                       # 🔧 Componentes core
+│   │   ├── downloader.py           # 📥 Descarga desde CCXT
+│   │   ├── mt5_downloader.py       # 📥 Descarga desde MT5
+│   │   ├── interfaces.py           # 🔌 Interfaces del sistema
+│   │   ├── base_data_handler.py    # 🏗️ Handler base de datos
+│   │   └── optimized_downloader.py # ⚡ Descarga optimizada
+│   ├── indicators/                 # 📊 Indicadores técnicos
+│   │   └── technical_indicators.py # 📈 Cálculo de indicadores
+│   ├── strategies/                 # 🎯 Estrategias de trading
+│   │   ├── ut_bot_psar.py          # 📊 UT Bot PSAR base
+│   │   ├── ut_bot_psar_conservative.py # 🛡️ Versión conservadora
+│   │   ├── ut_bot_psar_optimized.py    # ⚡ Versión optimizada
+│   │   └── advanced_ut_bot_strategy.py # 🚀 Versión avanzada
+│   ├── backtesting/                # 📈 Sistema de backtesting
+│   │   ├── backtester.py           # 🔬 Backtester avanzado
+│   │   └── advanced_backtester.py  # 🎯 Backtester profesional
+│   ├── risk_management/            # ⚠️ Gestión de riesgos
+│   │   └── advanced_risk_manager.py # 🛡️ Risk manager avanzado
+│   ├── utils/                      # 🛠️ Utilidades
+│   │   ├── logger.py               # 📝 Sistema de logging
+│   │   ├── storage.py              # 💾 Almacenamiento de datos
+│   │   ├── normalization.py        # 🔄 Normalización de datos
+│   │   ├── cache_manager.py        # 🚀 Sistema de caché
+│   │   ├── retry_manager.py        # 🔄 Sistema de reintentos
+│   │   └── monitoring.py           # 📊 Monitoreo del sistema
+│   ├── config/                     # ⚙️ Configuración del sistema
+│   │   ├── config.yaml             # 📋 Configuración principal
+│   │   ├── config_loader.py        # 🔧 Carga de configuración
+│   │   └── bybit_config.yaml       # 🔑 Configuración Bybit
+│   ├── data/                       # 💾 Datos del sistema
+│   │   ├── dashboard_results/      # 📊 Resultados para dashboard
+│   │   └── csv/                    # 📄 Datos en formato CSV
+│   └── logs/                       # 📝 Logs del sistema
+├── dash2.py                        # 📊 Dashboard profesional
+├── requirements.txt                # 📦 Dependencias del proyecto
+├── trading_bot_env/               # 🐍 Entorno virtual
+└── docs/                          # 📚 Documentación
+```
+
+---
+
+## 🚀 Inicio Rápido
+
+### 📋 Prerrequisitos
+
+- **Python 3.11+**
+- **MT5 Terminal** (para datos de acciones)
+- **Cuenta Bybit/Binance** (para datos de cripto)
+- **8GB RAM mínimo** (recomendado 16GB+)
+
+### ⚡ Instalación Rápida
+
+```bash
+# 1. Clonar el repositorio
+git clone https://github.com/javiertarazon/botcopilot-sar.git
+cd botcopilot-sar
+
+# 2. Instalar dependencias
+pip install -r requirements.txt
+
+# 3. Configurar entorno virtual (opcional pero recomendado)
+python -m venv trading_bot_env
+trading_bot_env\Scripts\activate  # Windows
+# source trading_bot_env/bin/activate  # Linux/Mac
+
+# 4. Configurar APIs (opcional para datos demo)
+# Editar config/config.yaml con tus credenciales
+
+# 5. Ejecutar backtesting
+cd descarga_datos
+python main.py
+
+# 6. Ver dashboard
+cd ..
+streamlit run dash2.py
+```
+
+---
+
+## 📊 Dashboard Profesional
+
+### 🏆 Características del Dashboard
+
+- **🥇🥈🥉 Sistema de Medallas**: Ranking visual con medallas de oro, plata y bronce
+- **📊 Gráficas Interactivas**: P&L por símbolo y estrategia con Plotly
+- **📈 Curva de Equity**: Evolución del capital a lo largo del tiempo
+- **📋 Tabla Detallada**: Métricas completas de todas las estrategias
+- **🎯 Filtros Dinámicos**: Selección de símbolos y estrategias en tiempo real
+- **💾 Datos en Tiempo Real**: Actualización automática desde archivos JSON
+- **🚀 Lanzamiento Automático**: Dashboard se abre automáticamente después del backtesting
+
+### 🎯 Últimos Resultados (Temporalidad 1h)
+
+| Posición | Símbolo | P&L | Win Rate | Medalla |
+|----------|---------|-----|----------|---------|
+| 🥇 | NVDA.US | $11,240.45 | 46.5% | Oro |
+| 🥈 | MSFT.US | $7,453.89 | 50.8% | Plata |
+| 🥉 | TSLA.US | $5,896.04 | 50.0% | Bronce |
+| 4 | BTC/USDT | $2,753.11 | 55.6% | - |
+| 5 | COMP/USDT | $989.40 | 48.1% | - |
+
+**📈 Estadísticas Generales:**
+- ✅ Símbolos procesados: 13
+- ✅ Todos rentables
+- ✅ P&L Total: $30,518.59
+- ✅ Win Rate Promedio: 47.8%
+- ✅ Temporalidad: 1 hora
+
+---
+
+## 🎯 Estrategias de Trading
+
+### 📊 UT Bot PSAR (Parabolic SAR)
+
+El sistema utiliza una variante avanzada del UT Bot con Parabolic SAR:
+
+#### 🛡️ Estrategia Conservadora
+- **Riesgo**: Bajo
+- **Trades**: Menos frecuentes
+- **Objetivo**: Preservación de capital
+
+#### ⚖️ Estrategia Intermedia
+- **Riesgo**: Moderado
+- **Trades**: Balanceado
+- **Objetivo**: Rendimiento consistente
+
+#### 🚀 Estrategia Agresiva
+- **Riesgo**: Alto
+- **Trades**: Más frecuentes
+- **Objetivo**: Máximo rendimiento
+
+#### 🎯 Estrategia Optimizada
+- **Riesgo**: Adaptativo
+- **Trades**: Inteligente
+- **Objetivo**: Mejor ratio riesgo/recompensa
+
+---
+
+## 🔧 Configuración
+
+### 📋 Archivo config.yaml
+
+```yaml
+# Configuración principal
+system:
+  name: "Bot Trader Copilot"
+  version: "1.0"
+  log_level: "INFO"
+
+# Exchanges
+exchanges:
+  bybit:
+    enabled: true
+    api_key: "tu_api_key"
+    api_secret: "tu_api_secret"
+  binance:
+    enabled: true
+    api_key: "tu_api_key"
+    api_secret: "tu_api_secret"
+
+# MT5
+mt5:
+  enabled: true
+  login: 123456
+  password: "tu_password"
+  server: "tu_server"
+
+# Backtesting
+backtesting:
+  timeframe: "1h"  # Temporalidad actual
+  start_date: "2023-01-01"
+  end_date: "2025-06-01"
+  initial_capital: 10000
+  symbols:
+    - "YFI/USDT"
+    - "BTC/USDT"
+    - "ETH/USDT"
+    - "SOL/USDT"
+    - "ADA/USDT"
+    - "COMP/USDT"
+    - "LINK/USDT"
+    - "DOT/USDT"
+    - "AAPL.US"
+    - "TSLA.US"
+    - "NVDA.US"
+    - "MSFT.US"
+    - "GOOGL.US"
+```
+
+---
+
+## 📈 Resultados de Backtesting
+
+### 🎯 Rendimiento por Temporalidad
+
+| Temporalidad | P&L Total | Win Rate | Símbolos Rentables |
+|-------------|-----------|----------|-------------------|
+| **1h** | $30,518.59 | 47.8% | 13/13 ✅ |
+| 4h | $21,732.02 | 48.8% | 13/13 ✅ |
+| 15m | $17,500.00 | 45.6% | 12/13 ✅ |
+
+### 🏆 Mejores Símbolos (1h)
+
+1. **NVDA.US** - $11,240.45 (46.5% WR) 🥇
+2. **MSFT.US** - $7,453.89 (50.8% WR) 🥈
+3. **TSLA.US** - $5,896.04 (50.0% WR) 🥉
+4. **BTC/USDT** - $2,753.11 (55.6% WR)
+5. **COMP/USDT** - $989.40 (48.1% WR)
+
+---
+
+## 🛠️ Desarrollo y Contribución
+
+### 📝 Guía de Contribución
+
+1. **Fork** el proyecto
+2. **Crea** una rama para tu feature (`git checkout -b feature/AmazingFeature`)
+3. **Commit** tus cambios (`git commit -m 'Add some AmazingFeature'`)
+4. **Push** a la rama (`git push origin feature/AmazingFeature`)
+5. **Abre** un Pull Request
+
+### 🐛 Reportar Issues
+
+Usa el template de issues para reportar bugs o solicitar features:
+
+```markdown
+**Descripción del problema:**
+[Describe el problema de manera clara]
+
+**Pasos para reproducir:**
+1. Ir a '...'
+2. Hacer click en '....'
+3. Ver error
+
+**Comportamiento esperado:**
+[Describe qué debería pasar]
+
+**Capturas de pantalla:**
+[Si aplica]
+```
+
+---
+
+## 📚 Documentación
+
+### 📖 Archivos de Documentación
+
+- **[MT5_GUIDE.md](docs/MT5_GUIDE.md)**: Guía completa de configuración MT5
+- **[CHANGELOG.md](CHANGELOG.md)**: Historial de cambios y versiones
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: Guía para contribuidores
+
+### 🎯 Arquitectura Técnica
+
+El sistema sigue una arquitectura modular:
+
+```
+📥 Data Ingestion Layer
+    ├── CCXT Downloader (Cripto)
+    └── MT5 Downloader (Acciones)
+
+🔧 Processing Layer
+    ├── Technical Indicators (TA-Lib)
+    ├── Strategy Engine (UT Bot PSAR)
+    └── Risk Management
+
+📊 Output Layer
+    ├── SQLite Storage
+    ├── CSV Export
+    └── Dashboard (Streamlit)
+```
+
+---
+
+## ⚖️ Licencia
+
+Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para más detalles.
+
+---
+
+## 👥 Autor
+
+**Javier Tarazón**
+- 📧 Email: [tu-email@ejemplo.com]
+- 🔗 LinkedIn: [tu-linkedin]
+- 🐙 GitHub: [@javiertarazon]
+
+---
+
+## 🙏 Agradecimientos
+
+- **TA-Lib** por los indicadores técnicos
+- **CCXT** por la integración con exchanges
+- **Streamlit** por el framework de dashboard
+- **Plotly** por las visualizaciones interactivas
+- **MetaTrader 5** por la API de datos
+
+---
+
+## 📞 Soporte
+
+Para soporte técnico o preguntas:
+
+1. 📋 Revisa la [documentación](docs/)
+2. 🔍 Busca en los [issues](https://github.com/javiertarazon/botcopilot-sar/issues) existentes
+3. 📝 Crea un nuevo issue si no encuentras solución
+
+---
+
+**⭐ Si te gusta este proyecto, ¡dale una estrella en GitHub!**
 
 ---
 
@@ -262,6 +584,33 @@ python main.py --symbols "SOL/USDT,XRP/USDT,TSLA.US,NVDA.US"
 
 # Ejecutar solo backtesting
 python main.py --backtest-only
+```
+
+### 🚀 **Lanzamiento Automático del Dashboard**
+
+**El sistema incluye lanzamiento automático del dashboard profesional después de completar el backtesting:**
+
+```bash
+# El dashboard se lanza automáticamente al finalizar el backtesting
+python main.py
+```
+
+**Características del lanzamiento automático:**
+- ✅ **Detección automática**: Se lanza solo si `auto_launch_dashboard: true` en `config.yaml`
+- ✅ **Navegador automático**: Abre el navegador web automáticamente en `http://localhost:8501`
+- ✅ **Datos en tiempo real**: Muestra los resultados más recientes del backtesting
+- ✅ **Background execution**: El dashboard se ejecuta en segundo plano
+- ✅ **Configurable**: Se puede deshabilitar cambiando la configuración
+
+**Configuración en `config/config.yaml`:**
+```yaml
+system:
+  auto_launch_dashboard: true  # true = automático, false = manual
+```
+
+**Para ejecutar manualmente el dashboard:**
+```bash
+python run_dashboard.py
 ```
 
 ---
@@ -546,6 +895,139 @@ pytest tests/ -v
 - ✅ **Estabilidad**: Sistema robusto y confiable
 
 **🚀 Listo para producción con resultados verificados en backtesting profesional.**
+
+---
+
+## 📊 Dashboard Profesional de Backtesting
+
+### 🎯 Características del Dashboard
+
+El sistema incluye una interfaz web profesional desarrollada con **Streamlit** y **Plotly** para visualizar todas las métricas de backtesting y el rendimiento del capital.
+
+#### ✨ Funcionalidades Principales
+
+- **📈 Gráfico de Balance Interactivo**: Visualización del crecimiento del capital a lo largo del tiempo
+- **📊 Tabla de Métricas Completa**: Todas las métricas de rendimiento en una tabla organizada
+- **🎯 Análisis por Símbolo**: Desglose detallado del rendimiento por cada símbolo operado
+- **📉 Gráficos de Rendimiento**: Análisis visual del Sharpe Ratio, Drawdown, y otras métricas
+- **🔄 Actualización en Tiempo Real**: Los datos se actualizan automáticamente desde el backtesting
+
+#### 🚀 Cómo Ejecutar el Dashboard
+
+```bash
+# Opción 1: Script dedicado (recomendado)
+python descarga_datos/run_dashboard.py
+
+# Opción 2: Directamente con Streamlit
+streamlit run dashboard.py
+```
+
+#### 📊 Métricas Visualizadas
+
+| Métrica | Descripción | Visualización |
+|---------|-------------|---------------|
+| **Retorno Total** | Ganancia/pérdida total del período | Gráfico de balance |
+| **Retorno Anualizado** | Rendimiento promedio anual | Indicador principal |
+| **Sharpe Ratio** | Riesgo ajustado al rendimiento | Gráfico de rendimiento |
+| **Max Drawdown** | Máxima caída del capital | Gráfico de drawdown |
+| **Win Rate** | % de operaciones ganadoras | Tabla de métricas |
+| **Profit Factor** | Relación ganancia/pérdida | Indicador clave |
+| **Total Trades** | Número total de operaciones | Estadística general |
+
+#### 🎨 Interfaz del Dashboard
+
+```
+🤖 Bot Trader Copilot Dashboard
+├── 📊 Inicio
+│   ├── Métricas principales
+│   └── Resumen general
+├── 💰 Balance
+│   ├── Gráfico de crecimiento del capital
+│   └── Análisis de drawdown
+├── 📈 Rendimiento
+│   ├── Sharpe Ratio
+│   ├── Retorno anualizado
+│   └── Estadísticas detalladas
+└── 🎯 Símbolos
+    ├── Rendimiento por símbolo
+    └── Análisis individual
+```
+
+#### 🔧 Requisitos del Dashboard
+
+```txt
+streamlit>=1.28.0
+plotly>=5.17.0
+pandas>=2.0.0
+numpy>=1.24.0
+```
+
+#### 📱 Uso del Dashboard
+
+1. **Ejecuta el dashboard** usando cualquiera de los comandos anteriores
+2. **Accede a la URL**: `http://localhost:8501`
+3. **Navega por las pestañas** para ver diferentes análisis
+4. **Interactúa con los gráficos** para zoom, pan y detalles
+5. **Filtra por símbolos** para análisis específicos
+
+#### 📱 Uso del Dashboard
+
+1. **Ejecuta el dashboard** usando cualquiera de los comandos anteriores
+2. **Accede a la URL**: `http://localhost:8501`
+3. **Navega por las pestañas** para ver diferentes análisis
+4. **Interactúa con los gráficos** para zoom, pan y detalles
+5. **Filtra por símbolos** para análisis específicos
+
+#### 🎯 Beneficios del Dashboard
+
+- **👀 Visualización Clara**: Todos los datos importantes a simple vista
+- **⚡ Actualización Automática**: No necesitas refrescar manualmente
+- **📱 Responsive**: Funciona en desktop y móvil
+- **🎨 Profesional**: Diseño moderno y atractivo
+- **🔍 Interactivo**: Zoom, filtros y detalles al hacer clic
+
+---
+
+## 🛠️ Scripts de Utilidad
+
+### 🚀 Inicio Rápido (`quick_start.py`)
+
+Script interactivo que ejecuta todo el flujo de trabajo automáticamente:
+
+```bash
+python quick_start.py
+```
+
+**Opciones disponibles:**
+1. **Verificar sistema únicamente**
+2. **Descargar datos únicamente**
+3. **Ejecutar backtesting únicamente**
+4. **Lanzar dashboard únicamente**
+5. **Ejecutar flujo completo**
+
+### 🔍 Verificación del Sistema (`check_system.py`)
+
+Verifica que todos los componentes del sistema estén funcionando correctamente:
+
+```bash
+python check_system.py
+```
+
+**Verificaciones realizadas:**
+- ✅ Versión de Python (requiere 3.8+)
+- ✅ Dependencias instaladas
+- ✅ Archivos del sistema presentes
+- ✅ Configuración válida
+- ✅ Importaciones de módulos
+- ✅ Prueba básica de funcionalidad
+
+### 📊 Dashboard Rápido (`descarga_datos/run_dashboard.py`)
+
+Script dedicado para ejecutar el dashboard profesional:
+
+```bash
+python descarga_datos/run_dashboard.py
+```
 
 ---
 

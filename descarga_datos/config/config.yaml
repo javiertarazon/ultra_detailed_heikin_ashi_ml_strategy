@@ -1,71 +1,134 @@
-# Configuración del Data Downloader
-# Puede ser "bybit" o "mt5"
+# Configuración Centralizada - Bot Trader Copilot
+# ===================================================
+
+# Configuración General
+system:
+  name: "Bot Trader Copilot"
+  version: "1.0"
+  log_level: "INFO"
+  log_file: "logs/bot_trader.log"
+  auto_launch_dashboard: true  # Lanzar dashboard automáticamente después del backtesting
+
+# Exchange activo por defecto
 active_exchange: "bybit"
 
+# Configuración de Exchanges (CCXT)
 exchanges:
   bybit:
     enabled: true
-    api_key: ""  # No necesitamos API key para descarga de datos históricos
-    secret: ""
-    timeframe: "1h"
-    start_date: "2024-01-01"
-    end_date: "2024-06-01"
-  
-# Incluir soporte para MT5 (MetaTrader 5)
-use_mt5: true  # Establecer en true para habilitar la descarga desde MT5
+    api_key: ""
+    api_secret: ""
+    sandbox: false
+    timeout: 30000
 
-default_symbols:
-  - "SOL/USDT"
-  - "XRP/USDT"
-  - "TSLA.US"
-  - "NVDA.US"
-
-data_types:
-  - "ohlcv"
-  - "trades"
-
-max_retries: 3
-retry_delay: 5
-
-log_level: "INFO"
-log_file: "data_downloader.log"
-
-storage:
-  path: "data"
-  csv:
+  binance:
     enabled: true
-  sqlite:
-    enabled: true
+    api_key: ""
+    api_secret: ""
+    sandbox: false
+    timeout: 30000
 
-normalization:
+# Configuración MT5
+mt5:
   enabled: true
-  method: "minmax"
+  terminal_path: ""
+  server: ""
+  login: 0
+  password: ""
+  timeout: 60000
 
+# Configuración de Backtesting
+backtesting:
+  # Símbolos a procesar
+  symbols:
+    # Criptomonedas (CCXT)
+    - "YFI/USDT"
+    - "BTC/USDT"
+    - "ETH/USDT"
+    - "SOL/USDT"
+    - "ADA/USDT"
+    - "COMP/USDT"
+    - "LINK/USDT"
+    - "DOT/USDT"
+    # Acciones (MT5)
+    - "AAPL.US"
+    - "TSLA.US"
+    - "NVDA.US"
+    - "MSFT.US"
+    - "GOOGL.US"
+
+  # Configuración temporal
+  timeframe: "1h"
+  start_date: "2023-01-01"
+  end_date: "2025-06-01"
+
+  # Configuración financiera
+  initial_capital: 10000
+  commission: 0.1
+  slippage: 0.05
+
+  # Estrategias activas - Usando estrategias individuales
+  strategies:
+    Estrategia_Basica: true
+    Estrategia_Conservadora: true
+    Estrategia_Optimizada: true
+
+# Configuración de Indicadores Técnicos
 indicators:
   volatility:
     enabled: true
     period: 14
-    method: "standard_deviation"
-  
+
   heiken_ashi:
     enabled: true
     trend_period: 3
     size_comparison_threshold: 1.2
-  
+
   atr:
     enabled: true
     period: 14
-  
-  adx:
-    enabled: true
-    period: 14
-    threshold: 25
-  
+
   ema:
     enabled: true
     periods: [10, 20, 200]
-  
+
   parabolic_sar:
     enabled: true
     acceleration: 0.02
     maximum: 0.2
+
+  adx:
+    enabled: true
+    period: 14
+    threshold: 25
+
+# Configuración de Almacenamiento
+storage:
+  path: "data"
+  csv_enabled: true
+  sqlite_enabled: true
+  cache_enabled: true
+
+# Configuración de Riesgo
+risk:
+  risk_percent: 2.0
+  tp_atr_multiplier: 2.0
+  sl_atr_multiplier: 1.5
+  max_drawdown_limit: 20.0
+
+# Configuración de Datos
+data:
+  use_mt5_for_stocks: false  # Desactivado hasta que MT5 esté configurado
+  use_ccxt_for_crypto: true
+  max_retries: 3
+  retry_delay: 5
+  limit_per_request: 1000
+  validate_data: true
+
+# Configuración de Reportes
+reports:
+  save_individual_results: true
+  save_equity_curves: true
+  save_trade_details: true
+  generate_comparison: true
+  output_directory: "backtest_results"

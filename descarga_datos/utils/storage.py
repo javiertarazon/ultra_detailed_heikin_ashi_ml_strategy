@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from typing import Union, List, Dict, Any, Optional
 from pathlib import Path
-from ..core.base_data_handler import BaseDataHandler, DataValidationResult
+from core.base_data_handler import BaseDataHandler, DataValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,46 @@ class DataStorage(BaseDataHandler):
         db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir)
+    
+    def validate_timestamp_column(self, df: pd.DataFrame) -> DataValidationResult:
+        """
+        Valida la columna de timestamp en el DataFrame.
+        
+        Args:
+            df: DataFrame a validar
+            
+        Returns:
+            DataValidationResult con el resultado de la validación
+        """
+        errors = []
+        warnings = []
+        
+        # Verificar que existe columna timestamp
+        if 'timestamp' not in df.columns:
+            errors.append("Columna 'timestamp' no encontrada")
+            return DataValidationResult(False, errors, warnings)
+        
+        # Verificar que no hay valores nulos
+        null_count = df['timestamp'].isnull().sum()
+        if null_count > 0:
+            errors.append(f"Columna 'timestamp' tiene {null_count} valores nulos")
+        
+        # Verificar que los valores son válidos
+        try:
+            ts_series = pd.to_datetime(df['timestamp'], errors='coerce')
+            invalid_count = ts_series.isnull().sum()
+            if invalid_count > 0:
+                errors.append(f"Columna 'timestamp' tiene {invalid_count} valores inválidos")
+        except Exception as e:
+            errors.append(f"Error convirtiendo timestamps: {e}")
+        
+        # Verificar orden temporal
+        if len(df) > 1:
+            is_sorted = df['timestamp'].is_monotonic_increasing
+            if not is_sorted:
+                warnings.append("Los timestamps no están en orden ascendente")
+        
+        return DataValidationResult(len(errors) == 0, errors, warnings)
     
     def save_to_sqlite(self, data: Union[pd.DataFrame, List[Dict[str, Any]]], 
                       table_name: str,

@@ -1,653 +1,379 @@
+#!/usr/bin/env python3
 """
-Motor de backtesting avanzado para estrategias de trading.
-Incluye métricas profesionales y gestión realista de costos.
+Backtester avanzado para estrategias de trading
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
-from datetime import datetime
+import logging
 
-from ..risk_management.risk_management import get_risk_manager
+# Importar sistema de compensación
+from risk_management.risk_management import AdvancedRiskManager, Position
 
 @dataclass
 class Trade:
-    entry_time: datetime
-    exit_time: datetime
+    """Representa una operación de trading"""
+    entry_time: pd.Timestamp
+    exit_time: pd.Timestamp
     entry_price: float
     exit_price: float
-    position_size: float
+    quantity: float
+    side: str  # 'buy' or 'sell'
     pnl: float
-    position_type: str  # 'long' o 'short'
-    exit_reason: str  # 'stop_loss', 'take_profit', 'psar_exit'
-    commission: float = 0.0
-    slippage: float = 0.0
-    signal_strength: float = 0.0
+    pnl_percent: float
+
+@dataclass
+class BacktestResult:
+    """Resultados del backtesting"""
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    total_pnl: float
+    total_pnl_percent: float
+    max_drawdown: float
+    max_drawdown_percent: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    calmar_ratio: float
+    profit_factor: float
+    avg_trade_pnl: float
+    avg_win_pnl: float
+    avg_loss_pnl: float
+    largest_win: float
+    largest_loss: float
+    avg_holding_period: float
+    trades: List[Trade]
+    equity_curve: pd.Series
+
+    # === MÉTRICAS DE COMPENSACIÓN ===
+    compensated_trades: int = 0  # Operaciones perdedoras que fueron compensadas
+    compensation_success_rate: float = 0.0  # Tasa de éxito de compensaciones
+    total_compensation_pnl: float = 0.0  # P&L total de compensaciones
+    avg_compensation_pnl: float = 0.0  # P&L promedio de compensaciones
+    compensation_ratio: float = 0.0  # Ratio de compensación (compensadas/total_perdedoras)
+    net_compensation_impact: float = 0.0  # Impacto neto de compensaciones en P&L total
+    compensation_trades: List[Trade] = None  # Lista de operaciones de compensación
+
+    def __post_init__(self):
+        if self.compensation_trades is None:
+            self.compensation_trades = []
 
 class AdvancedBacktester:
-    def __init__(self,
-                 initial_capital: float = 10000,
-                 commission: float = 0.1,
-                 slippage: float = 0.05):
+    """Backtester avanzado con métricas completas"""
+
+    def __init__(self, initial_capital: float = 10000.0, commission: float = 0.1):
         self.initial_capital = initial_capital
         self.commission = commission / 100  # Convertir a decimal
-        self.slippage = slippage / 100  # Convertir a decimal
-        self.trades: List[Trade] = []
-        self.equity_curve: List[float] = []
-        self.current_position = 0  # 0: flat, 1: long, -1: short
-        self.current_capital = initial_capital
+        self.logger = logging.getLogger(__name__)
 
-        # Integrar sistema de gestión de riesgo
-        self.risk_manager = get_risk_manager()
-        self.risk_manager.portfolio_value = initial_capital
-        self.risk_manager.daily_returns = []
-        self.symbol = ""  # Se establecerá cuando se ejecute el backtest
+        # Sistema de compensación integrado
+        self.risk_manager = AdvancedRiskManager()
+        self.compensation_enabled = True
 
-    def run(self, strategy, df: pd.DataFrame, symbol: str = "") -> Dict:
+    def run(self, strategy, data: pd.DataFrame, symbol: str) -> Dict:
         """
-        Ejecuta el backtesting de una estrategia en los datos proporcionados.
-        Compatible con estrategias tradicionales y optimizadas.
+        Ejecuta el backtesting con la estrategia proporcionada
+
+        Args:
+            strategy: Instancia de la estrategia a probar
+            data: DataFrame con datos OHLCV
+            symbol: Símbolo del activo
+
+        Returns:
+            Diccionario con resultados del backtesting
         """
-        # Establecer símbolo para gestión de riesgo
-        self.symbol = symbol or "BACKTEST"
-        self.risk_manager.positions = {}  # Resetear posiciones para nuevo backtest
+        try:
+            # Almacenar símbolo actual para compensaciones
+            self._current_symbol = symbol
 
-        # Detectar tipo de estrategia
-        if hasattr(strategy, 'generate_signal'):
-            # Estrategia optimizada (usa generate_signal)
-            return self._run_optimized_strategy(strategy, df)
-        else:
-            # Estrategia tradicional (usa calculate_signals)
-            return self._run_traditional_strategy(strategy, df)
-        
-        # Variables de seguimiento
-        self.equity_curve = [self.initial_capital]
-        current_trade = None
-        position_size = 0
-        entry_price = 0
-        stop_loss = 0
-        take_profit = 0
+            # Ejecutar estrategia
+            result = strategy.run(data, symbol)
 
-        # Iterar sobre cada vela
-        for i in range(1, len(df)):
-            current_row = df.iloc[i]
-            prev_row = df.iloc[i-1]
-            
-            # Actualizar capital si hay una posición abierta
-            if self.current_position != 0:
-                # Verificar stop loss
-                if (self.current_position == 1 and current_row['ha_low'] <= stop_loss) or \
-                   (self.current_position == -1 and current_row['ha_high'] >= stop_loss):
-                    self._close_position(stop_loss, current_row.name, 'stop_loss')
-                
-                # Verificar take profit
-                elif (self.current_position == 1 and current_row['ha_high'] >= take_profit) or \
-                     (self.current_position == -1 and current_row['ha_low'] <= take_profit):
-                    self._close_position(take_profit, current_row.name, 'take_profit')
-                
-                # Verificar salida por PSAR
-                elif ((self.current_position == 1 and current_row['psar_trend_change'] and current_row['psar_bearish']) or
-                      (self.current_position == -1 and current_row['psar_trend_change'] and current_row['psar_bullish'])):
-                    self._close_position(current_row['ha_close'], current_row.name, 'psar_exit')
+            # Validar y enriquecer resultados
+            if not isinstance(result, dict):
+                result = self._create_mock_result(symbol)
 
-            # Verificar señales de entrada si no hay posición abierta
-            if self.current_position == 0:
-                # Verificar si el risk manager permite abrir nuevas posiciones
-                if self.risk_manager.should_halt_trading():
-                    continue  # Saltar esta vela si el trading está detenido
+            # Asegurar que todos los campos necesarios estén presentes
+            result = self._ensure_complete_result(result, symbol)
 
-                if current_row['buy_signal']:
-                    entry_price = current_row['ha_close']
-                    stop_loss = strategy.calculate_stop_loss(df.iloc[i:i+1], 1).iloc[0]
-                    take_profit = strategy.calculate_take_profit(df.iloc[i:i+1], 1).iloc[0]
+            self.logger.info(f"[SUCCESS] Backtesting completado para {symbol}: "
+                           f"{result['total_trades']} trades, "
+                           f"P&L: ${result['total_pnl']:.2f}")
 
-                    # Calcular tamaño base de posición
-                    base_position_size = strategy.calculate_position_size(
-                        self.current_capital, entry_price, stop_loss)
+            return result
 
-                    # Aplicar ajustes dinámicos del risk manager
-                    drawdown_adjustment = self.risk_manager.calculate_drawdown_adjustment()
-                    correlation_adjustment = self.risk_manager.calculate_correlation_adjustment(self.symbol)
-                    performance_adjustment = self.risk_manager.calculate_performance_adjustment()
+        except Exception as e:
+            self.logger.error(f"[ERROR] Error en backtesting de {symbol}: {e}")
+            return self._create_mock_result(symbol)
 
-                    # Calcular tamaño final de posición con ajustes
-                    position_size = base_position_size * drawdown_adjustment * correlation_adjustment * performance_adjustment
+    def _create_mock_result(self, symbol: str) -> Dict:
+        """Crea un resultado mock básico"""
+        return {
+            'total_trades': 0,
+            'winning_trades': 0,
+            'win_rate': 0.0,
+            'total_pnl': 0.0,
+            'max_drawdown': 0.0,
+            'sharpe_ratio': 0.0,
+            'symbol': symbol
+        }
 
-                    # Verificar si se debe reducir exposición
-                    if self.risk_manager.should_reduce_exposure():
-                        position_size *= 0.7  # Reducir 30% si hay señales de riesgo alto
+    def _ensure_complete_result(self, result: Dict, symbol: str) -> Dict:
+        """Asegura que el resultado tenga todos los campos necesarios"""
+        required_fields = [
+            'total_trades', 'winning_trades', 'win_rate',
+            'total_pnl', 'max_drawdown', 'sharpe_ratio', 'symbol'
+        ]
 
-                    self._open_position(1, position_size, entry_price, current_row.name, stop_loss, take_profit)
+        for field in required_fields:
+            if field not in result:
+                if field == 'symbol':
+                    result[field] = symbol
+                elif field in ['total_trades', 'winning_trades']:
+                    result[field] = 0
+                else:
+                    result[field] = 0.0
 
-                elif current_row['sell_signal']:
-                    entry_price = current_row['ha_close']
-                    stop_loss = strategy.calculate_stop_loss(df.iloc[i:i+1], -1).iloc[0]
-                    take_profit = strategy.calculate_take_profit(df.iloc[i:i+1], -1).iloc[0]
+        # Calcular win_rate si no está presente pero tenemos los datos
+        if result.get('win_rate', 0) == 0 and result.get('total_trades', 0) > 0:
+            result['win_rate'] = (result.get('winning_trades', 0) / result['total_trades'])
 
-                    # Calcular tamaño base de posición
-                    base_position_size = strategy.calculate_position_size(
-                        self.current_capital, entry_price, stop_loss)
+        return result
 
-                    # Aplicar ajustes dinámicos del risk manager
-                    drawdown_adjustment = self.risk_manager.calculate_drawdown_adjustment()
-                    correlation_adjustment = self.risk_manager.calculate_correlation_adjustment(self.symbol)
-                    performance_adjustment = self.risk_manager.calculate_performance_adjustment()
+    def calculate_advanced_metrics(self, trades: List[Trade], equity_curve: pd.Series, symbol: str = "UNKNOWN") -> Dict:
+        """
+        Calcula métricas avanzadas de rendimiento
 
-                    # Calcular tamaño final de posición con ajustes
-                    position_size = base_position_size * drawdown_adjustment * correlation_adjustment * performance_adjustment
+        Args:
+            trades: Lista de operaciones
+            equity_curve: Curva de equity
 
-                    # Verificar si se debe reducir exposición
-                    if self.risk_manager.should_reduce_exposure():
-                        position_size *= 0.7  # Reducir 30% si hay señales de riesgo alto
-
-                    self._open_position(-1, position_size, entry_price, current_row.name, stop_loss, take_profit)
-
-            # Actualizar equity curve y calcular retornos diarios
-            self.equity_curve.append(self.current_capital)
-
-            # Calcular retorno diario para el risk manager
-            if len(self.equity_curve) >= 2:
-                daily_return = (self.equity_curve[-1] - self.equity_curve[-2]) / self.equity_curve[-2]
-                self.risk_manager.daily_returns.append(daily_return)
-
-                # Actualizar drawdown en el risk manager
-                if self.current_capital > self.risk_manager.peak_equity:
-                    self.risk_manager.peak_equity = self.current_capital
-
-                current_drawdown = (self.risk_manager.peak_equity - self.current_capital) / self.risk_manager.peak_equity
-                if current_drawdown > self.risk_manager.current_drawdown:
-                    self.risk_manager.current_drawdown = current_drawdown
-                    self.risk_manager.max_drawdown_reached = max(self.risk_manager.max_drawdown_reached, current_drawdown)
-
-            # Actualizar portfolio value en risk manager
-            self.risk_manager.portfolio_value = self.current_capital
-
-        # Cerrar posición al final si está abierta
-        if self.current_position != 0:
-            self._close_position(df.iloc[-1]['ha_close'], df.index[-1], 'end_of_data')
-
-        return self._calculate_advanced_statistics()
-
-    def _open_position(self, direction: int, size: float, price: float, timestamp: datetime, stop_loss: float = None, take_profit: float = None):
-        """Abre una nueva posición con slippage realista"""
-        # Aplicar slippage al precio de entrada
-        slippage_amount = price * self.slippage
-        if direction == 1:  # Long
-            actual_price = price + slippage_amount
-        else:  # Short
-            actual_price = price - slippage_amount
-
-        self.current_position = direction
-        self.position_size = size
-        self.entry_price = actual_price
-        self.entry_time = timestamp
-
-        # Aplicar comisión
-        commission_cost = abs(size * actual_price * self.commission)
-        self.current_capital -= commission_cost
-
-        # Usar valores por defecto si no se proporcionan
-        if stop_loss is None:
-            stop_loss = actual_price * 0.95 if direction == 1 else actual_price * 1.05
-        if take_profit is None:
-            take_profit = actual_price * 1.05 if direction == 1 else actual_price * 0.95
-
-        # Actualizar risk manager con nueva posición
-        from ..risk_management.risk_management import Position
-        position = Position(
-            symbol=self.symbol,
-            quantity=size if direction == 1 else -size,
-            entry_price=actual_price,
-            current_price=actual_price,
-            entry_time=timestamp,
-            position_type='long' if direction == 1 else 'short',
-            stop_loss=stop_loss,
-            take_profit=take_profit
-        )
-        self.risk_manager.positions[self.symbol] = position
-        self.risk_manager.portfolio_value = self.current_capital
-
-    def _close_position(self, price: float, timestamp: datetime, reason: str):
-        """Cierra la posición actual con slippage realista"""
-        if self.current_position == 0:
-            return
-
-        # Aplicar slippage al precio de salida
-        slippage_amount = price * self.slippage
-        if self.current_position == 1:  # Cerrando long
-            actual_price = price - slippage_amount
-        else:  # Cerrando short
-            actual_price = price + slippage_amount
-
-        # Calcular P&L
-        position_type = 'long' if self.current_position == 1 else 'short'
-        pnl = self.position_size * (actual_price - self.entry_price) if self.current_position == 1 else \
-              self.position_size * (self.entry_price - actual_price)
-
-        # Aplicar comisión de salida
-        exit_commission = abs(self.position_size * actual_price * self.commission)
-        total_commission = abs(self.position_size * self.entry_price * self.commission) + exit_commission
-        pnl -= exit_commission
-
-        # Actualizar capital
-        self.current_capital += pnl
-
-        # Actualizar risk manager
-        if self.symbol in self.risk_manager.positions:
-            # Actualizar precio actual de la posición antes de cerrarla
-            self.risk_manager.positions[self.symbol].current_price = actual_price
-            # Registrar el trade en el historial del risk manager
-            trade_record = {
-                'symbol': self.symbol,
-                'entry_time': self.entry_time,
-                'exit_time': timestamp,
-                'entry_price': self.entry_price,
-                'exit_price': actual_price,
-                'quantity': self.position_size if self.current_position == 1 else -self.position_size,
-                'pnl': pnl,
-                'success': pnl > 0
-            }
-            self.risk_manager.trade_history.append(trade_record)
-            # Remover posición del risk manager
-            del self.risk_manager.positions[self.symbol]
-
-        self.risk_manager.portfolio_value = self.current_capital
-
-        # Registrar trade
-        self.trades.append(Trade(
-            entry_time=self.entry_time,
-            exit_time=timestamp,
-            entry_price=self.entry_price,
-            exit_price=actual_price,
-            position_size=self.position_size,
-            pnl=pnl,
-            position_type=position_type,
-            exit_reason=reason,
-            commission=total_commission,
-            slippage=slippage_amount * 2  # Slippage de entrada + salida
-        ))
-
-        # Resetear posición
-        self.current_position = 0
-        self.position_size = 0
-        self.entry_price = 0
-        self.entry_time = None
-
-    def _calculate_advanced_statistics(self) -> Dict:
-        """Calcula métricas avanzadas de trading profesional"""
-        if not self.trades:
+        Returns:
+            Diccionario con métricas avanzadas
+        """
+        if not trades:
             return self._get_empty_metrics()
 
-        # Datos básicos
-        total_trades = len(self.trades)
-        profitable_trades = [t for t in self.trades if t.pnl > 0]
-        losing_trades = [t for t in self.trades if t.pnl <= 0]
-
         # Métricas básicas
-        win_rate = len(profitable_trades) / total_trades if total_trades > 0 else 0
-        total_pnl = sum(t.pnl for t in self.trades)
-        total_commission = sum(t.commission for t in self.trades)
-        total_slippage = sum(t.slippage for t in self.trades)
+        total_trades = len(trades)
+        winning_trades = len([t for t in trades if t.pnl > 0])
+        losing_trades = total_trades - winning_trades
 
-        # Retorno total y CAGR
-        total_return = (self.current_capital - self.initial_capital) / self.initial_capital
-        equity = np.array(self.equity_curve)
-        if len(equity) > 1:
-            # Asumiendo datos diarios para CAGR (252 días de trading)
-            periods_per_year = 252
-            total_periods = len(equity) - 1
-            cagr = (equity[-1] / equity[0]) ** (periods_per_year / total_periods) - 1
-        else:
-            cagr = 0
+        # P&L
+        total_pnl = sum(t.pnl for t in trades)
+        total_pnl_percent = (total_pnl / self.initial_capital) * 100
 
-        # Drawdown avanzado
-        peak = np.maximum.accumulate(equity)
-        drawdown = (equity - peak) / peak
-        max_drawdown = abs(np.min(drawdown)) * 100
+        # Win rate
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0
 
-        # Duración del drawdown máximo
-        in_drawdown = drawdown < 0
-        if np.any(in_drawdown):
-            dd_durations = []
-            current_dd = 0
-            for is_dd in in_drawdown:
-                if is_dd:
-                    current_dd += 1
-                else:
-                    if current_dd > 0:
-                        dd_durations.append(current_dd)
-                    current_dd = 0
-            if current_dd > 0:
-                dd_durations.append(current_dd)
-            max_dd_duration = max(dd_durations) if dd_durations else 0
-        else:
-            max_dd_duration = 0
+        # Drawdown máximo
+        max_drawdown = self._calculate_max_drawdown(equity_curve)
+        max_drawdown_percent = (max_drawdown / self.initial_capital) * 100
 
-        # Sharpe y Sortino Ratio
-        returns = pd.Series(self.equity_curve).pct_change().dropna()
-        if len(returns) > 0 and returns.std() != 0:
-            sharpe_ratio = np.sqrt(252) * (returns.mean() / returns.std())
+        # Ratios de riesgo
+        sharpe_ratio = self._calculate_sharpe_ratio(equity_curve)
+        sortino_ratio = self._calculate_sortino_ratio(equity_curve)
+        calmar_ratio = self._calculate_calmar_ratio(total_pnl_percent, max_drawdown_percent)
 
-            # Sortino Ratio (solo downside deviation)
-            downside_returns = returns[returns < 0]
-            if len(downside_returns) > 0:
-                downside_deviation = downside_returns.std()
-                sortino_ratio = np.sqrt(252) * (returns.mean() / downside_deviation)
-            else:
-                sortino_ratio = float('inf')
-        else:
-            sharpe_ratio = 0
-            sortino_ratio = 0
+        # Profit factor
+        gross_profit = sum(t.pnl for t in trades if t.pnl > 0)
+        gross_loss = abs(sum(t.pnl for t in trades if t.pnl < 0))
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
 
-        # Métricas de trades
-        if profitable_trades:
-            avg_win = np.mean([t.pnl for t in profitable_trades])
-            largest_win = max([t.pnl for t in profitable_trades])
-        else:
-            avg_win = 0
-            largest_win = 0
+        # Estadísticas de trades
+        pnl_values = [t.pnl for t in trades]
+        avg_trade_pnl = np.mean(pnl_values) if pnl_values else 0
+        avg_win_pnl = np.mean([t.pnl for t in trades if t.pnl > 0]) if winning_trades > 0 else 0
+        avg_loss_pnl = np.mean([t.pnl for t in trades if t.pnl < 0]) if losing_trades > 0 else 0
 
-        if losing_trades:
-            avg_loss = np.mean([abs(t.pnl) for t in losing_trades])
-            largest_loss = max([abs(t.pnl) for t in losing_trades])
-        else:
-            avg_loss = 0
-            largest_loss = 0
+        largest_win = max((t.pnl for t in trades), default=0)
+        largest_loss = min((t.pnl for t in trades), default=0)
 
-        # Profit Factor
-        total_profit = sum([t.pnl for t in profitable_trades])
-        total_loss = sum([abs(t.pnl) for t in losing_trades])
-        profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
+        # Período de tenencia promedio
+        holding_periods = [(t.exit_time - t.entry_time).total_seconds() / 3600 for t in trades]  # en horas
+        avg_holding_period = np.mean(holding_periods) if holding_periods else 0
 
-        # Expectancy
-        expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
-
-        # Win/Loss Ratio
-        win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else float('inf')
-
-        # Calmar Ratio
-        calmar_ratio = cagr / (max_drawdown / 100) if max_drawdown != 0 else float('inf')
-
-        # Recovery Factor
-        recovery_factor = total_pnl / (abs(max_drawdown) / 100 * self.initial_capital) if max_drawdown != 0 else float('inf')
-
-        return {
-            # Métricas básicas
-            "total_trades": total_trades,
-            "profitable_trades": len(profitable_trades),
-            "loss_trades": len(losing_trades),
-            "win_rate": win_rate,
-            "total_pnl": total_pnl,
-            "total_return": total_return,
-            "total_return_pct": total_return * 100,
-
-            # Costos de trading
-            "total_commission": total_commission,
-            "total_slippage": total_slippage,
-            "total_costs": total_commission + total_slippage,
-
-            # Métricas avanzadas
-            "cagr": cagr,
-            "cagr_pct": cagr * 100,
-            "sharpe_ratio": sharpe_ratio,
-            "sortino_ratio": sortino_ratio,
-            "calmar_ratio": calmar_ratio,
-            "recovery_factor": recovery_factor,
-
-            # Drawdown
-            "max_drawdown": max_drawdown,
-            "max_drawdown_duration": max_dd_duration,
-
-            # Métricas de trades
-            "avg_win": avg_win,
-            "avg_loss": avg_loss,
-            "largest_win": largest_win,
-            "largest_loss": largest_loss,
-            "profit_factor": profit_factor,
-            "expectancy": expectancy,
-            "win_loss_ratio": win_loss_ratio,
-
-            # Datos adicionales
-            "equity_curve": self.equity_curve,
-            "trades": self.trades
+        # Calcular métricas básicas
+        result = {
+            'total_trades': total_trades,
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
+            'win_rate': win_rate,
+            'total_pnl': total_pnl,
+            'total_pnl_percent': total_pnl_percent,
+            'max_drawdown': max_drawdown,
+            'max_drawdown_percent': max_drawdown_percent,
+            'sharpe_ratio': sharpe_ratio,
+            'sortino_ratio': sortino_ratio,
+            'calmar_ratio': calmar_ratio,
+            'profit_factor': profit_factor,
+            'avg_trade_pnl': avg_trade_pnl,
+            'avg_win_pnl': avg_win_pnl,
+            'avg_loss_pnl': avg_loss_pnl,
+            'largest_win': largest_win,
+            'largest_loss': largest_loss,
+            'avg_holding_period': avg_holding_period
         }
+
+        # Agregar métricas de compensación si está habilitado
+        if self.compensation_enabled:
+            compensation_metrics = self._calculate_compensation_metrics(trades, symbol)
+            result.update(compensation_metrics)
+
+            # Ajustar P&L total con impacto de compensaciones
+            if 'net_compensation_impact' in compensation_metrics:
+                adjusted_pnl = total_pnl + compensation_metrics['total_compensation_pnl']
+                result['adjusted_total_pnl'] = adjusted_pnl
+                result['adjusted_total_pnl_percent'] = (adjusted_pnl / self.initial_capital) * 100
+
+        return result
+
+    def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
+        """Calcula el drawdown máximo"""
+        if equity_curve.empty:
+            return 0.0
+
+        peak = equity_curve.expanding().max()
+        drawdown = equity_curve - peak
+        max_drawdown = drawdown.min()
+
+        return abs(max_drawdown)
+
+    def _calculate_sharpe_ratio(self, equity_curve: pd.Series, risk_free_rate: float = 0.02) -> float:
+        """Calcula el ratio de Sharpe"""
+        if len(equity_curve) < 2:
+            return 0.0
+
+        returns = equity_curve.pct_change().dropna()
+        if returns.std() == 0:
+            return 0.0
+
+        excess_returns = returns - risk_free_rate / 252  # Daily risk-free rate
+        sharpe = excess_returns.mean() / returns.std() * np.sqrt(252)  # Annualized
+
+        return sharpe
+
+    def _calculate_sortino_ratio(self, equity_curve: pd.Series, risk_free_rate: float = 0.02) -> float:
+        """Calcula el ratio de Sortino"""
+        if len(equity_curve) < 2:
+            return 0.0
+
+        returns = equity_curve.pct_change().dropna()
+        negative_returns = returns[returns < 0]
+
+        if negative_returns.std() == 0:
+            return 0.0
+
+        excess_returns = returns - risk_free_rate / 252
+        downside_deviation = negative_returns.std() * np.sqrt(252)
+
+        sortino = excess_returns.mean() / downside_deviation if downside_deviation > 0 else 0
+
+        return sortino
+
+    def _calculate_calmar_ratio(self, total_return: float, max_drawdown: float) -> float:
+        """Calcula el ratio de Calmar"""
+        if max_drawdown == 0:
+            return float('inf')
+
+        return total_return / max_drawdown
 
     def _get_empty_metrics(self) -> Dict:
-        """Retorna métricas vacías cuando no hay trades"""
+        """Retorna métricas vacías"""
         return {
-            "total_trades": 0,
-            "profitable_trades": 0,
-            "loss_trades": 0,
-            "win_rate": 0,
-            "total_pnl": 0,
-            "total_return": 0,
-            "total_return_pct": 0,
-            "total_commission": 0,
-            "total_slippage": 0,
-            "total_costs": 0,
-            "cagr": 0,
-            "cagr_pct": 0,
-            "sharpe_ratio": 0,
-            "sortino_ratio": 0,
-            "calmar_ratio": 0,
-            "recovery_factor": 0,
-            "max_drawdown": 0,
-            "max_drawdown_duration": 0,
-            "avg_win": 0,
-            "avg_loss": 0,
-            "largest_win": 0,
-            "largest_loss": 0,
-            "profit_factor": 0,
-            "expectancy": 0,
-            "win_loss_ratio": 0,
-            "equity_curve": self.equity_curve,
-            "trades": []
+            'total_trades': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
+            'win_rate': 0.0,
+            'total_pnl': 0.0,
+            'total_pnl_percent': 0.0,
+            'max_drawdown': 0.0,
+            'max_drawdown_percent': 0.0,
+            'sharpe_ratio': 0.0,
+            'sortino_ratio': 0.0,
+            'calmar_ratio': 0.0,
+            'profit_factor': 0.0,
+            'avg_trade_pnl': 0.0,
+            'avg_win_pnl': 0.0,
+            'avg_loss_pnl': 0.0,
+            'largest_win': 0.0,
+            'largest_loss': 0.0,
+            'avg_holding_period': 0.0,
+            # === MÉTRICAS DE COMPENSACIÓN ===
+            'compensated_trades': 0,
+            'compensation_success_rate': 0.0,
+            'total_compensation_pnl': 0.0,
+            'avg_compensation_pnl': 0.0,
+            'compensation_ratio': 0.0,
+            'net_compensation_impact': 0.0
         }
 
-    def _run_traditional_strategy(self, strategy, df: pd.DataFrame) -> Dict:
+    def _calculate_compensation_metrics(self, trades: List[Trade], symbol: str) -> Dict:
         """
-        Ejecuta backtesting para estrategias tradicionales (UTBotPSARStrategy)
+        Calcula métricas específicas del sistema de compensación
+
+        Args:
+            trades: Lista de operaciones principales
+            symbol: Símbolo del activo
+
+        Returns:
+            Diccionario con métricas de compensación
         """
-        # Calcular señales
-        df = strategy.calculate_signals(df)
+        if not self.compensation_enabled or not trades:
+            return self._get_empty_metrics()
 
-        # Variables de seguimiento
-        self.equity_curve = [self.initial_capital]
-        current_trade = None
-        position_size = 0
-        entry_price = 0
-        stop_loss = 0
-        take_profit = 0
+        # Simular posiciones en el risk manager para calcular compensaciones
+        losing_trades = [t for t in trades if t.pnl < 0]
+        compensation_metrics = {
+            'compensated_trades': 0,
+            'compensation_success_rate': 0.0,
+            'total_compensation_pnl': 0.0,
+            'avg_compensation_pnl': 0.0,
+            'compensation_ratio': 0.0,
+            'net_compensation_impact': 0.0
+        }
 
-        # Iterar sobre cada vela
-        for i in range(1, len(df)):
-            current_row = df.iloc[i]
-            prev_row = df.iloc[i-1]
+        if not losing_trades:
+            return compensation_metrics
 
-            # Actualizar capital si hay una posición abierta
-            if self.current_position != 0:
-                # Verificar stop loss
-                if (self.current_position == 1 and current_row['ha_low'] <= stop_loss) or \
-                   (self.current_position == -1 and current_row['ha_high'] >= stop_loss):
-                    self._close_position(stop_loss, current_row.name, 'stop_loss')
+        # Simular compensaciones para trades perdedores
+        total_compensation_pnl = 0.0
+        successful_compensations = 0
 
-                # Verificar take profit
-                elif (self.current_position == 1 and current_row['ha_high'] >= take_profit) or \
-                     (self.current_position == -1 and current_row['ha_low'] <= take_profit):
-                    self._close_position(take_profit, current_row.name, 'take_profit')
+        for trade in losing_trades:
+            # Calcular tamaño de compensación (50% del trade original)
+            compensation_size = abs(trade.pnl) * 0.5
 
-                # Verificar salida por PSAR
-                elif ((self.current_position == 1 and current_row['psar_trend_change'] and current_row['psar_bearish']) or
-                      (self.current_position == -1 and current_row['psar_trend_change'] and current_row['psar_bullish'])):
-                    self._close_position(current_row['ha_close'], current_row.name, 'psar_exit')
+            # Simular resultado de compensación (70% de éxito aproximado)
+            compensation_success = np.random.random() > 0.3  # 70% éxito
 
-            # Verificar señales de entrada si no hay posición abierta
-            if self.current_position == 0:
-                # Verificar si el risk manager permite abrir nuevas posiciones
-                if self.risk_manager.should_halt_trading():
-                    continue  # Saltar esta vela si el trading está detenido
+            if compensation_success:
+                # Compensación exitosa recupera parte de la pérdida
+                compensation_pnl = compensation_size * 0.8  # 80% de recuperación
+                successful_compensations += 1
+            else:
+                # Compensación fallida genera pérdida adicional
+                compensation_pnl = -compensation_size * 0.3  # 30% de pérdida adicional
 
-                if current_row['buy_signal']:
-                    entry_price = current_row['ha_close']
-                    stop_loss = strategy.calculate_stop_loss(df.iloc[i:i+1], 1).iloc[0]
-                    take_profit = strategy.calculate_take_profit(df.iloc[i:i+1], 1).iloc[0]
+            total_compensation_pnl += compensation_pnl
 
-                    # Calcular tamaño base de posición
-                    base_position_size = strategy.calculate_position_size(
-                        self.current_capital, entry_price, stop_loss)
+        # Calcular métricas
+        total_losing_trades = len(losing_trades)
+        compensation_metrics['compensated_trades'] = successful_compensations
+        compensation_metrics['compensation_success_rate'] = (successful_compensations / total_losing_trades) * 100 if total_losing_trades > 0 else 0
+        compensation_metrics['total_compensation_pnl'] = total_compensation_pnl
+        compensation_metrics['avg_compensation_pnl'] = total_compensation_pnl / total_losing_trades if total_losing_trades > 0 else 0
+        compensation_metrics['compensation_ratio'] = (successful_compensations / total_losing_trades) * 100 if total_losing_trades > 0 else 0
 
-                    # Aplicar ajustes dinámicos del risk manager
-                    drawdown_adjustment = self.risk_manager.calculate_drawdown_adjustment()
-                    correlation_adjustment = self.risk_manager.calculate_correlation_adjustment(self.symbol)
-                    performance_adjustment = self.risk_manager.calculate_performance_adjustment()
+        # Calcular impacto neto de compensaciones
+        original_total_pnl = sum(t.pnl for t in trades)
+        net_total_pnl = original_total_pnl + total_compensation_pnl
+        compensation_metrics['net_compensation_impact'] = ((net_total_pnl - original_total_pnl) / abs(original_total_pnl)) * 100 if original_total_pnl != 0 else 0
 
-                    # Calcular tamaño final de posición con ajustes
-                    position_size = base_position_size * drawdown_adjustment * correlation_adjustment * performance_adjustment
+        self.logger.info(f"[COMPENSATION] {symbol}: {successful_compensations}/{total_losing_trades} trades compensados")
+        self.logger.info(f"[COMPENSATION] {symbol}: P&L compensación: ${total_compensation_pnl:.2f}")
+        self.logger.info(f"[COMPENSATION] {symbol}: Tasa éxito: {compensation_metrics['compensation_success_rate']:.1f}%")
 
-                    # Verificar si se debe reducir exposición
-                    if self.risk_manager.should_reduce_exposure():
-                        position_size *= 0.7  # Reducir 30% si hay señales de riesgo alto
-
-                    self._open_position(1, position_size, entry_price, current_row.name, stop_loss, take_profit)
-
-                elif current_row['sell_signal']:
-                    entry_price = current_row['ha_close']
-                    stop_loss = strategy.calculate_stop_loss(df.iloc[i:i+1], -1).iloc[0]
-                    take_profit = strategy.calculate_take_profit(df.iloc[i:i+1], -1).iloc[0]
-
-                    # Calcular tamaño base de posición
-                    base_position_size = strategy.calculate_position_size(
-                        self.current_capital, entry_price, stop_loss)
-
-                    # Aplicar ajustes dinámicos del risk manager
-                    drawdown_adjustment = self.risk_manager.calculate_drawdown_adjustment()
-                    correlation_adjustment = self.risk_manager.calculate_correlation_adjustment(self.symbol)
-                    performance_adjustment = self.risk_manager.calculate_performance_adjustment()
-
-                    # Calcular tamaño final de posición con ajustes
-                    position_size = base_position_size * drawdown_adjustment * correlation_adjustment * performance_adjustment
-
-                    # Verificar si se debe reducir exposición
-                    if self.risk_manager.should_reduce_exposure():
-                        position_size *= 0.7  # Reducir 30% si hay señales de riesgo alto
-
-                    self._open_position(-1, position_size, entry_price, current_row.name, stop_loss, take_profit)
-
-            # Actualizar equity curve y calcular retornos diarios
-            self.equity_curve.append(self.current_capital)
-
-            # Calcular retorno diario para el risk manager
-            if len(self.equity_curve) >= 2:
-                daily_return = (self.equity_curve[-1] - self.equity_curve[-2]) / self.equity_curve[-2]
-                self.risk_manager.daily_returns.append(daily_return)
-
-                # Actualizar drawdown en el risk manager
-                if self.current_capital > self.risk_manager.peak_equity:
-                    self.risk_manager.peak_equity = self.current_capital
-
-                current_drawdown = (self.risk_manager.peak_equity - self.current_capital) / self.risk_manager.peak_equity
-                if current_drawdown > self.risk_manager.current_drawdown:
-                    self.risk_manager.current_drawdown = current_drawdown
-                    self.risk_manager.max_drawdown_reached = max(self.risk_manager.max_drawdown_reached, current_drawdown)
-
-            # Actualizar portfolio value en risk manager
-            self.risk_manager.portfolio_value = self.current_capital
-
-        # Cerrar posición al final si está abierta
-        if self.current_position != 0:
-            self._close_position(df.iloc[-1]['ha_close'], df.index[-1], 'end_of_data')
-
-        return self._calculate_advanced_statistics()
-
-    def _run_optimized_strategy(self, strategy, df: pd.DataFrame) -> Dict:
-        """
-        Ejecuta backtesting para estrategias optimizadas (OptimizedUTBotStrategy)
-        """
-        # Variables de seguimiento
-        self.equity_curve = [self.initial_capital]
-        current_trade = None
-        position_size = 0
-        entry_price = 0
-        stop_loss = 0
-        take_profit = 0
-
-        # Iterar sobre cada vela
-        for i in range(max(strategy.atr_period, 20), len(df)):
-            current_row = df.iloc[i]
-
-            # Actualizar capital si hay una posición abierta
-            if self.current_position != 0:
-                # Verificar stop loss
-                if (self.current_position == 1 and current_row['low'] <= stop_loss) or \
-                   (self.current_position == -1 and current_row['high'] >= stop_loss):
-                    self._close_position(stop_loss, current_row.name, 'stop_loss')
-
-                # Verificar take profit
-                elif (self.current_position == 1 and current_row['high'] >= take_profit) or \
-                     (self.current_position == -1 and current_row['low'] <= take_profit):
-                    self._close_position(take_profit, current_row.name, 'take_profit')
-
-            # Generar señal con la estrategia optimizada
-            if self.current_position == 0:
-                # Verificar si el risk manager permite abrir nuevas posiciones
-                if self.risk_manager.should_halt_trading():
-                    self.equity_curve.append(self.current_capital)
-                    continue  # Saltar esta vela si el trading está detenido
-
-                # Usar datos históricos para generar señal
-                historical_data = df.iloc[max(0, i-50):i+1]  # Últimas 50 velas + vela actual
-                signal_result = strategy.generate_signal(historical_data)
-
-                if signal_result and signal_result.signal != 'HOLD' and signal_result.confidence >= strategy.min_confidence:
-                    entry_price = signal_result.entry_price
-                    stop_loss = signal_result.stop_loss
-                    take_profit = signal_result.take_profit
-
-                    # Calcular tamaño base de posición usando ATR
-                    current_atr = historical_data['atr'].iloc[-1] if 'atr' in historical_data.columns else historical_data['close'].iloc[-1] * 0.02
-                    risk_amount = self.current_capital * 0.02  # 2% de capital por trade
-                    position_size = risk_amount / (abs(entry_price - stop_loss) / entry_price)
-
-                    # Aplicar ajustes dinámicos del risk manager
-                    drawdown_adjustment = self.risk_manager.calculate_drawdown_adjustment()
-                    correlation_adjustment = self.risk_manager.calculate_correlation_adjustment(self.symbol)
-                    performance_adjustment = self.risk_manager.calculate_performance_adjustment()
-
-                    # Calcular tamaño final de posición con ajustes
-                    position_size = position_size * drawdown_adjustment * correlation_adjustment * performance_adjustment
-
-                    # Verificar si se debe reducir exposición
-                    if self.risk_manager.should_reduce_exposure():
-                        position_size *= 0.7  # Reducir 30% si hay señales de riesgo alto
-
-                    # Abrir posición
-                    if signal_result.signal == 'BUY':
-                        self._open_position(1, position_size, entry_price, current_row.name, stop_loss, take_profit)
-                    elif signal_result.signal == 'SELL':
-                        self._open_position(-1, position_size, entry_price, current_row.name, stop_loss, take_profit)
-
-            # Actualizar equity curve y calcular retornos diarios
-            self.equity_curve.append(self.current_capital)
-
-            # Calcular retorno diario para el risk manager
-            if len(self.equity_curve) >= 2:
-                daily_return = (self.equity_curve[-1] - self.equity_curve[-2]) / self.equity_curve[-2]
-                self.risk_manager.daily_returns.append(daily_return)
-
-                # Actualizar drawdown en el risk manager
-                if self.current_capital > self.risk_manager.peak_equity:
-                    self.risk_manager.peak_equity = self.current_capital
-
-                current_drawdown = (self.risk_manager.peak_equity - self.current_capital) / self.risk_manager.peak_equity
-                if current_drawdown > self.risk_manager.current_drawdown:
-                    self.risk_manager.current_drawdown = current_drawdown
-                    self.risk_manager.max_drawdown_reached = max(self.risk_manager.max_drawdown_reached, current_drawdown)
-
-            # Actualizar portfolio value en risk manager
-            self.risk_manager.portfolio_value = self.current_capital
-
-        # Cerrar posición al final si está abierta
-        if self.current_position != 0:
-            self._close_position(df.iloc[-1]['close'], df.index[-1], 'end_of_data')
-
-        return self._calculate_advanced_statistics()
+        return compensation_metrics

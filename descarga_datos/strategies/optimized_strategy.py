@@ -415,6 +415,115 @@ class UTBotPSAROptimized(BaseStrategy):
             }
         }
 
+    def run(self, data, symbol):
+        """
+        Ejecuta la estrategia y devuelve los resultados del backtesting
+        """
+        try:
+            # Generar señales
+            signals = self.generate_signals(data.copy())
+            
+            # Inicializar variables de trading
+            capital = 10000.0  # Capital inicial
+            position = None  # Sin posición inicial
+            trades = []
+            
+            # Simular trading basado en señales
+            for signal in signals:
+                if position is None:
+                    # Abrir nueva posición
+                    position = {
+                        'type': signal.type,
+                        'entry_price': signal.price,
+                        'stop_loss': signal.stop_loss,
+                        'take_profit': signal.take_profit,
+                        'quantity': self.calculate_position_size(signal, capital),
+                        'entry_time': signal.timestamp
+                    }
+                    
+                else:
+                    # Verificar si cerrar posición actual
+                    current_price = signal.price
+                    
+                    should_close = False
+                    exit_price = current_price
+                    exit_reason = ""
+                    
+                    if position['type'] == SignalType.BUY:
+                        if current_price >= position['take_profit']:
+                            should_close = True
+                            exit_reason = "take_profit"
+                        elif current_price <= position['stop_loss']:
+                            should_close = True
+                            exit_reason = "stop_loss"
+                    else:  # SELL
+                        if current_price <= position['take_profit']:
+                            should_close = True
+                            exit_reason = "take_profit"
+                        elif current_price >= position['stop_loss']:
+                            should_close = True
+                            exit_reason = "stop_loss"
+                    
+                    if should_close:
+                        # Calcular P&L
+                        if position['type'] == SignalType.BUY:
+                            pnl = (exit_price - position['entry_price']) * position['quantity']
+                        else:
+                            pnl = (position['entry_price'] - exit_price) * position['quantity']
+                        
+                        capital += pnl
+                        
+                        trades.append({
+                            'entry_price': position['entry_price'],
+                            'exit_price': exit_price,
+                            'pnl': pnl,
+                            'type': 'long' if position['type'] == SignalType.BUY else 'short',
+                            'exit_reason': exit_reason
+                        })
+                        
+                        position = None
+            
+            # Calcular métricas
+            total_trades = len(trades)
+            winning_trades = len([t for t in trades if t['pnl'] > 0])
+            losing_trades = total_trades - winning_trades
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
+            total_pnl = sum(t['pnl'] for t in trades)
+            
+            # Calcular drawdown máximo
+            if trades:
+                cumulative_pnl = [sum(t['pnl'] for t in trades[:i+1]) for i in range(len(trades))]
+                peak = max(cumulative_pnl) if cumulative_pnl else 0
+                max_drawdown = min(cumulative_pnl) - peak if cumulative_pnl else 0
+            else:
+                max_drawdown = 0.0
+            
+            return {
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'win_rate': win_rate,
+                'total_pnl': total_pnl,
+                'max_drawdown': max_drawdown,
+                'sharpe_ratio': 0.0,  # Placeholder
+                'symbol': symbol,
+                'trades': trades
+            }
+            
+        except Exception as e:
+            print(f"Error ejecutando estrategia UTBotPSAROptimized: {e}")
+            return {
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'win_rate': 0.0,
+                'total_pnl': 0.0,
+                'max_drawdown': 0.0,
+                'sharpe_ratio': 0.0,
+                'symbol': symbol,
+                'trades': []
+            }
+
 # Configuraciones pre-optimizadas para uso directo
 OPTIMIZED_CONFIGS = {
     'conservative_sol': OptimizedStrategyConfig(

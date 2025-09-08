@@ -127,3 +127,117 @@ class UTBotPSARStrategy:
             return df['ha_close'] + (df['atr'] * self.tp_atr_multiplier)
         else:
             return df['ha_close'] - (df['atr'] * self.tp_atr_multiplier)
+
+    def run(self, data, symbol):
+        """
+        Ejecuta la estrategia y devuelve los resultados del backtesting
+        """
+        try:
+            # Calcular señales
+            df = self.calculate_signals(data.copy())
+            
+            # Inicializar variables de trading
+            capital = 10000.0  # Capital inicial
+            position = 0  # 0: sin posición, 1: long, -1: short
+            entry_price = 0.0
+            stop_loss = 0.0
+            take_profit = 0.0
+            trades = []
+            
+            # Simular trading
+            for i in range(len(df)):
+                current_price = df['close'].iloc[i]
+                
+                # Verificar señales de entrada
+                if position == 0:
+                    if df['buy_signal'].iloc[i]:
+                        # Entrar en posición long
+                        position = 1
+                        entry_price = current_price
+                        stop_loss = self.calculate_stop_loss(df.iloc[i:i+1], position).iloc[0]
+                        take_profit = self.calculate_take_profit(df.iloc[i:i+1], position).iloc[0]
+                        
+                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+                        
+                    elif df['sell_signal'].iloc[i]:
+                        # Entrar en posición short
+                        position = -1
+                        entry_price = current_price
+                        stop_loss = self.calculate_stop_loss(df.iloc[i:i+1], position).iloc[0]
+                        take_profit = self.calculate_take_profit(df.iloc[i:i+1], position).iloc[0]
+                        
+                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+                
+                # Verificar condiciones de salida
+                elif position == 1:  # Posición long
+                    if current_price >= take_profit or current_price <= stop_loss:
+                        # Cerrar posición
+                        exit_price = current_price
+                        pnl = (exit_price - entry_price) * position_size
+                        capital += pnl
+                        
+                        trades.append({
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'pnl': pnl,
+                            'type': 'long'
+                        })
+                        
+                        position = 0
+                        
+                elif position == -1:  # Posición short
+                    if current_price <= take_profit or current_price >= stop_loss:
+                        # Cerrar posición
+                        exit_price = current_price
+                        pnl = (entry_price - exit_price) * position_size
+                        capital += pnl
+                        
+                        trades.append({
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'pnl': pnl,
+                            'type': 'short'
+                        })
+                        
+                        position = 0
+            
+            # Calcular métricas
+            total_trades = len(trades)
+            winning_trades = len([t for t in trades if t['pnl'] > 0])
+            losing_trades = total_trades - winning_trades
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
+            total_pnl = sum(t['pnl'] for t in trades)
+            
+            # Calcular drawdown máximo
+            if trades:
+                cumulative_pnl = [sum(t['pnl'] for t in trades[:i+1]) for i in range(len(trades))]
+                peak = max(cumulative_pnl) if cumulative_pnl else 0
+                max_drawdown = min(cumulative_pnl) - peak if cumulative_pnl else 0
+            else:
+                max_drawdown = 0.0
+            
+            return {
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'win_rate': win_rate,
+                'total_pnl': total_pnl,
+                'max_drawdown': max_drawdown,
+                'sharpe_ratio': 0.0,  # Placeholder
+                'symbol': symbol,
+                'trades': trades
+            }
+            
+        except Exception as e:
+            print(f"Error ejecutando estrategia UTBotPSARStrategy: {e}")
+            return {
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'win_rate': 0.0,
+                'total_pnl': 0.0,
+                'max_drawdown': 0.0,
+                'sharpe_ratio': 0.0,
+                'symbol': symbol,
+                'trades': []
+            }

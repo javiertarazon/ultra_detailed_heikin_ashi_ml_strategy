@@ -19,30 +19,30 @@ class NormalizationConfig:
 
 @dataclass
 class IndicatorConfig:
-    volatility: Dict[str, any] = field(default_factory=lambda: {
+    volatility: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'period': 14,
         'method': 'standard_deviation'
     })
-    heiken_ashi: Dict[str, any] = field(default_factory=lambda: {
+    heiken_ashi: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'trend_period': 3,
         'size_comparison_threshold': 1.2
     })
-    atr: Dict[str, any] = field(default_factory=lambda: {
+    atr: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'period': 14
     })
-    adx: Dict[str, any] = field(default_factory=lambda: {
+    adx: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'period': 14,
         'threshold': 25
     })
-    ema: Dict[str, any] = field(default_factory=lambda: {
+    ema: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'periods': [10, 20, 200]
     })
-    parabolic_sar: Dict[str, any] = field(default_factory=lambda: {
+    parabolic_sar: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'acceleration': 0.02,
         'maximum': 0.2
@@ -90,3 +90,14 @@ class Config:
             self.default_symbols = ["BTC/USDT", "ETH/USDT"]
         if self.data_types is None:
             self.data_types = ["ohlcv"]
+    
+    def get_symbol_config(self, symbol: str) -> Dict[str, Any]:
+        """Obtiene configuración específica para un símbolo"""
+        # Configuración básica por defecto para cualquier símbolo
+        return {
+            'max_position_size': 1000.0,
+            'min_position_size': 10.0,
+            'leverage': 1.0,
+            'commission': 0.001,
+            'slippage': 0.0001
+        }
