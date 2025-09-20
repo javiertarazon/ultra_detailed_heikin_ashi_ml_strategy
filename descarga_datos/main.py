@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 🤖 Bot Trader Copilot - Sistema de Backtesting Masivo
@@ -45,7 +46,9 @@ from utils.storage import DataStorage, save_to_csv
 from config.config_loader import load_config_from_yaml, get_active_exchanges, get_enabled_strategies
 from utils.logger import setup_logging, get_logger
 from strategies.ut_bot_psar import UTBotPSARStrategy
-from strategies.optimized_utbot_strategy import OptimizedUTBotStrategy
+from strategies.ut_bot_psar_conservative import UTBotPSARConservativeStrategy
+from strategies.ut_bot_psar_optimized import UTBotPSAROptimizedStrategy
+from strategies.ut_bot_psar_compensation import UTBotPSARCompensationStrategy
 from backtesting.backtester import AdvancedBacktester
 
 def check_python_processes(logger=None):
@@ -652,6 +655,21 @@ async def run_backtest(data: pd.DataFrame, symbol: str, config) -> dict:
     if "Estrategia_Optimizada" in enabled_strategies:
         strategies["Estrategia_Optimizada"] = UTBotPSAROptimizedStrategy()
 
+    if "Estrategia_Compensacion" in enabled_strategies:
+        # Usar parámetros de configuración para la estrategia de compensación
+        compensation_config = getattr(config, 'compensation_strategy', None)
+        if compensation_config and hasattr(compensation_config, 'enabled') and compensation_config.enabled:
+            strategies["Estrategia_Compensacion"] = UTBotPSARCompensationStrategy(
+                compensation_loss_threshold=compensation_config.loss_threshold,
+                compensation_size_multiplier=compensation_config.size_multiplier,
+                compensation_tp_percent=compensation_config.tp_percent,
+                max_account_drawdown=compensation_config.max_account_drawdown,
+                compensation_max_loss_percent=getattr(compensation_config, 'compensation_max_loss', 0.3)
+            )
+        else:
+            # Valores por defecto si no hay configuración específica
+            strategies["Estrategia_Compensacion"] = UTBotPSARCompensationStrategy()
+
     logger.info(f"[DEBUG] Estrategias configuradas: {list(strategies.keys())}")
     logger.info(f"[DEBUG] Número de estrategias configuradas: {len(strategies)}")
 
@@ -671,7 +689,16 @@ async def run_backtest(data: pd.DataFrame, symbol: str, config) -> dict:
         # Log básico de resultados
         pnl = strategy_results.get('total_pnl', 0)
         win_rate = strategy_results.get('win_rate', 0) * 100
-        logger.info(f"[SUCCESS] Backtesting completado para {symbol}: {len(strategy_results.get('trades', []))} trades, P&L: ${pnl:.2f}, Win Rate: {win_rate:.1f}%")
+
+        if strategy_name == "Estrategia_Compensacion":
+            # Log adicional para estrategia de compensación
+            compensation_trades = strategy_results.get('compensation_trades', 0)
+            compensation_win_rate = strategy_results.get('compensation_win_rate', 0) * 100
+            total_compensation_pnl = strategy_results.get('total_compensation_pnl', 0)
+            logger.info(f"[SUCCESS] Backtesting completado para {symbol}: {len(strategy_results.get('trades', []))} trades, P&L: ${pnl:.2f}, Win Rate: {win_rate:.1f}%")
+            logger.info(f"[COMPENSATION] Trades de compensación: {compensation_trades}, Win Rate: {compensation_win_rate:.1f}%, P&L Compensación: ${total_compensation_pnl:.2f}")
+        else:
+            logger.info(f"[SUCCESS] Backtesting completado para {symbol}: {len(strategy_results.get('trades', []))} trades, P&L: ${pnl:.2f}, Win Rate: {win_rate:.1f}%")
 
     return results
 
@@ -737,10 +764,27 @@ def generate_backtest_report(results: dict, config, logger):
     logger.info(f"   • Temporalidad: {config.backtesting.timeframe}")
     logger.info(f"   • Periodo: {config.backtesting.start_date} a {config.backtesting.end_date}")
 
-    # === SISTEMA DE COMPENSACIÓN DESACTIVADO ===
-    logger.info(f"\n[INFO] SISTEMA DE COMPENSACIÓN: DESACTIVADO")
-    logger.info(f"   • No se aplican compensaciones a los resultados")
-    logger.info(f"   • Se muestran resultados puros de las estrategias")
+    # Estadísticas específicas de compensación si está disponible
+    compensation_stats = []
+    for symbol, strategies in results.items():
+        if "Estrategia_Compensacion" in strategies:
+            comp_result = strategies["Estrategia_Compensacion"]
+            compensation_stats.append({
+                'symbol': symbol,
+                'compensation_trades': comp_result.get('compensation_trades', 0),
+                'compensation_win_rate': comp_result.get('compensation_win_rate', 0) * 100,
+                'total_compensation_pnl': comp_result.get('total_compensation_pnl', 0)
+            })
+
+    if compensation_stats:
+        total_compensation_trades = sum(stat['compensation_trades'] for stat in compensation_stats)
+        avg_compensation_win_rate = sum(stat['compensation_win_rate'] for stat in compensation_stats) / len(compensation_stats)
+        total_compensation_pnl = sum(stat['total_compensation_pnl'] for stat in compensation_stats)
+
+        logger.info(f"\n[INFO] ESTADISTICAS DE COMPENSACION:")
+        logger.info(f"   • Total operaciones de compensación: {total_compensation_trades}")
+        logger.info(f"   • Win Rate de compensación: {avg_compensation_win_rate:.1f}%")
+        logger.info(f"   • P&L Total de compensación: ${total_compensation_pnl:.2f}")
 
     logger.info(f"\n{'='*80}")
 

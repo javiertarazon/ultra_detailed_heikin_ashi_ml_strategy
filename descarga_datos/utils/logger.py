@@ -52,29 +52,9 @@ def setup_logging(log_level: str = "INFO", log_file: str = "logs/bot_trader.log"
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Retorna un logger configurado con el nombre especificado.
-
-    Args:
-        name: Nombre del logger
-
-    Returns:
-        Logger configurado
-    """
-    return logging.getLogger(name)    # Configurar el nuevo logger
-    root_logger.setLevel(log_level)
-    root_logger.addHandler(file_handler)
-    root_logger.addHandler(console_handler)
-    
-    # Reducir el nivel de logging para librerías externas si es necesario
-    logging.getLogger('ccxt').setLevel(logging.WARNING)
-
-def get_logger(name: str) -> logging.Logger:
-    """
     Obtiene un logger con el nombre especificado.
-    
     Args:
         name: Nombre del logger, usualmente __name__ del módulo.
-        
     Returns:
         Instancia de Logger configurada.
     """

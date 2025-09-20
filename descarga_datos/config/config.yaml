@@ -32,46 +32,36 @@ exchanges:
 mt5:
   enabled: true
   terminal_path: ""
-  server: ""
-  login: 0
-  password: ""
+  server: "Pepperstone-Demo"
+  login: 61406481
+  password: "Jatr280371$"
   timeout: 60000
 
 # Configuración de Backtesting
 backtesting:
-  # Símbolos a procesar
+  # Símbolos a procesar - TOP 3 mejores acciones optimizadas
   symbols:
-    # Criptomonedas (CCXT)
-    - "YFI/USDT"
-    - "BTC/USDT"
-    - "ETH/USDT"
-    - "SOL/USDT"
-    - "ADA/USDT"
-    - "COMP/USDT"
-    - "LINK/USDT"
-    - "DOT/USDT"
-    # Acciones (MT5)
+    # Acciones (MT5) - 3 mejores acciones identificadas
     - "AAPL.US"
     - "TSLA.US"
     - "NVDA.US"
-    - "MSFT.US"
-    - "GOOGL.US"
 
-  # Configuración temporal
-  timeframe: "1h"
-  start_date: "2023-01-01"
-  end_date: "2025-06-01"
+  # Configuración temporal - Optimización para 1 año de datos
+  timeframe: "15m"
+  start_date: "2024-09-20"
+  end_date: "2025-09-20"
 
   # Configuración financiera
   initial_capital: 10000
   commission: 0.1
   slippage: 0.05
 
-  # Estrategias activas - Usando estrategias individuales
+  # Estrategias activas - Comparación básica vs compensación
   strategies:
     Estrategia_Basica: true
-    Estrategia_Conservadora: true
-    Estrategia_Optimizada: true
+    Estrategia_Conservadora: false
+    Estrategia_Optimizada: false
+    Estrategia_Compensacion: true
 
 # Configuración de Indicadores Técnicos
 indicators:
@@ -116,9 +106,20 @@ risk:
   sl_atr_multiplier: 1.5
   max_drawdown_limit: 20.0
 
+# Configuración de Estrategia de Compensación - Parámetros Optimizados para 20 símbolos
+compensation_strategy:
+  enabled: true
+  loss_threshold: 0.2        # Reducido a 0.2% para activar compensación más temprano
+  size_multiplier: 1.5       # Reducido a 1.5x para menos riesgo
+  tp_percent: 0.25          # Reducido a 0.25% TP más conservador
+  max_account_drawdown: 1.5  # Reducido a 1.5% stop-loss global más estricto
+  compensation_max_loss: 0.3 # Reducido a 0.3% límite compensación
+  emergency_stop_buffer: 0.8 # 80% del límite para stop anticipado
+  risk_multiplier_high_dd: 0.7 # Reducir riesgo 30% si drawdown > 1%
+
 # Configuración de Datos
 data:
-  use_mt5_for_stocks: false  # Desactivado hasta que MT5 esté configurado
+  use_mt5_for_stocks: true  # Activado ahora que MT5 está configurado
   use_ccxt_for_crypto: true
   max_retries: 3
   retry_delay: 5

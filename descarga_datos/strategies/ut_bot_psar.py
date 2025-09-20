@@ -65,33 +65,32 @@ class UTBotPSARStrategy:
         df['psar_bearish'] = df[price_col] < df['sar']
         df['psar_trend_change'] = df['psar_bullish'] != df['psar_bullish'].shift(1)
 
-        # Calcular trailing stop
-        trailing_stop = pd.Series(index=df.index, dtype=float)
+        # Calcular trailing stop de manera más robusta
+        trailing_stop_values = []
         current_stop = df['ha_close'].iloc[0]
-        
+
         for i in range(len(df)):
             price = df[price_col].iloc[i]
             n_loss = df['n_loss'].iloc[i]
-            
+
             if i == 0:
-                trailing_stop.iloc[i] = price - n_loss if price > current_stop else price + n_loss
+                trailing_stop_values.append(price - n_loss if price > current_stop else price + n_loss)
                 continue
-                
-            prev_stop = trailing_stop.iloc[i-1]
-            
+
+            prev_stop = trailing_stop_values[-1]
+
             if price > prev_stop and df[price_col].iloc[i-1] > prev_stop:
                 current_stop = max(prev_stop, price - n_loss)
             elif price < prev_stop and df[price_col].iloc[i-1] < prev_stop:
                 current_stop = min(prev_stop, price + n_loss)
             else:
                 current_stop = price - n_loss if price > prev_stop else price + n_loss
-                
-            trailing_stop.iloc[i] = current_stop
-            
-        df = df.copy()  # Crear una copia para evitar SettingWithCopyWarning
-        df['trailing_stop'] = trailing_stop
 
-        # Calcular señales de entrada usando EMA existente (usaremos ema_10 como señal rápida)
+            trailing_stop_values.append(current_stop)
+
+        # Crear la serie con los valores calculados
+        df = df.copy()
+        df['trailing_stop'] = trailing_stop_values        # Calcular señales de entrada usando EMA existente (usaremos ema_10 como señal rápida)
         df['above'] = (df['ema_10'] > df['trailing_stop']) & (df['ema_10'].shift(1) <= df['trailing_stop'].shift(1))
         df['below'] = (df['ema_10'] < df['trailing_stop']) & (df['ema_10'].shift(1) >= df['trailing_stop'].shift(1))
 

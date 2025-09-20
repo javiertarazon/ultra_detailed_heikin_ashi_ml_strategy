@@ -34,7 +34,32 @@ class DataStorage(BaseDataHandler):
         """Asegura que el directorio de la base de datos existe."""
         db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir)
+            os.makedirs(db_dir, exist_ok=True)
+            logger.info(f"Directorio creado: {db_dir}")
+    
+    def validate_data(self, data: Any) -> DataValidationResult:
+        """
+        Valida los datos proporcionados.
+
+        Args:
+            data: Datos a validar (DataFrame o lista de diccionarios)
+
+        Returns:
+            DataValidationResult con el resultado de la validación
+        """
+        try:
+            # Convertir a DataFrame si es necesario
+            df = pd.DataFrame(data) if isinstance(data, list) else data
+
+            # Usar la validación específica de timestamp
+            return self.validate_timestamp_column(df)
+
+        except Exception as e:
+            return DataValidationResult(
+                False,
+                [f"Error en validación de datos: {str(e)}"],
+                []
+            )
     
     def validate_timestamp_column(self, df: pd.DataFrame) -> DataValidationResult:
         """

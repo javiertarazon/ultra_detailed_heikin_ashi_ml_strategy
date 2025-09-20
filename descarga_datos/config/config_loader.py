@@ -54,6 +54,17 @@ class StorageConfig:
     cache_enabled: bool = True
 
 @dataclass
+class CompensationConfig:
+    enabled: bool = True
+    loss_threshold: float = 0.5        # % del balance para activar compensación
+    size_multiplier: float = 3.0       # Multiplicador del tamaño de compensación
+    tp_percent: float = 0.5           # % del balance como TP de compensación
+    max_account_drawdown: float = 3.0  # Stop-loss global máximo (3% del balance)
+    compensation_max_loss: float = 1.0 # Límite de pérdida máxima para compensación (1% del balance)
+    emergency_stop_buffer: float = 0.8 # Buffer para stop anticipado (80% del límite)
+    risk_multiplier_high_dd: float = 0.7 # Reducción de riesgo en drawdown alto (30%)
+
+@dataclass
 class RiskConfig:
     risk_percent: float = 2.0
     tp_atr_multiplier: float = 2.0
@@ -95,6 +106,7 @@ class Config:
     indicators: IndicatorsConfig = field(default_factory=IndicatorsConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    compensation_strategy: CompensationConfig = field(default_factory=CompensationConfig)
     data: DataConfig = field(default_factory=DataConfig)
     reports: ReportsConfig = field(default_factory=ReportsConfig)
 
@@ -166,6 +178,11 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Config:
         if 'risk' in yaml_data:
             risk_data = yaml_data['risk']
             config.risk = RiskConfig(**risk_data)
+
+        # Cargar configuración de estrategia de compensación
+        if 'compensation_strategy' in yaml_data:
+            comp_data = yaml_data['compensation_strategy']
+            config.compensation_strategy = CompensationConfig(**comp_data)
 
         # Cargar configuración de datos
         if 'data' in yaml_data:
