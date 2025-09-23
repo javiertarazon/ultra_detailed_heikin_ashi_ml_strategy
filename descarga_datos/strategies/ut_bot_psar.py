@@ -11,11 +11,12 @@ class UTBotPSARStrategy:
                  atr_period=10,
                  use_heikin_ashi=False,
                  risk_percent=2.0,
-                 tp_atr_multiplier=2.0,
-                 sl_atr_multiplier=1.5,
+                 tp_atr_multiplier=3.0,  # AJUSTADO: Mejor ratio riesgo/recompensa
+                 sl_atr_multiplier=1.0,  # AJUSTADO: Mejor ratio riesgo/recompensa
                  psar_start=0.02,
                  psar_increment=0.02,
-                 psar_max=0.2):
+                 psar_max=0.2,
+                 max_drawdown_limit=25.0):  # NUEVO: Límite de drawdown global al 25%
         self.sensitivity = sensitivity
         self.atr_period = atr_period
         self.use_heikin_ashi = use_heikin_ashi
@@ -25,6 +26,7 @@ class UTBotPSARStrategy:
         self.psar_start = psar_start
         self.psar_increment = psar_increment
         self.psar_max = psar_max
+        self.max_drawdown_limit = max_drawdown_limit  # Límite de drawdown global
 
     def calculate_heikin_ashi(self, df):
         ha_close = (df['open'] + df['high'] + df['low'] + df['close']) / 4
@@ -65,6 +67,9 @@ class UTBotPSARStrategy:
         df['psar_bearish'] = df[price_col] < df['sar']
         df['psar_trend_change'] = df['psar_bullish'] != df['psar_bullish'].shift(1)
 
+        # Calcular RSI para filtro adicional
+        df['rsi'] = talib.RSI(df[price_col], timeperiod=14)
+
         # Calcular trailing stop de manera más robusta
         trailing_stop_values = []
         current_stop = df['ha_close'].iloc[0]
@@ -98,8 +103,12 @@ class UTBotPSARStrategy:
         long_trend = df[price_col] > df['ema_200']
         short_trend = df[price_col] < df['ema_200']
 
-        df['buy_signal'] = (df[price_col] > df['trailing_stop']) & df['above'] & long_trend
-        df['sell_signal'] = (df[price_col] < df['trailing_stop']) & df['below'] & short_trend
+        # Filtros adicionales con RSI
+        long_rsi_filter = df['rsi'] > 30  # Evitar oversold extremos
+        short_rsi_filter = df['rsi'] < 70  # Evitar overbought extremos
+        
+        df['buy_signal'] = (df[price_col] > df['trailing_stop']) & df['above'] & long_trend & long_rsi_filter
+        df['sell_signal'] = (df[price_col] < df['trailing_stop']) & df['below'] & short_trend & short_rsi_filter
 
         return df
 
@@ -142,11 +151,38 @@ class UTBotPSARStrategy:
             stop_loss = 0.0
             take_profit = 0.0
             trades = []
+            peak_capital = capital  # Nuevo: Para calcular drawdown
+            current_balance = capital  # Nuevo: Balance actual
             
             # Simular trading
             for i in range(len(df)):
                 current_price = df['close'].iloc[i]
                 
+                # Calcular drawdown actual
+                current_balance = capital
+                peak_capital = max(peak_capital, current_balance)
+                current_drawdown_pct = ((peak_capital - current_balance) / peak_capital) * 100 if peak_capital > 0 else 0
+                
+                # Verificar stop-loss global si hay posición abierta
+                if position != 0 and current_drawdown_pct >= self.max_drawdown_limit:
+                    # Cerrar posición por stop-loss global
+                    exit_price = current_price
+                    pnl = (exit_price - entry_price) * position_size if position == 1 else (entry_price - exit_price) * position_size
+                    capital += pnl
+                    
+                    trades.append({
+                        'entry_price': entry_price,
+                        'exit_price': exit_price,
+                        'pnl': pnl,
+                        'type': 'long' if position == 1 else 'short',
+                        'emergency_stop': True,
+                        'drawdown_at_stop': current_drawdown_pct
+                    })
+                    
+                    position = 0
+                    print(f"[GLOBAL STOP] Posición cerrada por drawdown global - Drawdown: {current_drawdown_pct:.2f}% (límite: {self.max_drawdown_limit:.1f}%)")
+                    continue
+
                 # Verificar señales de entrada
                 if position == 0:
                     if df['buy_signal'].iloc[i]:
@@ -174,6 +210,7 @@ class UTBotPSARStrategy:
                         exit_price = current_price
                         pnl = (exit_price - entry_price) * position_size
                         capital += pnl
+                        peak_capital = max(peak_capital, capital)  # Actualizar peak
                         
                         trades.append({
                             'entry_price': entry_price,
@@ -190,6 +227,7 @@ class UTBotPSARStrategy:
                         exit_price = current_price
                         pnl = (entry_price - exit_price) * position_size
                         capital += pnl
+                        peak_capital = max(peak_capital, capital)  # Actualizar peak
                         
                         trades.append({
                             'entry_price': entry_price,
@@ -204,16 +242,32 @@ class UTBotPSARStrategy:
             total_trades = len(trades)
             winning_trades = len([t for t in trades if t['pnl'] > 0])
             losing_trades = total_trades - winning_trades
-            win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
+            win_rate = (winning_trades / total_trades * 100.0) if total_trades > 0 else 0.0
             total_pnl = sum(t['pnl'] for t in trades)
             
-            # Calcular drawdown máximo
+            # Calcular equity curve y max drawdown
             if trades:
-                cumulative_pnl = [sum(t['pnl'] for t in trades[:i+1]) for i in range(len(trades))]
-                peak = max(cumulative_pnl) if cumulative_pnl else 0
-                max_drawdown = min(cumulative_pnl) - peak if cumulative_pnl else 0
+                equity_curve = [10000.0]
+                for tr in trades:
+                    equity_curve.append(equity_curve[-1] + tr['pnl'])
+
+                peak = equity_curve[0]
+                max_dd = 0.0
+                for eq in equity_curve:
+                    if eq > peak:
+                        peak = eq
+                    dd = peak - eq
+                    if dd > max_dd:
+                        max_dd = dd
+                max_drawdown = -max_dd
             else:
                 max_drawdown = 0.0
+                equity_curve = [10000.0]
+
+            # Profit factor
+            gross_profit = sum(t['pnl'] for t in trades if t['pnl'] > 0)
+            gross_loss = abs(sum(t['pnl'] for t in trades if t['pnl'] < 0))
+            profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
             
             return {
                 'total_trades': total_trades,
@@ -223,8 +277,10 @@ class UTBotPSARStrategy:
                 'total_pnl': total_pnl,
                 'max_drawdown': max_drawdown,
                 'sharpe_ratio': 0.0,  # Placeholder
+                'profit_factor': profit_factor,
                 'symbol': symbol,
-                'trades': trades
+                'trades': trades,
+                'equity_curve': equity_curve
             }
             
         except Exception as e:

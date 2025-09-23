@@ -101,7 +101,7 @@ class AdvancedDataDownloader:
     async def download_multiple_symbols(self, symbols: List[str], timeframe: str = "1h",
                                       start_date: str = None, end_date: str = None) -> Dict[str, pd.DataFrame]:
         """
-        Descarga datos de múltiples símbolos en paralelo
+        Descarga datos de múltiples símbolos en paralelo con soporte para lotes
 
         Args:
             symbols: Lista de símbolos
@@ -122,7 +122,7 @@ class AdvancedDataDownloader:
         # Crear tareas para paralelización
         tasks = []
         for symbol in symbols:
-            task = self._download_symbol_with_retry(symbol, timeframe, start_date, end_date)
+            task = self._download_symbol_with_batches(symbol, timeframe, start_date, end_date)
             tasks.append(task)
 
         # Ejecutar en paralelo
@@ -139,6 +139,84 @@ class AdvancedDataDownloader:
                 self.logger.info(f"✅ {symbol}: {len(result)} velas descargadas")
 
         return symbol_data
+
+    def _calculate_download_batches(self, start_date: str, end_date: str, batch_size_days: int = 90) -> List[Tuple[str, str]]:
+        """
+        Divide el período total en lotes más pequeños para evitar límites de MT5
+
+        Args:
+            start_date: Fecha inicio (YYYY-MM-DD)
+            end_date: Fecha fin (YYYY-MM-DD)
+            batch_size_days: Tamaño de cada lote en días (default: 90 días = 3 meses)
+
+        Returns:
+            Lista de tuplas (start_batch, end_batch)
+        """
+        start_dt = pd.Timestamp(start_date)
+        end_dt = pd.Timestamp(end_date)
+
+        batches = []
+        current_start = start_dt
+
+        while current_start < end_dt:
+            current_end = min(current_start + pd.Timedelta(days=batch_size_days), end_dt)
+            batches.append((current_start.strftime("%Y-%m-%d"), current_end.strftime("%Y-%m-%d")))
+            current_start = current_end
+
+        return batches
+
+    async def _download_symbol_with_batches(self, symbol: str, timeframe: str,
+                                          start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """
+        Descarga un símbolo dividiendo el período en lotes para evitar límites de MT5
+        """
+        # Calcular lotes de 3 meses cada uno
+        batches = self._calculate_download_batches(start_date, end_date, batch_size_days=90)
+
+        if len(batches) == 1:
+            # Si solo hay un lote, usar el método normal
+            return await self._download_symbol_with_retry(symbol, timeframe, start_date, end_date)
+
+        self.logger.info(f"📦 {symbol}: Descargando en {len(batches)} lotes de ~3 meses cada uno")
+
+        all_data_frames = []
+
+        for i, (batch_start, batch_end) in enumerate(batches, 1):
+            self.logger.info(f"📦 {symbol}: Lote {i}/{len(batches)} - {batch_start} a {batch_end}")
+
+            try:
+                batch_data = await self._download_symbol_with_retry(symbol, timeframe, batch_start, batch_end)
+                if batch_data is not None and not batch_data.empty:
+                    all_data_frames.append(batch_data)
+                    self.logger.info(f"✅ {symbol}: Lote {i} completado - {len(batch_data)} velas")
+                else:
+                    self.logger.warning(f"⚠️ {symbol}: Lote {i} vacío")
+            except Exception as e:
+                self.logger.error(f"❌ {symbol}: Error en lote {i}: {e}")
+                # Continuar con el siguiente lote en lugar de fallar completamente
+                continue
+
+        if not all_data_frames:
+            self.logger.error(f"❌ {symbol}: Todos los lotes fallaron")
+            return None
+
+        # Combinar todos los DataFrames
+        try:
+            combined_df = pd.concat(all_data_frames, ignore_index=True)
+
+            # Eliminar duplicados basados en timestamp
+            combined_df = combined_df.drop_duplicates(subset=['timestamp'], keep='first')
+
+            # Ordenar por timestamp
+            combined_df = combined_df.sort_values('timestamp').reset_index(drop=True)
+
+            self.logger.info(f"📦 {symbol}: Combinados {len(all_data_frames)} lotes → {len(combined_df)} velas totales")
+
+            return combined_df
+
+        except Exception as e:
+            self.logger.error(f"❌ {symbol}: Error combinando lotes: {e}")
+            return None
 
     async def _download_symbol_with_retry(self, symbol: str, timeframe: str,
                                         start_date: str, end_date: str) -> Optional[pd.DataFrame]:

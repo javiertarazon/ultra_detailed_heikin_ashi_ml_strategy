@@ -1,76 +1,303 @@
-# 🤖 Copilot Instructions for AI Agents
+# 🤖 Copilot Instructions for AI Agents - Sistema Modular v2.0
 
-> Estas instrucciones deben ser leídas y seguidas constantemente por el agente, sin importar el modelo o tarea que esté realizando, para asegurar el cumplimiento de los estándares y requerimientos del sistema.
+> Estas instrucciones deben ser leídas y seguidas constantemente por el agente, sin importar el modelo o tarea que esté realizando, para asegurar el cumplimiento de los estándares y requerimientos del sistema modular.
 
 ## 🧠 Rol del Agente AI
 - Debes comportarte como un experto en trading con más de 20 años de experiencia en forex, cripto y acciones.
 - Además, eres un programador experto en JavaScript, Python, MQL5 y Pine Script, así como en desarrollo de bots de trading y machine learning.
 - Tu enfoque debe ser siempre profesional, resolviendo los requerimientos con la máxima calidad y eficiencia, aplicando las mejores prácticas del sector.
 
-## 🏗️ Arquitectura y Componentes Clave
-- **Núcleo:** Todo el procesamiento principal ocurre en `descarga_datos/`.
-  - `main.py`: Punto de entrada para backtesting y ejecución principal.
-  - `core/`: Descarga de datos (CCXT, MT5), gestión de caché y almacenamiento.
-  - `indicators/`: Cálculo de indicadores técnicos (TA-Lib, custom).
-  - `strategies/`: Estrategias UT Bot PSAR (conservadora, optimizada, base).
-  - `backtesting/`: Motor de backtesting y métricas avanzadas.
-  - `risk_management/`: Validación y gestión de riesgos.
-  - `utils/`: Logging, normalización, almacenamiento, reintentos, monitoreo.
-  - `config/`: Configuración central en `config.yaml`.
-- **Dashboard:** Debe implementarse un dashboard sencillo pero funcional (por ejemplo, en Streamlit) que entregue con fidelidad las métricas y datos obtenidos del backtesting. El dashboard debe ser claro, poderoso y reflejar exactamente los resultados generados.
+## 🏗️ Arquitectura Modular del Sistema
 
-## ⚡ Flujos de Trabajo Esenciales
-- **Instalación:**
-  - Instala dependencias con `pip install -r requirements.txt`.
-  - Usa entorno virtual (`trading_bot_env/`) para aislar dependencias.
-- **Ejecución:**
-  - Ejecuta backtesting: `cd descarga_datos && python main.py`.
-  - Lanza dashboard: `cd .. && streamlit run dash2.py`.
-- **Configuración:**
-  - Edita `descarga_datos/config/config.yaml` para credenciales y parámetros.
-- **Datos:**
-  - Resultados y logs se almacenan en subcarpetas de `descarga_datos/data/` y `descarga_datos/logs/`.
+### 🎯 **Núcleo del Sistema Modular**
+Todo el procesamiento principal ocurre en `descarga_datos/` con arquitectura **100% modular**:
 
-## 🧩 Patrones y Convenciones
-- **Modularidad:** Cada submódulo tiene responsabilidad única y clara. No debe existir dependencia cruzada entre módulos.
-- **Estrategias:** Heredan o usan patrones similares a UT Bot PSAR, con variantes en archivos separados.
-- **Indicadores:** Centralizados en `technical_indicators.py` para fácil extensión.
-- **Configuración:** Siempre centralizada en YAML, cargada por `config_loader.py`.
-- **Logging:** Usa `utils/logger.py` para trazabilidad y debugging.
-- **Normalización:** Todos los datos pasan por `utils/normalization.py` antes de ser almacenados.
-- **Corrección sobre duplicación:** No crees archivos nuevos ni soluciones simples cada vez que haya un error. Debes corregir el código existente que generó el error, evitando duplicar funciones o llenar el sistema de código basura.
+#### **🔄 Componentes Principales**
+- **`run_backtesting_batches.py`**: 🚀 **Backtester principal** - Punto de entrada principal con carga dinámica
+- **`main.py`**: 📊 Punto de entrada alternativo para operaciones específicas
+- **`dashboard.py`**: 📈 Dashboard de visualización de resultados
+- **`validate_modular_system.py`**: ✅ Validador del sistema modular
 
-## ⚠️ Restricción de Datos para Backtesting
-- **Solo se deben utilizar datos reales descargados de CCXT (cripto) y MT5 (acciones) para todas las operaciones de backtesting.**
-- No utilices datos sintéticos, simulados ni generados manualmente para pruebas o métricas de rendimiento.
+#### **⚙️ Configuración Centralizada**
+- **`config/config.yaml`**: 🎛️ **Configuración única** - Controla TODO el sistema
+- **`config/config_loader.py`**: 📥 Carga configuración YAML
+- **Activación de estrategias**: Solo cambiar `true/false` en YAML
+
+#### **🎯 Estrategias Modulares**
+- **`strategies/`**: 📁 Carpeta de estrategias independientes
+- **Carga dinámica**: `load_strategies_from_config()` importa automáticamente
+- **Interfaz estándar**: Todas las estrategias implementan `run(data, symbol) -> dict`
+- **Ejemplos actuales**:
+  - `solana_4h_strategy.py`: Heiken Ashi + volumen + stop loss fijo
+  - `solana_4h_trailing_strategy.py`: Heiken Ashi + volumen + trailing stop dinámico
+
+#### **🔧 Componentes Core**
+- **`core/downloader.py`**: 📥 Descarga de datos CCXT (cripto)
+- **`core/mt5_downloader.py`**: 📥 Descarga de datos MT5 (acciones)
+- **`core/cache_manager.py`**: 💾 Gestión inteligente de caché
+- **`indicators/technical_indicators.py`**: 📊 Cálculo de indicadores TA-Lib
+- **`backtesting/backtester.py`**: 📈 Motor de backtesting avanzado
+- **`risk_management/risk_management.py`**: ⚠️ Validación y gestión de riesgos
+
+#### **🛠️ Utilidades**
+- **`utils/logger.py`**: 📝 Sistema de logging centralizado
+- **`utils/storage.py`**: 💾 Almacenamiento SQLite + CSV
+- **`utils/normalization.py`**: 🔄 Normalización automática de datos
+- **`utils/retry_manager.py`**: 🔄 Reintentos inteligentes de conexión
+- **`utils/monitoring.py`**: 📊 Monitoreo del sistema
+
+#### **📊 Dashboard y Resultados**
+- **`dashboard.py`**: 📈 Dashboard Streamlit para visualización
+- **`data/dashboard_results/`**: 📊 Resultados JSON por símbolo
+- **`data/csv/`**: 📄 Datos históricos normalizados
+- **`data/data.db`**: 🗄️ Base de datos SQLite
+- **`logs/bot_trader.log`**: 📝 Logs detallados del sistema
+
+## ⚡ Flujos de Trabajo Esenciales - Sistema Modular
+
+### 📦 **Instalación**
+```bash
+pip install -r requirements.txt
+# Crear entorno virtual recomendado
+```
+
+### ⚙️ **Configuración**
+```bash
+# Editar ÚNICO archivo de configuración
+code descarga_datos/config/config.yaml
+
+# Activar/desactivar estrategias cambiando true/false:
+strategies:
+  Solana4H: true          # ✅ Activar
+  Solana4HTrailing: true  # ✅ Activar
+  Estrategia_Basica: false # ❌ Desactivar
+```
+
+### ▶️ **Ejecución del Sistema**
+
+#### **🚀 Backtesting Principal (Recomendado)**
+```bash
+cd descarga_datos
+python run_backtesting_batches.py
+```
+- Descarga datos automáticamente desde CCXT/MT5
+- Carga dinámicamente TODAS las estrategias activas
+- Ejecuta backtesting comparativo
+- Genera resultados JSON por símbolo
+- Lanza dashboard automáticamente
+
+#### **📊 Dashboard Independiente**
+```bash
+cd descarga_datos
+python dashboard.py
+# o streamlit run dashboard.py
+```
+
+#### **✅ Validación del Sistema Modular**
+```bash
+cd descarga_datos
+python validate_modular_system.py
+```
+- Verifica carga dinámica de estrategias
+- Valida configuración YAML
+- Confirma funcionamiento de todas las estrategias activas
+
+### 🎯 **Cómo Agregar Nuevas Estrategias (3 Pasos)**
+
+#### **Paso 1: Crear Estrategia**
+```python
+# descarga_datos/strategies/mi_estrategia.py
+class MiEstrategia:
+    def run(self, data, symbol):
+        return {
+            'total_trades': 100,
+            'win_rate': 0.65,
+            'total_pnl': 1500.0,
+            'max_drawdown': 300.0,
+            'profit_factor': 1.8,
+            'symbol': symbol,
+            'trades': [...],
+            # ... métricas completas
+        }
+```
+
+#### **Paso 2: Registrar en Backtester**
+```python
+# En run_backtesting_batches.py, agregar UNA línea:
+strategy_classes = {
+    'MiEstrategia': ('strategies.mi_estrategia', 'MiEstrategia'),
+}
+```
+
+#### **Paso 3: Activar en Configuración**
+```yaml
+# config/config.yaml
+backtesting:
+  strategies:
+    MiEstrategia: true  # ✅ Activada automáticamente
+```
+
+**¡Sin modificar backtester, main o dashboard!**
+
+## 🧩 Patrones y Convenciones del Sistema Modular
+
+### 🎯 **Principio de Modularidad Total**
+- **Cero dependencias cruzadas**: Estrategias completamente independientes
+- **Configuración declarativa**: Todo controlado por YAML
+- **Carga dinámica**: Importación automática sin hardcode
+- **Interfaz estándar**: Todas las estrategias siguen el mismo contrato
+
+### 📊 **Estrategias**
+- **Ubicación**: `strategies/` carpeta dedicada
+- **Interfaz**: Método `run(data, symbol) -> dict` obligatorio
+- **Métricas**: Retornar diccionario con métricas estándar
+- **Independencia**: Cada estrategia es un módulo autocontenido
+
+### 📈 **Indicadores**
+- **Centralizados**: `technical_indicators.py` único punto
+- **TA-Lib**: Biblioteca profesional de indicadores
+- **Extensibles**: Fácil agregar nuevos indicadores
+- **Reutilizables**: Compartidos entre todas las estrategias
+
+### ⚙️ **Configuración**
+- **Archivo único**: `config.yaml` controla TODO
+- **Estructura jerárquica**: Secciones claras por funcionalidad
+- **Activación de estrategias**: Simplemente `true/false`
+- **Carga automática**: `config_loader.py` maneja parsing
+
+### 📝 **Logging**
+- **Centralizado**: `utils/logger.py` único logger
+- **Niveles configurables**: DEBUG, INFO, WARNING, ERROR
+- **Archivos rotativos**: `logs/bot_trader.log`
+- **Contexto completo**: Incluye timestamps y módulos
+
+### 🔄 **Normalización**
+- **Obligatoria**: `utils/normalization.py` procesa todos los datos
+- **Formato estándar**: Columnas consistentes para todas las fuentes
+- **Validación**: Verificación de integridad de datos
+- **Almacenamiento**: SQLite + CSV normalizados
+
+### 🧹 **Corrección sobre Duplicación**
+- **Reutilizar código existente**: Buscar en `utils/` antes de crear nuevo
+- **Modularizar funciones**: Extraer lógica común a utilidades
+- **Eliminar archivos innecesarios**: Mantener sistema limpio
+- **Documentar cambios**: Actualizar README y documentación
+
+## ⚠️ Restricciones y Mejores Prácticas
+
+### 📊 **Datos para Backtesting**
+- **Solo datos reales**: Descargados de CCXT (cripto) y MT5 (acciones)
+- **No datos sintéticos**: Nunca usar datos generados manualmente
+- **Validación**: Verificar integridad antes de usar
+- **Normalización**: Todos los datos pasan por `utils/normalization.py`
+
+### 🎯 **Desarrollo de Estrategias**
+- **Interfaz estándar**: Seguir contrato `run(data, symbol) -> dict`
+- **Métricas completas**: Incluir todas las métricas estándar
+- **Documentación**: Comentar lógica compleja
+- **Testing**: Validar con `validate_modular_system.py`
+
+### 🔧 **Mantenimiento del Sistema**
+- **README actualizado**: Reflejar siempre la arquitectura actual
+- **Documentación clara**: `MODULAR_SYSTEM_README.md` como referencia
+- **Limpieza**: Eliminar archivos de debug después de resolver
+- **Versionado**: Usar semántica para releases
 
 ## 🔗 Integraciones y Dependencias
-- **Fuentes de datos:** CCXT (cripto), MT5 (acciones), configurables vía YAML.
-- **Almacenamiento:** SQLite y CSV, gestionados por utilidades propias.
-- **Dashboard:** Streamlit, lee resultados desde archivos generados por el backtesting.
 
-## 🧪 Pruebas y Debug
-- Pruebas en `descarga_datos/tests/`.
-- Usa logs detallados para depuración (`logs/`).
-- El dashboard puede usarse para validar visualmente resultados tras backtesting.
+### 📊 **Fuentes de Datos**
+- **CCXT**: Criptomonedas (Bybit, Binance, etc.)
+- **MT5**: Acciones y forex tradicionales
+- **Configurables**: Múltiples exchanges en paralelo
+- **Asíncronos**: Descargas concurrentes de alta performance
 
-## � Mantenimiento y Buenas Prácticas
-- El archivo `README.md` debe mantenerse siempre actualizado con los cambios efectuados en el sistema.
-- Los códigos que se analicen, creen, modifiquen o corrijan deben sugerirse tomando como referencia antecedentes de funcionalidad comprobada, ya sea en este mismo proyecto, en otros proyectos existentes o en repositorios reconocidos (por ejemplo, GitHub).
-- Prioriza sugerir soluciones y patrones que garanticen funcionamiento, buenas prácticas y, cuando sea posible, innovación de punta.
-- No se debe mantener en el sistema archivos que no estén en uso. Si se crea un archivo para probar o corregir un error, debe eliminarse tras solucionar o encontrar el problema, para mantener la claridad y limpieza del sistema.
+### 💾 **Almacenamiento**
+- **SQLite**: Base de datos principal (`data.db`)
+- **CSV**: Archivos históricos (`data/csv/`)
+- **JSON**: Resultados de backtesting (`data/dashboard_results/`)
+- **Logs**: Sistema de logging rotativo (`logs/`)
 
-## �📚 Referencias Clave
-- `README.md`: Visión general, flujos y ejemplos.
-- `CONTRIBUTING.md`: Guía de contribución y buenas prácticas.
-- `CHANGELOG.md`: Historial de cambios.
+### 📊 **Dashboard**
+- **Streamlit**: Framework web para visualización
+- **Datos en tiempo real**: Actualización automática post-backtesting
+- **Métricas comparativas**: Estrategias side-by-side
+- **Gráficos interactivos**: Análisis detallado de resultados
+
+## 🧪 Testing y Validación
+
+### ✅ **Suite de Validación**
+```bash
+cd descarga_datos
+python validate_modular_system.py
+```
+- Verifica carga dinámica de estrategias
+- Valida configuración YAML
+- Confirma funcionamiento de estrategias activas
+- Tests unitarios de componentes críticos
+
+### 🐛 **Debugging**
+- **Logs detallados**: `logs/bot_trader.log`
+- **Resultados JSON**: `data/dashboard_results/[symbol]_results.json`
+- **Dashboard visual**: Análisis gráfico de resultados
+- **Validación modular**: `validate_modular_system.py` para diagnóstico
+
+### 📊 **Métricas de Validación**
+- **Carga exitosa**: Todas las estrategias activas se cargan
+- **Ejecución correcta**: Backtesting produce resultados válidos
+- **Métricas completas**: Todas las estrategias retornan métricas estándar
+- **Comparación posible**: Dashboard puede mostrar análisis comparativo
+
+## 📚 Referencias Clave - Sistema Modular
+
+### 📖 **Documentación Principal**
+- **`README.md`**: Visión general completa del sistema modular
+- **`MODULAR_SYSTEM_README.md`**: Guía detallada de extensión
+- **`CONTRIBUTING.md`**: Guía de contribución para nuevas estrategias
+- **`CHANGELOG.md`**: Historial de cambios y versiones
+
+### 🏗️ **Arquitectura de Referencia**
+- **`run_backtesting_batches.py`**: Ejemplo de carga dinámica
+- **`config/config.yaml`**: Estructura de configuración completa
+- **`strategies/solana_4h_trailing_strategy.py`**: Ejemplo de estrategia completa
+- **`validate_modular_system.py`**: Patrón de validación
 
 ---
 
-**Ejemplo de flujo típico:**
-1. Modifica/crea una estrategia en `strategies/`.
-2. Ajusta parámetros en `config/config.yaml`.
-3. Ejecuta `main.py` para backtesting.
-4. Visualiza resultados en el dashboard (`dash2.py`).
+## 🚀 Flujo de Trabajo Típico - Sistema Modular
 
-> Mantén la modularidad y sigue los patrones de configuración y logging existentes. Consulta los archivos de utilidades antes de crear nuevas funciones repetidas.
+### 1. **Desarrollar Nueva Estrategia**
+```bash
+# Crear estrategia
+code descarga_datos/strategies/mi_estrategia.py
+
+# Registrar en backtester (1 línea)
+edit run_backtesting_batches.py
+
+# Activar en configuración
+edit config/config.yaml
+```
+
+### 2. **Validar Sistema**
+```bash
+cd descarga_datos
+python validate_modular_system.py
+```
+
+### 3. **Ejecutar Backtesting**
+```bash
+cd descarga_datos
+python run_backtesting_batches.py
+```
+
+### 4. **Analizar Resultados**
+```bash
+# Dashboard se lanza automáticamente
+# o manualmente:
+python dashboard.py
+```
+
+---
+
+**🎯 El sistema modular permite escalar indefinidamente sin modificar el código principal. Cada nueva estrategia es completamente independiente y se integra automáticamente al sistema de backtesting y análisis comparativo.**
+
+**🔄 Principio fundamental: "Agregar estrategias = Solo 3 pasos, sin tocar backtester/main/dashboard"**

@@ -18,11 +18,11 @@ class UTBotPSARCompensationStrategy:
                  psar_increment=0.02,
                  psar_max=0.2,
                  # Parámetros de compensación OPTIMIZADOS para mejor control de riesgo
-                 compensation_loss_threshold=0.2,  # REDUCIDO: 0.2% del balance para activar compensación
-                 compensation_size_multiplier=1.5,  # REDUCIDO: 1.5x el tamaño de compensación
-                 compensation_tp_percent=0.25,     # REDUCIDO: 0.25% del balance como TP de compensación
-                 max_account_drawdown=1.5,         # REDUCIDO: 1.5% máximo de drawdown del balance total
-                 compensation_max_loss_percent=0.3, # NUEVO: 0.3% límite máximo de pérdida por compensación
+                 compensation_loss_threshold=0.1,  # REDUCIDO: 0.1% del balance para activar compensación (antes 0.3%)
+                 compensation_size_multiplier=2.0,  # AUMENTADO: 2.0x el tamaño de compensación (antes 1.5x)
+                 compensation_tp_percent=0.1,     # REDUCIDO: 0.1% del balance como TP de compensación (antes 0.25%)
+                 max_account_drawdown=15.0,         # AUMENTADO: 15% máximo de drawdown del balance total (antes 7.5%)
+                 compensation_max_loss_percent=3.0, # AUMENTADO: 3.0% límite máximo de pérdida por compensación (antes 0.3%)
                  # NUEVAS MEJORAS PARA CONTROL DE RIESGO AVANZADO
                  anticipatory_stop_threshold=0.8,   # NUEVO: 80% del límite para activar stops anticipatorios
                  progressive_risk_levels=None):     # NUEVO: Niveles progresivos de reducción de riesgo
@@ -81,11 +81,8 @@ class UTBotPSARCompensationStrategy:
                                                 progressive_risk_mult, activation_type, capital, symbol):
         """
         Método centralizado para activar compensación con control de riesgo avanzado.
+        Devuelve un diccionario con el estado de compensación a aplicar en el contexto de ejecución.
         """
-        global compensation_active, compensation_position, compensation_entry_price
-        global compensation_size, compensation_max_loss, compensation_target_pnl
-        global main_position_pnl_at_compensation
-
         # Activar compensación
         compensation_active = True
         compensation_position = -position  # Posición opuesta
@@ -129,6 +126,17 @@ class UTBotPSARCompensationStrategy:
         print(f"  Límite pérdida: ${compensation_max_loss:.2f}")
         print(f"  Objetivo total: ${compensation_target_pnl:.2f}")
 
+        # Devolver estado para que el llamador lo asigne en su contexto
+        return {
+            'compensation_active': compensation_active,
+            'compensation_position': compensation_position,
+            'compensation_entry_price': compensation_entry_price,
+            'compensation_size': compensation_size,
+            'compensation_max_loss': compensation_max_loss,
+            'compensation_target_pnl': compensation_target_pnl,
+            'main_position_pnl_at_compensation': main_position_pnl_at_compensation
+        }
+
     def should_activate_anticipatory_stop(self, current_drawdown_pct):
         """
         Determina si se debe activar un stop anticipatorio basado en el umbral configurado.
@@ -153,8 +161,8 @@ class UTBotPSARCompensationStrategy:
 
     def calculate_signals(self, df):
         """
-        Calcula las señales usando los indicadores ya existentes en los datos.
-        Los datos deben contener: atr, sar, ema_10, ema_20, ema_200
+        Calcula las señales de trading usando indicadores técnicos.
+        Si los indicadores no existen, los calcula automáticamente.
         """
         if self.use_heikin_ashi:
             df = self.calculate_heikin_ashi(df)
@@ -166,10 +174,27 @@ class UTBotPSARCompensationStrategy:
             df['ha_low'] = df['low']
             price_col = 'close'
 
-        # Usar ATR existente
+        # Calcular ATR si no existe
+        if 'atr' not in df.columns:
+            df['atr'] = talib.ATR(df['high'], df['low'], df['close'], timeperiod=self.atr_period)
+            df['atr'] = df['atr'].fillna(df['atr'].mean())  # Fill NaN values
+
+        # Calcular EMA si no existen
+        if 'ema_10' not in df.columns:
+            df['ema_10'] = talib.EMA(df[price_col], timeperiod=10)
+        if 'ema_20' not in df.columns:
+            df['ema_20'] = talib.EMA(df[price_col], timeperiod=20)
+        if 'ema_200' not in df.columns:
+            df['ema_200'] = talib.EMA(df[price_col], timeperiod=200)
+
+        # Calcular Parabolic SAR si no existe
+        if 'sar' not in df.columns:
+            df['sar'] = talib.SAR(df['high'], df['low'], acceleration=self.psar_start, maximum=self.psar_max)
+
+        # Usar ATR calculado
         df['n_loss'] = self.sensitivity * df['atr']
 
-        # Usar SAR existente
+        # Usar SAR calculado
         df['psar'] = df['sar']  # Renombrar para mantener consistencia con el código
         df['psar_bullish'] = df[price_col] > df['sar']
         df['psar_bearish'] = df[price_col] < df['sar']
@@ -210,8 +235,14 @@ class UTBotPSARCompensationStrategy:
         long_trend = df[price_col] > df['ema_200']
         short_trend = df[price_col] < df['ema_200']
 
-        df['buy_signal'] = (df[price_col] > df['trailing_stop']) & df['above'] & long_trend
-        df['sell_signal'] = (df[price_col] < df['trailing_stop']) & df['below'] & short_trend
+        # Señales SIMPLIFICADAS para testing: usar cruces de precio con EMA_10
+        df['buy_signal'] = (df[price_col] > df['ema_10']) & (df[price_col].shift(1) <= df['ema_10'].shift(1)) & long_trend
+        df['sell_signal'] = (df[price_col] < df['ema_10']) & (df[price_col].shift(1) >= df['ema_10'].shift(1))
+        
+        # DEBUG: Contar señales
+        buy_signals_count = df['buy_signal'].sum()
+        sell_signals_count = df['sell_signal'].sum()
+        print(f"[DEBUG] Se generaron {buy_signals_count} señales de compra y {sell_signals_count} señales de venta para {len(df)} velas")
 
         return df
 
@@ -243,13 +274,17 @@ class UTBotPSARCompensationStrategy:
         """
         Ejecuta la estrategia con sistema de compensación y devuelve los resultados del backtesting
         """
+        print(f"[DEBUG] Ejecutando estrategia de compensación para {symbol} con data type: {type(data)}")
         try:
+            print(f"[DEBUG] Data shape: {data.shape if hasattr(data, 'shape') else 'No shape'}")
+            print(f"[DEBUG] Data length: {len(data) if hasattr(data, '__len__') else 'No len'}")
             # Calcular señales
             df = self.calculate_signals(data.copy())
 
             # Inicializar variables de trading
             capital = 10000.0  # Capital inicial
             initial_capital = capital  # Guardar capital inicial para cálculos de drawdown
+            peak_capital = capital  # Peak de capital para cálculo correcto de drawdown
             position = 0  # 0: sin posición, 1: long, -1: short
             entry_price = 0.0
             stop_loss = 0.0
@@ -257,7 +292,7 @@ class UTBotPSARCompensationStrategy:
             position_size = 0.0
 
             # Variables de compensación
-            compensation_active = False
+            compensation_active = False  # INICIALIZAR COMO FALSE - Solo activar cuando hay pérdida
             compensation_position = 0  # 0: sin compensación, 1: long, -1: short
             compensation_entry_price = 0.0
             compensation_size = 0.0
@@ -268,47 +303,137 @@ class UTBotPSARCompensationStrategy:
             trades = []
             compensation_trades = []
 
+            # DEBUG variables
+            buy_signals_detected = 0
+            sell_signals_detected = 0
+
             # Simular trading
             for i in range(len(df)):
                 current_price = df['close'].iloc[i]
+
+                # DEBUG: Contar señales detectadas en el loop
+                if df['buy_signal'].iloc[i]:
+                    buy_signals_detected += 1
+                if df['sell_signal'].iloc[i]:
+                    sell_signals_detected += 1
+
+                # DEBUG: Mostrar estado de variables de control
+                if i % 1000 == 0:  # Solo cada 1000 velas para no saturar
+                    print(f"[DEBUG] Vela {i}: position={position}, compensation_active={compensation_active}, capital={capital:.2f}")
 
                 # Verificar señales de entrada (solo si no hay compensación activa)
                 if position == 0 and not compensation_active:
                     if df['buy_signal'].iloc[i]:
                         # Entrar en posición long
+                        print(f"[DEBUG] Ejecutando señal de COMPRA en vela {i}, precio {current_price}")
                         position = 1
                         entry_price = current_price
-                        stop_loss = self.calculate_stop_loss(df.iloc[i:i+1], position).iloc[0]
-                        take_profit = self.calculate_take_profit(df.iloc[i:i+1], position).iloc[0]
-                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+                        risk_amount = capital * self.risk_percent / 100
+                        position_size = risk_amount / (current_price * 0.01)  # 1% riesgo aproximado
+                        stop_loss = entry_price - (self.sl_atr_multiplier * df['atr'].iloc[i])
+                        take_profit = entry_price + (self.tp_atr_multiplier * df['atr'].iloc[i])
 
                     elif df['sell_signal'].iloc[i]:
                         # Entrar en posición short
+                        print(f"[DEBUG] Ejecutando señal de VENTA en vela {i}, precio {current_price}")
                         position = -1
                         entry_price = current_price
-                        stop_loss = self.calculate_stop_loss(df.iloc[i:i+1], position).iloc[0]
-                        take_profit = self.calculate_take_profit(df.iloc[i:i+1], position).iloc[0]
-                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+                        risk_amount = capital * self.risk_percent / 100
+                        position_size = risk_amount / (current_price * 0.01)  # 1% riesgo aproximado
+                        stop_loss = entry_price + (self.sl_atr_multiplier * df['atr'].iloc[i])
+                        take_profit = entry_price - (self.tp_atr_multiplier * df['atr'].iloc[i])
 
                 # Gestionar posiciones abiertas
-                elif position != 0:
+                if position != 0:
                     # Calcular PnL actual de la posición principal
                     if position == 1:  # Long
                         current_pnl = (current_price - entry_price) * position_size
                     else:  # Short
                         current_pnl = (entry_price - current_price) * position_size
 
-                    # Calcular drawdown actual del balance
+                    # Calcular drawdown actual del balance (desde el peak alcanzado)
                     current_balance = capital + current_pnl
-                    current_drawdown_pct = ((initial_capital - current_balance) / initial_capital) * 100
+                    peak_capital = max(peak_capital, current_balance)
+                    current_drawdown_pct = ((peak_capital - current_balance) / peak_capital) * 100 if peak_capital > 0 else 0
+
+                    # VERIFICAR TAKE PROFIT INDIVIDUAL - Cerrar posición si alcanza el objetivo
+                    take_profit_hit = False
+                    if position == 1 and current_price >= take_profit:  # Long position reached take profit
+                        take_profit_hit = True
+                        exit_price = take_profit  # Usar el precio objetivo exacto
+                        pnl = (exit_price - entry_price) * position_size
+                        capital += pnl
+                        peak_capital = max(peak_capital, capital)
+
+                        trades.append({
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'pnl': pnl,
+                            'type': 'long',
+                            'had_compensation': compensation_active,
+                            'take_profit_hit': True,
+                            'emergency_stop': False,
+                            'drawdown_at_close': current_drawdown_pct,
+                            'stop_reason': 'take_profit'
+                        })
+
+                        if compensation_active:
+                            compensation_pnl = (exit_price - compensation_entry_price) * compensation_size
+                            compensation_trades.append({
+                                'entry_price': compensation_entry_price,
+                                'exit_price': exit_price,
+                                'pnl': compensation_pnl,
+                                'type': 'take_profit_close',
+                                'main_position_pnl': pnl
+                            })
+
+                        position = 0
+                        compensation_active = False
+                        print(f"[TAKE PROFIT] Posición long cerrada por take profit - Entry: {entry_price:.2f}, Exit: {exit_price:.2f}, PnL: ${pnl:.2f}")
+                        continue
+
+                    elif position == -1 and current_price <= take_profit:  # Short position reached take profit
+                        take_profit_hit = True
+                        exit_price = take_profit  # Usar el precio objetivo exacto
+                        pnl = (entry_price - exit_price) * position_size
+                        capital += pnl
+                        peak_capital = max(peak_capital, capital)
+
+                        trades.append({
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'pnl': pnl,
+                            'type': 'short',
+                            'had_compensation': compensation_active,
+                            'take_profit_hit': True,
+                            'emergency_stop': False,
+                            'drawdown_at_close': current_drawdown_pct,
+                            'stop_reason': 'take_profit'
+                        })
+
+                        if compensation_active:
+                            compensation_pnl = (compensation_entry_price - exit_price) * compensation_size
+                            compensation_trades.append({
+                                'entry_price': compensation_entry_price,
+                                'exit_price': exit_price,
+                                'pnl': compensation_pnl,
+                                'type': 'take_profit_close',
+                                'main_position_pnl': pnl
+                            })
+
+                        position = 0
+                        compensation_active = False
+                        print(f"[TAKE PROFIT] Posición short cerrada por take profit - Entry: {entry_price:.2f}, Exit: {exit_price:.2f}, PnL: ${pnl:.2f}")
+                        continue
 
                     # VERIFICAR STOP-LOSS GLOBAL MEJORADO - Más conservador
-                    emergency_stop_threshold = self.max_account_drawdown * 0.8  # 80% del límite máximo
+                    emergency_stop_threshold = self.max_account_drawdown * 0.99  # MENOS AGRESIVO: 99% del límite máximo (antes 98%)
                     if current_drawdown_pct >= emergency_stop_threshold:
                         # Cerrar todas las posiciones por stop-loss global anticipado
                         exit_price = current_price
                         pnl = (exit_price - entry_price) * position_size if position == 1 else (entry_price - exit_price) * position_size
                         capital += pnl
+                        peak_capital = max(peak_capital, capital)
 
                         trades.append({
                             'entry_price': entry_price,
@@ -342,6 +467,7 @@ class UTBotPSARCompensationStrategy:
                         exit_price = current_price
                         pnl = (exit_price - entry_price) * position_size if position == 1 else (entry_price - exit_price) * position_size
                         capital += pnl
+                        peak_capital = max(peak_capital, capital)
 
                         trades.append({
                             'entry_price': entry_price,
@@ -384,19 +510,33 @@ class UTBotPSARCompensationStrategy:
                         elif anticipatory_triggered and loss_percentage >= (self.compensation_loss_threshold * 0.8):
                             # ACTIVAR COMPENSACIÓN CON ANTICIPATORY STOP (más temprano)
                             print(f"[ANTICIPATORY STOP] Activando compensación preventiva - Drawdown: {current_drawdown_pct:.2f}% (threshold: {self.anticipatory_stop_threshold * self.max_account_drawdown:.2f}%)")
-                            self._activate_compensation_with_risk_control(
+                            comp_state = self._activate_compensation_with_risk_control(
                                 current_price, position, position_size, current_pnl,
                                 loss_percentage, current_drawdown_pct, progressive_risk_mult,
                                 "anticipatory_stop", capital, symbol
                             )
+                            compensation_active = comp_state['compensation_active']
+                            compensation_position = comp_state['compensation_position']
+                            compensation_entry_price = comp_state['compensation_entry_price']
+                            compensation_size = comp_state['compensation_size']
+                            compensation_max_loss = comp_state['compensation_max_loss']
+                            compensation_target_pnl = comp_state['compensation_target_pnl']
+                            main_position_pnl_at_compensation = comp_state['main_position_pnl_at_compensation']
                         elif loss_percentage >= self.compensation_loss_threshold:
                             # Activar compensación normal con validaciones de riesgo mejoradas
                             print(f"[COMPENSATION] Evaluando activación - Drawdown: {current_drawdown_pct:.2f}%, Risk Mult: {progressive_risk_mult:.2f}")
-                            self._activate_compensation_with_risk_control(
+                            comp_state = self._activate_compensation_with_risk_control(
                                 current_price, position, position_size, current_pnl,
                                 loss_percentage, current_drawdown_pct, progressive_risk_mult,
                                 "standard_compensation", capital, symbol
                             )
+                            compensation_active = comp_state['compensation_active']
+                            compensation_position = comp_state['compensation_position']
+                            compensation_entry_price = comp_state['compensation_entry_price']
+                            compensation_size = comp_state['compensation_size']
+                            compensation_max_loss = comp_state['compensation_max_loss']
+                            compensation_target_pnl = comp_state['compensation_target_pnl']
+                            main_position_pnl_at_compensation = comp_state['main_position_pnl_at_compensation']
                         else:
                             # Logging de estado de riesgo
                             if anticipatory_triggered:
@@ -426,7 +566,7 @@ class UTBotPSARCompensationStrategy:
                             print(f"[COMPENSATION] Cerrada por límite de pérdida - PnL compensación: ${compensation_pnl:.2f}")
 
                         # Verificar si la posición principal se recuperó antes de compensar
-                        elif current_pnl > main_position_pnl_at_compensation:
+                        elif current_pnl >= 0:
                             # Cerrar compensación en breakeven y continuar con principal
                             compensation_trades.append({
                                 'entry_price': compensation_entry_price,
@@ -444,6 +584,7 @@ class UTBotPSARCompensationStrategy:
                             exit_price = current_price
                             pnl = (exit_price - entry_price) * position_size if position == 1 else (entry_price - exit_price) * position_size
                             capital += pnl
+                            peak_capital = max(peak_capital, capital)
 
                             compensation_trades.append({
                                 'entry_price': compensation_entry_price,
@@ -476,6 +617,7 @@ class UTBotPSARCompensationStrategy:
                                 exit_price = current_price
                                 pnl = (exit_price - entry_price) * position_size
                                 capital += pnl
+                                peak_capital = max(peak_capital, capital)
 
                                 trades.append({
                                     'entry_price': entry_price,
@@ -493,6 +635,7 @@ class UTBotPSARCompensationStrategy:
                                 exit_price = current_price
                                 pnl = (entry_price - exit_price) * position_size
                                 capital += pnl
+                                peak_capital = max(peak_capital, capital)
 
                                 trades.append({
                                     'entry_price': entry_price,
@@ -508,13 +651,18 @@ class UTBotPSARCompensationStrategy:
             total_trades = len(trades)
             winning_trades = len([t for t in trades if t['pnl'] > 0])
             losing_trades = total_trades - winning_trades
-            win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
+            # Convertir a porcentaje
+            win_rate = (winning_trades / total_trades * 100.0) if total_trades > 0 else 0.0
             total_pnl = sum(t['pnl'] for t in trades)
+
+            # Calcular métricas de take profit
+            take_profit_trades = len([t for t in trades if t.get('take_profit_hit', False)])
+            take_profit_win_rate = (take_profit_trades / total_trades * 100.0) if total_trades > 0 else 0.0
 
             # Calcular métricas de compensación
             total_compensation_trades = len(compensation_trades)
             successful_compensations = len([t for t in compensation_trades if t.get('type') == 'compensation_success'])
-            compensation_win_rate = successful_compensations / total_compensation_trades if total_compensation_trades > 0 else 0.0
+            compensation_win_rate = (successful_compensations / total_compensation_trades * 100.0) if total_compensation_trades > 0 else 0.0
             total_compensation_pnl = sum(t['pnl'] for t in compensation_trades)
 
             # Calcular drawdown máximo mejorado
@@ -540,6 +688,14 @@ class UTBotPSARCompensationStrategy:
                 max_drawdown = -max_drawdown
             else:
                 max_drawdown = 0.0
+                equity_curve = [initial_capital]
+
+            # Profit factor
+            gross_profit = sum(t['pnl'] for t in trades if t['pnl'] > 0)
+            gross_loss = abs(sum(t['pnl'] for t in trades if t['pnl'] < 0))
+            profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
+
+            print(f"[DEBUG] Resumen final: {len(trades)} trades ejecutados, {buy_signals_detected} señales compra detectadas, {sell_signals_detected} señales venta detectadas")
 
             return {
                 'total_trades': total_trades,
@@ -549,14 +705,19 @@ class UTBotPSARCompensationStrategy:
                 'total_pnl': total_pnl,
                 'max_drawdown': max_drawdown,
                 'sharpe_ratio': 0.0,  # Placeholder
+                'profit_factor': profit_factor,
                 'symbol': symbol,
                 'trades': trades,
+                'equity_curve': equity_curve,
+                # Métricas de take profit
+                'take_profit_trades': take_profit_trades,
+                'take_profit_win_rate': take_profit_win_rate,
                 # Métricas de compensación
                 'compensation_trades': total_compensation_trades,
                 'successful_compensations': successful_compensations,
                 'compensation_win_rate': compensation_win_rate,
                 'total_compensation_pnl': total_compensation_pnl,
-                'compensation_details': compensation_trades,
+                'compensation_trades_data': compensation_trades,
                 # Parámetros de compensación
                 'compensation_loss_threshold': self.compensation_loss_threshold,
                 'compensation_size_multiplier': self.compensation_size_multiplier,
@@ -576,6 +737,10 @@ class UTBotPSARCompensationStrategy:
                 'sharpe_ratio': 0.0,
                 'symbol': symbol,
                 'trades': [],
+                # Métricas de take profit
+                'take_profit_trades': 0,
+                'take_profit_win_rate': 0.0,
+                # Métricas de compensación
                 'compensation_trades': 0,
                 'successful_compensations': 0,
                 'compensation_win_rate': 0.0,

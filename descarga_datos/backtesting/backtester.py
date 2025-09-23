@@ -62,10 +62,11 @@ class BacktestResult:
 
 class AdvancedBacktester:
     """Backtester avanzado con métricas completas"""
-
-    def __init__(self, initial_capital: float = 10000.0, commission: float = 0.1):
+    
+    def __init__(self, initial_capital: float = 10000.0, commission: float = 0.1, slippage: float = 0.05):
         self.initial_capital = initial_capital
         self.commission = commission / 100  # Convertir a decimal
+        self.slippage = slippage / 100  # Slippage como porcentaje
         self.logger = logging.getLogger(__name__)
 
         # Sistema de compensación integrado
@@ -74,39 +75,105 @@ class AdvancedBacktester:
 
     def run(self, strategy, data: pd.DataFrame, symbol: str) -> Dict:
         """
-        Ejecuta el backtesting con la estrategia proporcionada
+        Ejecuta el backtesting invocando la lógica interna de la estrategia.
 
         Args:
-            strategy: Instancia de la estrategia a probar
-            data: DataFrame con datos OHLCV
-            symbol: Símbolo del activo
+            strategy: Instancia de la estrategia a probar (debe tener un método `run`).
+            data: DataFrame con datos OHLCV.
+            symbol: Símbolo del activo.
 
         Returns:
-            Diccionario con resultados del backtesting
+            Diccionario con resultados del backtesting.
         """
+        self.logger.info(f"Iniciando backtesting para {symbol} con estrategia {type(strategy).__name__}")
+        # Ajuste dinámico de comisión y slippage según volatilidad (ATR/Precio)
+        if 'atr' in data.columns and 'close' in data.columns:
+            rel_atr = data['atr'] / data['close']
+            vol_factor = rel_atr.mean()
+            self.logger.info(f"Ajustando comisión y slippage por volatilidad: factor={vol_factor:.4f}")
+            self.commission *= (1 + vol_factor)
+            self.slippage *= (1 + vol_factor)
+
         try:
-            # Almacenar símbolo actual para compensaciones
-            self._current_symbol = symbol
+            # La estrategia debe tener un método `run` que devuelva un diccionario de resultados.
+            if not hasattr(strategy, 'run'):
+                raise AttributeError(f"La estrategia {type(strategy).__name__} no tiene un método `run`.")
 
-            # Ejecutar estrategia
-            result = strategy.run(data, symbol)
+            # Ejecutar la lógica de la estrategia, que se encarga de todo el proceso.
+            strategy_results = strategy.run(data=data, symbol=symbol)
+            
+            self.logger.info(f"Estrategia devolvió: {type(strategy_results)}, keys: {list(strategy_results.keys()) if isinstance(strategy_results, dict) else 'N/A'}")
 
-            # Validar y enriquecer resultados
-            if not isinstance(result, dict):
-                result = self._create_mock_result(symbol)
+            # Validar que los resultados de la estrategia son un diccionario
+            if not isinstance(strategy_results, dict):
+                self.logger.error(f"La estrategia no devolvió un diccionario para {symbol}. Se recibió: {type(strategy_results)}")
+                return self._get_empty_metrics()
 
-            # Asegurar que todos los campos necesarios estén presentes
-            result = self._ensure_complete_result(result, symbol)
+            # Extraer trades y curva de equity de los resultados de la estrategia
+            trades = strategy_results.get('trades', [])
+            equity_curve = strategy_results.get('equity_curve', pd.Series(dtype=float))
+            # Normalizar equity_curve a pd.Series si viene como lista o array
+            if not isinstance(equity_curve, pd.Series):
+                try:
+                    equity_curve = pd.Series(equity_curve)
+                except Exception as e:
+                    self.logger.warning(f"Error al convertir equity_curve a Series para {symbol}: {e}")
+                    equity_curve = pd.Series(dtype=float)
+            # Reconstruir equity_curve si está vacía pero hay trades
+            if equity_curve.empty and trades:
+                balances = [self.initial_capital]
+                for t in trades:
+                    balances.append(balances[-1] + t.get('pnl', 0))
+                equity_curve = pd.Series(balances)
+            # Usar la lista de datos de compensación (dicts) en vez de cantidad
+            compensation_trades_list = strategy_results.get('compensation_trades_data', [])
+            if not isinstance(compensation_trades_list, list):
+                # A veces 'compensation_trades' puede ser entero; ignorar
+                compensation_trades_list = []
 
-            self.logger.info(f"[SUCCESS] Backtesting completado para {symbol}: "
-                           f"{result['total_trades']} trades, "
-                           f"P&L: ${result['total_pnl']:.2f}")
+            # Si la estrategia ya calculó métricas (parciales o completas), priorizarlas
+            # Desactivamos uso de métricas pre-calc por estrategia para forzar cálculo avanzado
+            # has_strategy_metrics = any(k in strategy_results for k in [
+            #     'total_trades', 'win_rate', 'total_pnl', 'equity_curve', 'profit_factor', 'max_drawdown'
+            # ])
+            # if has_strategy_metrics:
+            #     strategy_results.setdefault('symbol', symbol)
+            #     # Normalizar equity_curve...
+            #     eq = strategy_results.get('equity_curve')
+            #     try:
+            #         if isinstance(eq, pd.Series):
+            #             strategy_results['equity_curve'] = eq.to_list()
+            #         elif hasattr(eq, 'tolist') and not isinstance(eq, list):
+            #             strategy_results['equity_curve'] = eq.tolist()
+            #     except Exception:
+            #         pass
+            #     self.logger.info(f"Ignorando métricas proporcionadas por la estrategia para {symbol}")
+            #     # Continuar para cálculo de métricas avanzadas
+            
 
-            return result
+            if not trades:
+                self.logger.warning(f"No se generaron trades para {symbol}.")
+                return self._get_empty_metrics()
+
+            # Calcular métricas avanzadas basadas en los trades y la equity curve
+            # El método `calculate_advanced_metrics` ahora recibirá los trades de compensación
+            metrics = self.calculate_advanced_metrics(
+                trades=trades,
+                equity_curve=equity_curve,
+                compensation_trades_list=compensation_trades_list,
+                symbol=symbol
+            )
+
+            self.logger.info(f"[SUCCESS] Backtesting para {symbol} completado. "
+                           f"Trades: {metrics.get('total_trades', 0)}, "
+                           f"P&L Total: ${metrics.get('total_pnl', 0):.2f}, "
+                           f"Compensaciones: {metrics.get('compensated_trades', 0)}")
+            
+            return metrics
 
         except Exception as e:
-            self.logger.error(f"[ERROR] Error en backtesting de {symbol}: {e}")
-            return self._create_mock_result(symbol)
+            self.logger.error(f"[CRITICAL] Error fatal durante el backtesting de {symbol}: {e}", exc_info=True)
+            return self._get_empty_metrics()
 
     def _create_mock_result(self, symbol: str) -> Dict:
         """Crea un resultado mock básico"""
@@ -142,92 +209,131 @@ class AdvancedBacktester:
 
         return result
 
-    def calculate_advanced_metrics(self, trades: List[Trade], equity_curve: pd.Series, symbol: str = "UNKNOWN") -> Dict:
+    def calculate_advanced_metrics(self, trades: List[Trade], equity_curve: pd.Series, 
+                                     compensation_trades_list: List[Trade], symbol: str = "UNKNOWN") -> Dict:
         """
-        Calcula métricas avanzadas de rendimiento
+        Calcula métricas avanzadas de rendimiento a partir de los resultados de la estrategia.
 
         Args:
-            trades: Lista de operaciones
-            equity_curve: Curva de equity
+            trades: Lista de operaciones principales.
+            equity_curve: Curva de equity.
+            compensation_trades_list: Lista de operaciones de compensación.
+            symbol: Símbolo del activo.
 
         Returns:
-            Diccionario con métricas avanzadas
+            Diccionario con métricas avanzadas.
         """
+        # Normalizar equity_curve a pd.Series si viene como lista o array
+        if not isinstance(equity_curve, pd.Series):
+            try:
+                equity_curve = pd.Series(equity_curve)
+            except Exception:
+                equity_curve = pd.Series([], dtype=float)
         if not trades:
             return self._get_empty_metrics()
+        # Calcular porcentaje de P&L por trade para avg_trade_pct
+        for t in trades:
+            entry = t.get('entry_price', 0)
+            pnl = t.get('pnl', 0)
+            t['pnl_percent'] = (pnl / entry * 100) if entry else 0.0
 
-        # Métricas básicas
+        # --- Métricas de Trades Principales ---
         total_trades = len(trades)
-        winning_trades = len([t for t in trades if t.pnl > 0])
+        winning_trades = len([t for t in trades if t.get('pnl', 0) > 0])
         losing_trades = total_trades - winning_trades
-
-        # P&L
-        total_pnl = sum(t.pnl for t in trades)
-        total_pnl_percent = (total_pnl / self.initial_capital) * 100
-
-        # Win rate
-        win_rate = winning_trades / total_trades if total_trades > 0 else 0
-
-        # Drawdown máximo
+        win_rate = (winning_trades / total_trades) if total_trades > 0 else 0
+        
+        total_pnl = sum(t.get('pnl', 0) for t in trades)
+        
+        # --- Métricas de Equity y Riesgo ---
         max_drawdown = self._calculate_max_drawdown(equity_curve)
-        max_drawdown_percent = (max_drawdown / self.initial_capital) * 100
-
-        # Ratios de riesgo
         sharpe_ratio = self._calculate_sharpe_ratio(equity_curve)
         sortino_ratio = self._calculate_sortino_ratio(equity_curve)
-        calmar_ratio = self._calculate_calmar_ratio(total_pnl_percent, max_drawdown_percent)
+        
+        annual_return = (equity_curve.iloc[-1] / equity_curve.iloc[0] - 1) * 100 if not equity_curve.empty else 0
+        calmar_ratio = annual_return / abs(max_drawdown) if max_drawdown != 0 else 0
 
-        # Profit factor
-        gross_profit = sum(t.pnl for t in trades if t.pnl > 0)
-        gross_loss = abs(sum(t.pnl for t in trades if t.pnl < 0))
+        # --- Métricas de P&L ---
+        gross_profit = sum(t.get('pnl', 0) for t in trades if t.get('pnl', 0) > 0)
+        gross_loss = abs(sum(t.get('pnl', 0) for t in trades if t.get('pnl', 0) < 0))
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
 
-        # Estadísticas de trades
-        pnl_values = [t.pnl for t in trades]
-        avg_trade_pnl = np.mean(pnl_values) if pnl_values else 0
-        avg_win_pnl = np.mean([t.pnl for t in trades if t.pnl > 0]) if winning_trades > 0 else 0
-        avg_loss_pnl = np.mean([t.pnl for t in trades if t.pnl < 0]) if losing_trades > 0 else 0
+        # --- Métricas de Compensación (basadas en datos reales) ---
+        compensated_trades_count = len(compensation_trades_list)
+        successful_compensations = len([ct for ct in compensation_trades_list if ct.get('pnl', 0) > 0])
+        
+        compensation_success_rate = (successful_compensations / compensated_trades_count) * 100 if compensated_trades_count > 0 else 0
+        total_compensation_pnl = sum(ct.get('pnl', 0) for ct in compensation_trades_list)
+        
+        # El número de trades perdedores que activaron una compensación.
+        # Esto asume que cada operación de compensación corresponde a una operación perdedora.
+        losing_trades_that_were_compensated = compensated_trades_count
+        
+        compensation_ratio = (losing_trades_that_were_compensated / losing_trades) * 100 if losing_trades > 0 else 0
 
-        largest_win = max((t.pnl for t in trades), default=0)
-        largest_loss = min((t.pnl for t in trades), default=0)
+        # --- P&L Total Ajustado ---
+        adjusted_total_pnl = total_pnl + total_compensation_pnl
 
-        # Período de tenencia promedio
-        holding_periods = [(t.exit_time - t.entry_time).total_seconds() / 3600 for t in trades]  # en horas
-        avg_holding_period = np.mean(holding_periods) if holding_periods else 0
-
-        # Calcular métricas básicas
+        # --- Métricas Adicionales: CAGR y Volatilidad ---
+        # CAGR como retorno anualizado en porcentaje
+        cagr = annual_return
+        # Volatilidad de retornos por trade en porcentaje
+        try:
+            returns = equity_curve.pct_change().dropna()
+            volatility = returns.std() * 100
+        except Exception:
+            volatility = 0.0
+        # --- Recovery Factor, Average Trade Net Profit %, Risk of Ruin ---
+        # Recovery Factor: Net Profit ÷ Max Drawdown
+        recovery_factor = total_pnl / max_drawdown if max_drawdown > 0 else float('inf')
+        # Avg Trade Net Profit %
+        avg_trade_pct = (sum(t.get('pnl_percent',0) for t in trades) / total_trades) if total_trades > 0 else 0
+        # Risk of Ruin (approximation)
+        p = win_rate / 100
+        avg_win = gross_profit / winning_trades if winning_trades > 0 else 0
+        avg_loss = gross_loss / losing_trades if losing_trades > 0 else 0
+        expectancy = p * avg_win - (1 - p) * avg_loss
+        if expectancy <= 0 or avg_loss == 0:
+            risk_of_ruin = 1.0
+        else:
+            risk_of_ruin = ((1 - p) / (1 + expectancy / avg_loss)) ** (self.initial_capital / avg_loss)
+        # Compilar resultados finales
         result = {
+            'symbol': symbol,
             'total_trades': total_trades,
             'winning_trades': winning_trades,
             'losing_trades': losing_trades,
             'win_rate': win_rate,
             'total_pnl': total_pnl,
-            'total_pnl_percent': total_pnl_percent,
             'max_drawdown': max_drawdown,
-            'max_drawdown_percent': max_drawdown_percent,
             'sharpe_ratio': sharpe_ratio,
             'sortino_ratio': sortino_ratio,
             'calmar_ratio': calmar_ratio,
             'profit_factor': profit_factor,
-            'avg_trade_pnl': avg_trade_pnl,
-            'avg_win_pnl': avg_win_pnl,
-            'avg_loss_pnl': avg_loss_pnl,
-            'largest_win': largest_win,
-            'largest_loss': largest_loss,
-            'avg_holding_period': avg_holding_period
+            'avg_trade_pnl': total_pnl / total_trades if total_trades > 0 else 0,
+            'avg_win_pnl': gross_profit / winning_trades if winning_trades > 0 else 0,
+            'avg_loss_pnl': -gross_loss / losing_trades if losing_trades > 0 else 0,
+            'largest_win': max([t.get('pnl', 0) for t in trades if t.get('pnl', 0) > 0], default=0),
+            'largest_loss': min([t.get('pnl', 0) for t in trades if t.get('pnl', 0) < 0], default=0),
+            # Métricas de compensación reales
+            'compensated_trades': compensated_trades_count,
+            'compensation_success_rate': compensation_success_rate,
+            'total_compensation_pnl': total_compensation_pnl,
+            'avg_compensation_pnl': total_compensation_pnl / compensated_trades_count if compensated_trades_count > 0 else 0,
+            'compensation_ratio': compensation_ratio,
+            # P&L ajustado
+            'adjusted_total_pnl': adjusted_total_pnl,
+            # Datos para análisis posterior (compatibles con dict o dataclass)
+            'trades': [t if isinstance(t, dict) else getattr(t, '__dict__', {}) for t in trades],
+            'compensation_trades_data': [ct if isinstance(ct, dict) else getattr(ct, '__dict__', {}) for ct in compensation_trades_list],
+            'equity_curve': equity_curve.to_list() if not equity_curve.empty else [],
+            # Métricas adicionales de evaluación
+            'cagr': cagr,
+            'volatility': volatility,
+            'recovery_factor': recovery_factor,
+            'avg_trade_pct': avg_trade_pct,
+            'risk_of_ruin': risk_of_ruin
         }
-
-        # Agregar métricas de compensación si está habilitado
-        if self.compensation_enabled:
-            compensation_metrics = self._calculate_compensation_metrics(trades, symbol)
-            result.update(compensation_metrics)
-
-            # Ajustar P&L total con impacto de compensaciones
-            if 'net_compensation_impact' in compensation_metrics:
-                adjusted_pnl = total_pnl + compensation_metrics['total_compensation_pnl']
-                result['adjusted_total_pnl'] = adjusted_pnl
-                result['adjusted_total_pnl_percent'] = (adjusted_pnl / self.initial_capital) * 100
-
         return result
 
     def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
@@ -283,18 +389,21 @@ class AdvancedBacktester:
     def _get_empty_metrics(self) -> Dict:
         """Retorna métricas vacías"""
         return {
+            # Datos generales
             'total_trades': 0,
             'winning_trades': 0,
             'losing_trades': 0,
             'win_rate': 0.0,
             'total_pnl': 0.0,
             'total_pnl_percent': 0.0,
+            # Riesgo y retornos
             'max_drawdown': 0.0,
             'max_drawdown_percent': 0.0,
             'sharpe_ratio': 0.0,
             'sortino_ratio': 0.0,
             'calmar_ratio': 0.0,
             'profit_factor': 0.0,
+            # P&L por trade
             'avg_trade_pnl': 0.0,
             'avg_win_pnl': 0.0,
             'avg_loss_pnl': 0.0,
@@ -307,7 +416,17 @@ class AdvancedBacktester:
             'total_compensation_pnl': 0.0,
             'avg_compensation_pnl': 0.0,
             'compensation_ratio': 0.0,
-            'net_compensation_impact': 0.0
+            'net_compensation_impact': 0.0,
+            # Métricas avanzadas vacías
+            'cagr': 0.0,
+            'volatility': 0.0,
+            'recovery_factor': 0.0,
+            'avg_trade_pct': 0.0,
+            'risk_of_ruin': 0.0,
+            # Datos para dashboard
+            'equity_curve': [],
+            'trades': [],
+            'compensation_trades_data': []
         }
 
     def _calculate_compensation_metrics(self, trades: List[Trade], symbol: str) -> Dict:
@@ -325,7 +444,7 @@ class AdvancedBacktester:
             return self._get_empty_metrics()
 
         # Simular posiciones en el risk manager para calcular compensaciones
-        losing_trades = [t for t in trades if t.pnl < 0]
+        losing_trades = [t for t in trades if t.get('pnl', 0) < 0]
         compensation_metrics = {
             'compensated_trades': 0,
             'compensation_success_rate': 0.0,
@@ -344,7 +463,7 @@ class AdvancedBacktester:
 
         for trade in losing_trades:
             # Calcular tamaño de compensación (50% del trade original)
-            compensation_size = abs(trade.pnl) * 0.5
+            compensation_size = abs(trade.get('pnl', 0)) * 0.5
 
             # Simular resultado de compensación (70% de éxito aproximado)
             compensation_success = np.random.random() > 0.3  # 70% éxito
@@ -368,7 +487,7 @@ class AdvancedBacktester:
         compensation_metrics['compensation_ratio'] = (successful_compensations / total_losing_trades) * 100 if total_losing_trades > 0 else 0
 
         # Calcular impacto neto de compensaciones
-        original_total_pnl = sum(t.pnl for t in trades)
+        original_total_pnl = sum(t.get('pnl', 0) for t in trades)
         net_total_pnl = original_total_pnl + total_compensation_pnl
         compensation_metrics['net_compensation_impact'] = ((net_total_pnl - original_total_pnl) / abs(original_total_pnl)) * 100 if original_total_pnl != 0 else 0
 

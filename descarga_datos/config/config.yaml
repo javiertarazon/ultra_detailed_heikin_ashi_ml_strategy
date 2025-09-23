@@ -4,7 +4,7 @@
 # Configuración General
 system:
   name: "Bot Trader Copilot"
-  version: "1.0"
+  version: "2.5.0"
   log_level: "INFO"
   log_file: "logs/bot_trader.log"
   auto_launch_dashboard: true  # Lanzar dashboard automáticamente después del backtesting
@@ -39,16 +39,19 @@ mt5:
 
 # Configuración de Backtesting
 backtesting:
-  # Símbolos a procesar - TOP 3 mejores acciones optimizadas
+  # Símbolos a procesar - Múltiples símbolos para análisis comparativo
   symbols:
-    # Acciones (MT5) - 3 mejores acciones identificadas
-    - "AAPL.US"
-    - "TSLA.US"
-    - "NVDA.US"
+    # Criptomonedas (Bybit/Binance) - Símbolos principales
+    - "SOL/USDT"      # Solana - Principal
+    - "BTC/USDT"      # Bitcoin - Referencia
+    - "ETH/USDT"      # Ethereum - Altcoin principal
+    - "ADA/USDT"      # Cardano - Smart contract
+    - "DOT/USDT"      # Polkadot - Interoperabilidad
+    - "LINK/USDT"     # Chainlink - Oráculos
 
-  # Configuración temporal - Optimización para 1 año de datos
-  timeframe: "15m"
-  start_date: "2024-09-20"
+  # Configuración temporal - 2 años de datos con descargas por lotes
+  timeframe: "4h"
+  start_date: "2023-09-01"
   end_date: "2025-09-20"
 
   # Configuración financiera
@@ -56,12 +59,14 @@ backtesting:
   commission: 0.1
   slippage: 0.05
 
-  # Estrategias activas - Comparación básica vs compensación
+  # Estrategias activas - Comparación entre Solana4H y Solana4H con Trailing Stop
   strategies:
-    Estrategia_Basica: true
+    Estrategia_Basica: false
     Estrategia_Conservadora: false
     Estrategia_Optimizada: false
-    Estrategia_Compensacion: true
+    Estrategia_Compensacion: false
+    Solana4H: true
+    Solana4HTrailing: true
 
 # Configuración de Indicadores Técnicos
 indicators:
@@ -112,9 +117,9 @@ compensation_strategy:
   loss_threshold: 0.2        # Reducido a 0.2% para activar compensación más temprano
   size_multiplier: 1.5       # Reducido a 1.5x para menos riesgo
   tp_percent: 0.25          # Reducido a 0.25% TP más conservador
-  max_account_drawdown: 1.5  # Reducido a 1.5% stop-loss global más estricto
+  max_account_drawdown: 15.0  # AUMENTADO a 15% para permitir desarrollo de posiciones
   compensation_max_loss: 0.3 # Reducido a 0.3% límite compensación
-  emergency_stop_buffer: 0.8 # 80% del límite para stop anticipado
+  emergency_stop_buffer: 0.98 # AUMENTADO a 98% del límite para stops menos agresivos
   risk_multiplier_high_dd: 0.7 # Reducir riesgo 30% si drawdown > 1%
 
 # Configuración de Datos
