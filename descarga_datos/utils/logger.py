@@ -6,6 +6,7 @@ Configura el logging basado en la configuración proporcionada.
 import logging
 import os
 from typing import Optional
+from datetime import datetime
 
 def setup_logging(log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> None:
     """
@@ -28,6 +29,46 @@ def setup_logging(log_level: str = "INFO", log_file: str = "logs/bot_trader.log"
     root_logger.setLevel(level)
 
     # Limpiar handlers existentes
+    
+def setup_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> logging.Logger:
+    """
+    Configura un logger específico con un nombre para un componente.
+    
+    Args:
+        name: Nombre del logger (normalmente el nombre del componente)
+        log_level: Nivel de logging (DEBUG, INFO, WARNING, ERROR)
+        log_file: Ruta del archivo de log
+        
+    Returns:
+        Un logger configurado
+    """
+    # Crear directorio de logs si no existe
+    log_dir = os.path.dirname(log_file)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+        
+    # Configurar el nivel de logging
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    
+    # Crear logger
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    
+    # Verificar si ya tiene handlers para evitar duplicados
+    if not logger.handlers:
+        # Configurar handler de archivo
+        file_handler = logging.FileHandler(log_file)
+        file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        
+        # Configurar handler de consola
+        console_handler = logging.StreamHandler()
+        console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
+    
+    return logger
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 

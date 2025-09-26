@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Backtester avanzado para estrategias de trading

@@ -15,13 +15,15 @@ import logging
 from dataclasses import dataclass
 import os
 
-# Intentar importar talib, si no está disponible usar implementaciones propias
+# Intentar importar pandas-ta a través del wrapper
+logger = logging.getLogger(__name__)
 try:
-    import talib
+    from utils.talib_wrapper import talib
     TALIB_AVAILABLE = True
+    logger.info("pandas-ta disponible para indicadores técnicos")
 except ImportError:
     TALIB_AVAILABLE = False
-    logging.warning("TA-Lib no disponible, usando implementaciones propias")
+    logger.warning("pandas-ta no disponible, usando implementaciones propias")
 from utils.normalization import DataNormalizer
 from config.config import NormalizationConfig
 from utils.storage import save_to_csv, DataStorage

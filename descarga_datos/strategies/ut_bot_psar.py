@@ -3,7 +3,7 @@ Implementación de la estrategia UT Bot + PSAR.
 """
 import numpy as np
 import pandas as pd
-import talib
+from utils.talib_wrapper import talib
 
 class UTBotPSARStrategy:
     def __init__(self, 

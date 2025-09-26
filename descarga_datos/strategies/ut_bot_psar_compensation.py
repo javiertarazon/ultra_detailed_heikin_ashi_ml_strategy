@@ -4,7 +4,7 @@ Versión con compensación automática de operaciones perdedoras.
 """
 import numpy as np
 import pandas as pd
-import talib
+from utils.talib_wrapper import talib
 
 class UTBotPSARCompensationStrategy:
     def __init__(self,

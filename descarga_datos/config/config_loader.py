@@ -36,6 +36,7 @@ class BacktestingConfig:
     commission: float = 0.1
     slippage: float = 0.05
     strategies: Dict[str, bool] = field(default_factory=dict)
+    strategy_paths: Dict[str, List[str]] = field(default_factory=dict)
 
 @dataclass
 class IndicatorsConfig:
@@ -89,6 +90,26 @@ class ReportsConfig:
     output_directory: str = "backtest_results"
 
 @dataclass
+class LiveTradingConfig:
+    enabled: bool = False
+    mode: str = "MT5"  # "MT5" o "CCXT"
+    account_type: str = "DEMO"  # "DEMO" o "REAL"
+    active_symbol: str = "BTC/USDT"
+    active_strategy: str = "Solana4HRiskManaged"
+    risk_per_trade: float = 0.01
+    max_positions: int = 5
+    update_interval_seconds: int = 5
+    initial_history_bars: int = 1000
+    apply_risk_management: bool = True
+
+    # Configuración específica por modo
+    mt5_symbols: List[str] = field(default_factory=lambda: ["EURUSD", "USDJPY", "XAUUSD"])
+    mt5_timeframes: List[str] = field(default_factory=lambda: ["1h", "4h", "1d"])
+    ccxt_exchange: str = "bybit"
+    ccxt_symbols: List[str] = field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    ccxt_timeframes: List[str] = field(default_factory=lambda: ["1h", "4h"])
+
+@dataclass
 class SystemConfig:
     name: str = "Bot Trader Copilot"
     version: str = "1.0"
@@ -109,6 +130,33 @@ class Config:
     compensation_strategy: CompensationConfig = field(default_factory=CompensationConfig)
     data: DataConfig = field(default_factory=DataConfig)
     reports: ReportsConfig = field(default_factory=ReportsConfig)
+    live_trading: LiveTradingConfig = field(default_factory=LiveTradingConfig)
+
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Carga la configuración desde un archivo YAML y la devuelve como un diccionario.
+    
+    Args:
+        config_path: Ruta al archivo de configuración. Si es None, se usa la ruta predeterminada.
+        
+    Returns:
+        Diccionario con la configuración cargada.
+    """
+    if config_path is None:
+        # Buscar en el directorio del script
+        script_dir = Path(__file__).parent
+        config_path = script_dir / "config.yaml"
+        
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Archivo de configuración no encontrado: {config_path}")
+        
+    try:
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        return config
+    except Exception as e:
+        print(f"Error al cargar la configuración: {str(e)}")
+        return {}
 
 def load_config_from_yaml(config_path: Optional[str] = None) -> Config:
     """

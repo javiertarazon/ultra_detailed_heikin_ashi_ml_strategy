@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Backtesting completo con descargas por lotes - Datos históricos completos
+Módulo de Backtesting - Sistema Modular de Trading
+Contiene toda la lógica de backtesting, carga dinámica de estrategias y ejecución
 """
 import asyncio
 import os
@@ -15,6 +16,8 @@ from strategies.ut_bot_psar import UTBotPSARStrategy
 from strategies.ut_bot_psar_compensation import UTBotPSARCompensationStrategy
 from strategies.solana_4h_strategy import Solana4HStrategy
 from strategies.solana_4h_trailing_strategy import Solana4HTrailingStrategy
+from strategies.solana_4h_risk_managed_strategy import Solana4HRiskManagedStrategy
+from strategies.solana_4h_trailing_live_strategy import Solana4HTrailingLiveStrategy
 from backtesting.backtester import AdvancedBacktester
 from utils.logger import setup_logging, get_logger
 
@@ -26,15 +29,25 @@ def load_strategies_from_config(config):
     strategies = {}
     strategy_config = config.backtesting.strategies
 
-    # Mapeo de nombres de configuración a clases de estrategia
+    # Mapeo de nombres de configuración a clases de estrategia - Solo archivos existentes
     strategy_classes = {
         'Estrategia_Basica': ('strategies.ut_bot_psar', 'UTBotPSARStrategy'),
         'Estrategia_Compensacion': ('strategies.ut_bot_psar_compensation', 'UTBotPSARCompensationStrategy'),
         'Solana4H': ('strategies.solana_4h_strategy', 'Solana4HStrategy'),
         'Solana4HTrailing': ('strategies.solana_4h_trailing_strategy', 'Solana4HTrailingStrategy'),
+        'Solana4HRiskManaged': ('strategies.solana_4h_risk_managed_strategy', 'Solana4HRiskManagedStrategy'),
+        'Solana4HOptimizedTrailing': ('strategies.solana_4h_optimized_trailing_strategy', 'Solana4HOptimizedTrailingStrategy'),
+        'Solana4HEnhancedTrailingBalanced': ('strategies.solana_4h_enhanced_trailing_balanced_strategy', 'Solana4HEnhancedTrailingBalancedStrategy'),
+        'Solana4HTrailingLive': ('strategies.solana_4h_trailing_live_strategy', 'Solana4HTrailingLiveStrategy'),
     }
 
-    print(f"[DEBUG] Configuración de estrategias: {strategy_config}")
+    # Estrategias que requieren estado continuo (no pueden procesarse por lotes)
+    stateful_strategies = {
+        'Solana4HEnhancedTrailingBalanced',  # Estrategia balanceada con estado (archivo existente)
+    }
+
+    print(f"[BACKTEST] 📋 Cargando estrategias activas...")
+    print(f"[BACKTEST] 📋 Configuración de estrategias: {strategy_config}")
 
     for strategy_name, is_active in strategy_config.items():
         if is_active and strategy_name in strategy_classes:
@@ -42,15 +55,21 @@ def load_strategies_from_config(config):
                 module_name, class_name = strategy_classes[strategy_name]
                 module = __import__(module_name, fromlist=[class_name])
                 strategy_class = getattr(module, class_name)
-                strategies[strategy_name] = strategy_class()
-                print(f"[DEBUG] ✅ {strategy_name} cargada exitosamente")
-            except Exception as e:
-                print(f"[DEBUG] ❌ Error cargando {strategy_name}: {e}")
-                continue
-        elif is_active:
-            print(f"[DEBUG] ⚠️  Estrategia '{strategy_name}' configurada pero no implementada")
+                strategy_instance = strategy_class()
 
-    print(f"[DEBUG] Estrategias activas finales: {list(strategies.keys())}")
+                # Marcar si requiere estado continuo
+                strategy_instance._requires_continuous_state = strategy_name in stateful_strategies
+
+                strategies[strategy_name] = strategy_instance
+                print(f"[BACKTEST] ✅ {strategy_name} cargada exitosamente")
+            except Exception as e:
+                print(f"[BACKTEST] ❌ Error cargando {strategy_name}: {e}")
+                import traceback
+                traceback.print_exc()
+        elif is_active:
+            print(f"[BACKTEST] ⚠️  Estrategia '{strategy_name}' configurada pero no implementada")
+
+    print(f"[BACKTEST] 📋 Estrategias activas finales: {list(strategies.keys())}")
     return strategies
 
 async def run_full_backtesting_with_batches():
@@ -177,7 +196,21 @@ async def run_full_backtesting_with_batches():
                 symbol_results = {}
                 symbol_total_trades = 0
 
+                # Separar estrategias por tipo
+                stateless_strategies = {}
+                stateful_strategies = {}
+
                 for strategy_name, strategy in strategies.items():
+                    if hasattr(strategy, '_requires_continuous_state') and strategy._requires_continuous_state:
+                        stateful_strategies[strategy_name] = strategy
+                    else:
+                        stateless_strategies[strategy_name] = strategy
+
+                print(f"[BACKTEST] 📊 Estrategias stateless: {list(stateless_strategies.keys())}")
+                print(f"[BACKTEST] 🔄 Estrategias stateful: {list(stateful_strategies.keys())}")
+
+                # Ejecutar estrategias stateless (con datos por lotes)
+                for strategy_name, strategy in stateless_strategies.items():
                     try:
                         result = backtester.run(strategy, df, symbol)
                         if result:
@@ -192,6 +225,40 @@ async def run_full_backtesting_with_batches():
                             print(f"[BACKTEST] ❌ {strategy_name}: Sin resultados")
                     except Exception as e:
                         print(f"[BACKTEST] ❌ Error en {strategy_name}: {e}")
+
+                # Ejecutar estrategias stateful (con datos completos desde CSV)
+                if stateful_strategies:
+                    print(f"[BACKTEST] 🔄 Procesando estrategias stateful para {symbol}...")
+                    try:
+                        # Cargar datos completos desde CSV
+                        import pandas as pd
+                        csv_path = f"data/csv/{symbol.replace('/', '_')}_{config.backtesting.timeframe}.csv"
+                        if os.path.exists(csv_path):
+                            full_df = pd.read_csv(csv_path)
+                            full_df['timestamp'] = pd.to_datetime(full_df['timestamp'])
+                            full_df.set_index('timestamp', inplace=True)
+                            print(f"[BACKTEST] 📊 Datos completos cargados: {len(full_df)} filas")
+
+                            # Ejecutar cada estrategia stateful con datos completos
+                            for strategy_name, strategy in stateful_strategies.items():
+                                try:
+                                    result = backtester.run(strategy, full_df, symbol)
+                                    if result:
+                                        symbol_results[strategy_name] = result
+                                        trades = result.get('total_trades', 0)
+                                        symbol_total_trades += trades
+                                        pnl = result.get('total_pnl', 0)
+                                        win_rate = result.get('win_rate', 0) * 100
+
+                                        print(f"[BACKTEST] ✅ {strategy_name} (stateful): {trades} trades | P&L: ${pnl:.2f} | Win Rate: {win_rate:.1f}%")
+                                    else:
+                                        print(f"[BACKTEST] ❌ {strategy_name} (stateful): Sin resultados")
+                                except Exception as e:
+                                    print(f"[BACKTEST] ❌ Error en {strategy_name} (stateful): {e}")
+                        else:
+                            print(f"[BACKTEST] ❌ No se encontraron datos completos para estrategias stateful en {symbol}")
+                    except Exception as e:
+                        print(f"[BACKTEST] ❌ Error procesando estrategias stateful para {symbol}: {e}")
 
                 if symbol_results:
                     backtest_results[symbol] = symbol_results
@@ -308,25 +375,25 @@ async def run_full_backtesting_with_batches():
 if __name__ == "__main__":
     # Ejecutar backtest completo
     asyncio.run(run_full_backtesting_with_batches())
-    # Lanzar dashboard con resultados generados
+    # Lanzar dashboard con resultados generados usando Streamlit
     try:
-        import subprocess
+        import subprocess, sys
         from pathlib import Path
-        # Ruta al script dashboard.py en la carpeta descarga_datos
         dash_file = Path(__file__).parent / 'dashboard.py'
-        print(f"[BACKTEST] 🚀 Lanzando dashboard: {dash_file}")
-
-        # Lanzar streamlit en background sin esperar
+        workdir = str(Path(__file__).parent)
+        print(f"[BACKTEST] 🚀 Lanzando dashboard con Streamlit: {dash_file}")
         cmd = [sys.executable, '-m', 'streamlit', 'run', str(dash_file), '--server.port', '8501']
-        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+        process = subprocess.Popen(cmd, cwd=workdir)
         print("\n  You can now view your Streamlit app in your browser.")
         print("  Local URL: http://localhost:8501")
-        print("  Network URL: http://192.168.1.156:8501")
         print(f"[BACKTEST] ✅ Dashboard iniciado con PID: {process.pid}")
-
-        # No esperar, dejar que streamlit corra en background
+        try:
+            import webbrowser, time
+            time.sleep(2)
+            webbrowser.open_new_tab("http://localhost:8501")
+            print("[BACKTEST] 🌐 Navegador abierto automáticamente")
+        except Exception as browser_error:
+            print(f"[BACKTEST] ⚠️ No se pudo abrir navegador automáticamente: {browser_error}")
         print("[BACKTEST] ✅ Sistema modular completado exitosamente")
-
     except Exception as e:
         print(f"[BACKTEST] ❌ No se pudo lanzar el dashboard: {e}")

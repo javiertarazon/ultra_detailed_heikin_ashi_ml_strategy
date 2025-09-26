@@ -5,8 +5,47 @@ import time
 import random
 import asyncio
 from functools import wraps
-from typing import Callable, Any, Optional, Type, Union
+from typing import Callable, Any, Optional, Type, Union, List, Dict
 import logging
+
+# Configurar logger
+logger = logging.getLogger(__name__)
+
+def retry_operation(retries=3, delay=1, backoff=2, exceptions=(Exception,)):
+    """
+    Decorador que reintenta una función si falla con excepciones específicas.
+    
+    Args:
+        retries: Número máximo de reintentos
+        delay: Tiempo inicial de espera entre reintentos (segundos)
+        backoff: Factor multiplicativo para el tiempo de espera entre reintentos
+        exceptions: Tupla de excepciones que activarán un reintento
+        
+    Returns:
+        El decorador configurado
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retry_count = 0
+            current_delay = delay
+            
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    retry_count += 1
+                    if retry_count > retries:
+                        logger.error(f"Máximo de reintentos alcanzado ({retries}). Último error: {str(e)}")
+                        raise
+                        
+                    logger.warning(f"Reintento {retry_count}/{retries} después de error: {str(e)}")
+                    logger.warning(f"Esperando {current_delay} segundos...")
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+        
+        return wrapper
+    return decorator
 
 class RetryError(Exception):
     """Error cuando se agotan los reintentos."""

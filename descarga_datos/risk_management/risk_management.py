@@ -1602,3 +1602,53 @@ risk_manager = AdvancedRiskManager()
 def get_risk_manager() -> AdvancedRiskManager:
     """Obtiene la instancia global del gestor de riesgo"""
     return risk_manager
+    
+def apply_risk_management(signal: Dict[str, Any], 
+                         account_balance: float,
+                         symbol_info: Dict[str, Any],
+                         config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Aplica las reglas de gestión de riesgo a una señal de trading.
+    
+    Args:
+        signal: Señal de trading con dirección, precio, etc.
+        account_balance: Balance actual de la cuenta
+        symbol_info: Información del símbolo (tick size, lotaje mínimo, etc.)
+        config: Configuración de gestión de riesgo
+        
+    Returns:
+        Señal modificada con tamaño de posición, stop loss y take profit ajustados
+    """
+    logger.info(f"Aplicando gestión de riesgo a señal: {signal}")
+    
+    # Obtener gestor de riesgo
+    rm = get_risk_manager()
+    
+    # Calcular tamaño de posición
+    risk_percent = config.get('risk_percent', 1.0)
+    position_size = rm.calculate_position_size(
+        direction=signal.get('direction', 'buy'),
+        entry_price=signal.get('price', 0.0),
+        stop_loss_price=signal.get('stop_loss', 0.0),
+        account_balance=account_balance,
+        risk_percent=risk_percent,
+        symbol=signal.get('symbol', ''),
+        symbol_info=symbol_info
+    )
+    
+    # Verificar límites de drawdown
+    max_drawdown = config.get('max_drawdown_limit', 20.0)
+    if rm.current_drawdown > max_drawdown:
+        logger.warning(f"Señal rechazada - Drawdown ({rm.current_drawdown}%) excede límite ({max_drawdown}%)")
+        signal['rejected'] = True
+        signal['rejection_reason'] = f"Drawdown excede límite: {rm.current_drawdown}%"
+        return signal
+        
+    # Aplicar ajustes a la señal
+    signal['position_size'] = position_size
+    signal['risk_applied'] = True
+    signal['max_risk_percent'] = risk_percent
+    
+    logger.info(f"Gestión de riesgo aplicada: size={position_size}, risk={risk_percent}%")
+    
+    return signal
