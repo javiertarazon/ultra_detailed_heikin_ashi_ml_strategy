@@ -162,10 +162,10 @@ class Solana4HRiskManagedStrategy:
         ha_high = pd.Series([max(h, o, c) for h, o, c in zip(df['high'], ha_open, ha_close)], index=df.index)
         ha_low = pd.Series([min(l, o, c) for l, o, c in zip(df['low'], ha_open, ha_close)], index=df.index)
         return pd.DataFrame({
-            'ha_open': ha_open,
-            'ha_high': ha_high,
-            'ha_low': ha_low,
-            'ha_close': ha_close
+            'HA_Open': ha_open,
+            'HA_High': ha_high,
+            'HA_Low': ha_low,
+            'HA_Close': ha_close
         }, index=df.index)
 
     def calculate_signals(self, df):
@@ -175,8 +175,8 @@ class Solana4HRiskManagedStrategy:
         # Calcular Heiken Ashi
         ha_df = self.calculate_heikin_ashi(df)
         df = df.copy()
-        df['ha_open'] = ha_df['ha_open']
-        df['ha_close'] = ha_df['ha_close']
+        df['ha_open'] = ha_df['HA_Open']
+        df['ha_close'] = ha_df['HA_Close']
 
         # Media móvil de volumen
         df['volume_sma'] = talib.SMA(df['volume'], timeperiod=self.volume_sma_period)

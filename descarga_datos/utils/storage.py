@@ -29,6 +29,15 @@ class DataStorage(BaseDataHandler):
         super().__init__()
         self.db_path = db_path
         self._ensure_db_path()
+        # Compatibilidad: algunas llamadas antiguas referencian self.logger
+        # Asignamos el logger de módulo para evitar AttributeError
+        # Garantizar siempre un logger operativo (evita AttributeError en llamadas heredadas)
+        try:
+            if not hasattr(self, 'logger') or self.logger is None:
+                self.logger = logger
+        except Exception:
+            # Fallback silencioso; en el peor caso se usará el logger de módulo directamente
+            pass
     
     def _ensure_db_path(self):
         """Asegura que el directorio de la base de datos existe."""
@@ -128,11 +137,11 @@ class DataStorage(BaseDataHandler):
                 validation_result = self.validate_timestamp_column(df)
                 if not validation_result.is_valid:
                     for error in validation_result.errors:
-                        self.logger.error(f"Error de validación: {error}")
+                        logger.error(f"Error de validación: {error}")
                     return False
                 
                 for warning in validation_result.warnings:
-                    self.logger.warning(warning)
+                    logger.warning(warning)
             
             # Preparar tipos de datos y convertir timestamps
             # Cuando se lee desde un CSV o DataFrame, asegurarse de que los timestamps estén en el formato correcto
@@ -190,7 +199,7 @@ class DataStorage(BaseDataHandler):
                 return True
                 
         except Exception as e:
-            self.logger.error(f"Error guardando datos en SQLite: {e}")
+            logger.error(f"Error guardando datos en SQLite: {e}")
             return False
     
     def save_data(self, table_name: str, data: pd.DataFrame) -> bool:
@@ -213,7 +222,7 @@ class DataStorage(BaseDataHandler):
             # Guardar los nuevos datos
             return self.save_to_sqlite(data, table_name)
         except Exception as e:
-            self.logger.error(f"Error en save_data: {e}")
+            logger.error(f"Error en save_data: {e}")
             return False
     
     def table_exists(self, table_name: str) -> bool:
@@ -235,7 +244,7 @@ class DataStorage(BaseDataHandler):
                 """, (table_name,))
                 return cursor.fetchone() is not None
         except Exception as e:
-            self.logger.error(f"Error verificando tabla: {e}")
+            logger.error(f"Error verificando tabla: {e}")
             return False
     
     def query_data(self, table_name: str, start_ts: Optional[int] = None, end_ts: Optional[int] = None) -> pd.DataFrame:
@@ -253,7 +262,11 @@ class DataStorage(BaseDataHandler):
         try:
             # Verificar si la tabla existe
             if not self.table_exists(table_name):
-                self.logger.error(f"La tabla {table_name} no existe")
+                # Usar tanto self.logger (si existe) como logger de módulo para robustez
+                try:
+                    self.logger.error(f"La tabla {table_name} no existe")
+                except Exception:
+                    logger.error(f"La tabla {table_name} no existe")
                 return pd.DataFrame()
 
             # Construir la consulta SQL
@@ -271,12 +284,18 @@ class DataStorage(BaseDataHandler):
                 df = pd.read_sql_query(query, conn, params=params if params else None)
             
             if df.empty:
-                self.logger.warning(f"No se encontraron datos en la tabla {table_name}")
+                try:
+                    self.logger.warning(f"No se encontraron datos en la tabla {table_name}")
+                except Exception:
+                    logger.warning(f"No se encontraron datos en la tabla {table_name}")
                 return pd.DataFrame()
             
             # Verificar que existe la columna timestamp
             if 'timestamp' not in df.columns:
-                self.logger.error(f"La columna timestamp no existe en la tabla {table_name}")
+                try:
+                    self.logger.error(f"La columna timestamp no existe en la tabla {table_name}")
+                except Exception:
+                    logger.error(f"La columna timestamp no existe en la tabla {table_name}")
                 return pd.DataFrame()
             
             # Convertir timestamp a datetime y establecer como índice
@@ -286,8 +305,92 @@ class DataStorage(BaseDataHandler):
             return df
             
         except Exception as e:
-            self.logger.error(f"Error consultando datos: {e}")
+            try:
+                self.logger.error(f"Error consultando datos: {e}")
+            except Exception:
+                logger.error(f"Error consultando datos: {e}")
             return pd.DataFrame()
+
+    # ===================== METADATA SUPPORT =====================
+    def _ensure_metadata_table(self):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS data_metadata (
+                        symbol TEXT NOT NULL,
+                        timeframe TEXT NOT NULL,
+                        start_ts INTEGER,
+                        end_ts INTEGER,
+                        records INTEGER,
+                        coverage_pct REAL,
+                        asset_class TEXT,
+                        source_exchange TEXT,
+                        last_update_ts INTEGER DEFAULT (strftime('%s','now')),
+                        PRIMARY KEY(symbol,timeframe)
+                    )
+                    """
+                )
+        except Exception as e:
+            try:
+                self.logger.error(f"Error creando tabla metadata: {e}")
+            except Exception:
+                logger.error(f"Error creando tabla metadata: {e}")
+
+    def upsert_metadata(self, row: dict):
+        self._ensure_metadata_table()
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO data_metadata(symbol,timeframe,start_ts,end_ts,records,coverage_pct,asset_class,source_exchange,last_update_ts)
+                    VALUES(?,?,?,?,?,?,?, ?,strftime('%s','now'))
+                    ON CONFLICT(symbol,timeframe) DO UPDATE SET
+                        start_ts=excluded.start_ts,
+                        end_ts=excluded.end_ts,
+                        records=excluded.records,
+                        coverage_pct=excluded.coverage_pct,
+                        asset_class=excluded.asset_class,
+                        source_exchange=excluded.source_exchange,
+                        last_update_ts=strftime('%s','now')
+                    """,
+                    (
+                        row.get('symbol'),
+                        row.get('timeframe'),
+                        row.get('start_ts'),
+                        row.get('end_ts'),
+                        row.get('records'),
+                        row.get('coverage_pct'),
+                        row.get('asset_class'),
+                        row.get('source_exchange', 'unknown')
+                    )
+                )
+        except Exception as e:
+            try:
+                self.logger.error(f"Error upsert metadata: {e}")
+            except Exception:
+                logger.error(f"Error upsert metadata: {e}")
+
+    def get_metadata(self, symbol: str, timeframe: str) -> Optional[dict]:
+        self._ensure_metadata_table()
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT symbol,timeframe,start_ts,end_ts,records,coverage_pct,asset_class,source_exchange,last_update_ts FROM data_metadata WHERE symbol=? AND timeframe=?",
+                    (symbol, timeframe)
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                keys = ['symbol','timeframe','start_ts','end_ts','records','coverage_pct','asset_class','source_exchange','last_update_ts']
+                return dict(zip(keys,row))
+        except Exception as e:
+            try:
+                self.logger.error(f"Error get_metadata: {e}")
+            except Exception:
+                logger.error(f"Error get_metadata: {e}")
+            return None
 
 def save_to_csv(data: Union[pd.DataFrame, List[Dict[str, Any]]], 
               filepath: str,

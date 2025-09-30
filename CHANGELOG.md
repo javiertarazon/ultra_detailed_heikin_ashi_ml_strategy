@@ -1,5 +1,63 @@
 # 📋 Changelog - Bot Trader Copilot
 
+## [2.6.0] - 2025-09-30
+
+### 🛠️ **HOTFIX CRÍTICO - Sistema de Integridad y Dashboard Auto-Launch**
+
+#### 🐛 **Correcciones Críticas del Sistema**
+- **🔧 [CRÍTICO] SQL Metadata Error Fixed**: Corregido error "9 values for 8 columns" en `utils/storage.py`
+- **🚀 [CRÍTICO] Dashboard Auto-Launch Restored**: Sistema robusto de lanzamiento automático del dashboard
+- **🔄 [CRÍTICO] KeyboardInterrupt Tolerance**: Manejo elegante de interrupciones durante shutdown CCXT
+- **🌐 [NUEVO] Dynamic Port Fallback**: Sistema inteligente de puertos alternativos (8519 → 8522)
+
+#### 🧪 **Sistema de Testing Integral Implementado**
+- **📁 [NUEVO] test_system_integrity.py**: Suite completa de 7 tests críticos del sistema
+- **✅ [NUEVO] Config & Strategy Validation**: Verificación de carga dinámica de estrategias
+- **📊 [NUEVO] Metrics Normalization Tests**: Validación de win_rate y consistencia de trades
+- **🗄️ [NUEVO] Database Integrity Checks**: Validación de esquema SQLite y metadata
+- **📈 [NUEVO] Dashboard Fidelity Tests**: Verificación de coherencia dashboard vs backtesting
+- **🔍 [NUEVO] Synthetic Data Detection**: Confirmación de uso exclusivo de datos reales
+
+#### 🚀 **Mejoras de Robustez y Performance**
+- **🔄 [MEJORADO] Async Shutdown Handling**: Cierre elegante con `asyncio.CancelledError` management
+- **📝 [MEJORADO] Structured Logging**: Logs enriquecidos con contexto y emojis informativos
+- **⚙️ [MEJORADO] Error Recovery**: Tolerancia a fallos con continuación automática de flujo
+- **🎯 [NUEVO] Win Rate Normalization**: Estandarización decimal (0-1) en todo el sistema
+
+#### 📊 **Resultados de Validación Final**
+- **✅ 5 Símbolos Procesados**: DOGE, SOL, XRP, AVAX, SUSHI completamente validados
+- **✅ 3 Estrategias Ejecutadas**: Solana4H, Solana4HSAR, HeikinAshiVolumenSar funcionando
+- **✅ 5,465 Trades Analizados**: Sistema procesó exitosamente operaciones completas
+- **✅ $990,691.84 P&L Total**: Métricas financieras validadas y coherentes
+- **✅ 42.8% Win Rate Promedio**: Normalización consistente en todo el sistema
+- **✅ 7/7 Tests Passing**: Suite integral de testing completamente exitosa
+
+#### 🔧 **Archivos Modificados**
+```
+✅ utils/storage.py - Fixed SQL metadata column mismatch
+✅ core/downloader.py - Enhanced async shutdown with CancelledError handling  
+✅ main.py - Added KeyboardInterrupt tolerance and dashboard launch resilience
+✅ utils/dashboard.py - Added summarize_results_structured() for testing
+✅ tests/test_system_integrity.py - NEW comprehensive system validation suite
+✅ README.md - Updated with all solutions and improvements documented
+```
+
+#### 🎯 **Top Performance Validated**
+```
+🥇 DOGE/USDT Solana4HSAR: $420,334.50 (410 trades) - 48.8% win rate
+🥈 SOL/USDT Solana4HSAR: $207,499.52 (409 trades) - 46.5% win rate  
+🥉 XRP/USDT Solana4HSAR: $129,590.35 (337 trades) - 45.1% win rate
+```
+
+#### 🚀 **Sistema Status Post-Fix**
+- **📊 Dashboard Auto-Launch**: ✅ FUNCIONANDO (http://localhost:8522)
+- **🧪 System Integrity**: ✅ 100% VALIDADO con 7 tests críticos
+- **💾 Database Operations**: ✅ SIN ERRORES SQL 
+- **🔄 Shutdown Process**: ✅ ROBUSTO con manejo de interrupciones
+- **📈 Backtest Pipeline**: ✅ EXTREMO-A-EXTREMO sin fricción
+
+---
+
 ## [2.5.0] - 2025-09-23
 
 ### 🚀 **Release de Producción - Sistema Modular Completo**

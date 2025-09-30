@@ -1,63 +1,17 @@
-# Configuración Centralizada - Bot Trader Copilot
-# ===================================================
+###############################################
+# CONFIGURACIÓN CENTRAL BOT TRADER COPILOT   #
+# Versión unificada y optimizada             #
+###############################################
 
-# Configuración de Riesgo Optimizada para Solana4HRiskManaged
-solana4h_risk_managed:
-  risk_percent: 1.8          # Optimizado: 1.8% para mejor balance ganancia/riesgo
-  tp_atr_multiplier: 2.2     # Optimizado: 2.2 para ratio 1:2.2 más equilibrado
-  sl_atr_multiplier: 1.3     # Optimizado: 1.3 para stops menos agresivos
-  max_drawdown_limit: 12.0   # Optimizado: 12% para mayor seguridad
-  trailing_stop_activation: 1.0  # Optimizado: 1.0% para activar trailing menos agresivo
-  min_position_size: 0.02    # Optimizado: 2% del portfolio mínimo
-  max_position_size: 0.08    # Optimizado: 8% máximo por posición
-  confidence_threshold: 0.7  # Optimizado: 70% umbral de confianza
-  min_signal_strength: 0.6   # Nuevo: Fuerza mínima de señal
-  max_trades_per_day: 3      # Nuevo: Máximo 3 trades por día para evitar overtrading
-
-# Configuración Optimizada para Solana4HEnhancedTrailingStrategy
-# Parámetros optimizados mediante análisis de 50 combinaciones (312,500 totales)
-solana4h_enhanced_trailing_optimized:
-  take_profit_percent: 3.0       # Optimizado: 3.0% (vs 4.5% original) - Más conservador
-  stop_loss_percent: 2.0         # Optimizado: 2.0% (vs 2.5% original) - Más ajustado
-  base_trailing_stop: 3.0        # Optimizado: 3.0% (vs 2.0% original) - Más amplio
-  atr_trailing_multiplier: 0.5   # Optimizado: 0.5x (vs 1.0x original) - Menos agresivo
-  volume_sma_period: 10          # Optimizado: 10 (vs 10 original) - Mantener
-  trend_ema_period: 60           # Optimizado: 60 (vs 50 original) - Más largo
-  adx_threshold: 10              # Optimizado: 10 (vs 15 original) - Más permisivo
-  max_consecutive_losses: 5      # Optimizado: 5 (vs 3 original) - Más tolerante
-  # Métricas de rendimiento optimizado:
-  # P&L Total: $48,351 | Win Rate: 44.4% | Sharpe: 1.29 | Calmar: 1.95
-
-# Configuración Balanceada para Solana4HEnhancedTrailingBalancedStrategy
-# Optimizada para mayor número de trades manteniendo buena rentabilidad
-solana4h_enhanced_trailing_balanced:
-  take_profit_percent: 3.5       # Balanceado: 3.5% (entre agresividad y rentabilidad)
-  stop_loss_percent: 2.5         # Balanceado: 2.5% (más amplio para más trades)
-  base_trailing_stop: 2.5        # Balanceado: 2.5% (equilibrio trailing/stops)
-  atr_trailing_multiplier: 0.7   # Balanceado: 0.7x (menos conservador que 0.5x)
-  volume_sma_period: 15          # Balanceado: 15 (más señales que 10)
-  trend_ema_period: 40           # Balanceado: 40 (más señales que 60, menos ruido)
-  adx_threshold: 18              # Balanceado: 18 (requiere tendencia moderada)
-  max_consecutive_losses: 4      # Balanceado: 4 (protección sin ser demasiado restrictivo)
-  volume_threshold: 800          # Más permisivo: 800 (vs 1000 original)
-  min_volume_multiplier: 1.1     # Más permisivo: 1.1x (vs 1.2x original)
-  # Objetivo: Mayor número de trades con rentabilidad sostenible
-
-
-
-
-# Configuración General
 system:
   name: "Bot Trader Copilot"
-  version: "2.5.0"
+  version: "2.6.0"
   log_level: "INFO"
   log_file: "logs/bot_trader.log"
-  auto_launch_dashboard: true  # Lanzar dashboard automáticamente después del backtesting
+  auto_launch_dashboard: true
 
-# Exchange activo por defecto
 active_exchange: "bybit"
 
-# Configuración de Exchanges (CCXT)
 exchanges:
   bybit:
     enabled: true
@@ -65,15 +19,13 @@ exchanges:
     api_secret: ""
     sandbox: false
     timeout: 30000
-
   binance:
-    enabled: true
+    enabled: false
     api_key: ""
     api_secret: ""
     sandbox: false
     timeout: 30000
 
-# Configuración MT5
 mt5:
   enabled: true
   terminal_path: ""
@@ -82,117 +34,75 @@ mt5:
   password: "Jatr280371$"
   timeout: 60000
 
-# Configuración de Backtesting
 backtesting:
-  # Símbolos a procesar - Múltiples símbolos para análisis comparativo
-  symbols:
-    # Acciones (MT5)
-    - "TSLA.US"       # Tesla
-    - "NVDA.US"       # NVIDIA 
-    # Forex (MT5)
-    - "EURUSD"        # EUR-USD (formato MT5 sin slash)
-    - "USDJPY"        # USD-JPY 
-    # Criptomonedas (CCXT)
-    - "SOL/USDT"      # Solana
-    - "ETH/USDT"      # Ethereum
-    - "BTC/USDT"      # Bitcoin
-
-  # Configuración temporal - 2 años de datos con descargas por lotes
+  symbols: ["DOGE/USDT", "SOL/USDT", "XRP/USDT", "AVAX/USDT", "SUSHI/USDT"]
   timeframe: "4h"
-  start_date: "2023-01-01"
-  end_date: "2025-01-01"
-
-  # Configuración financiera
+  start_date: "2023-09-29"
+  end_date: "2025-09-29"
   initial_capital: 10000
   commission: 0.1
   slippage: 0.05
-
-  # Estrategias activas - Solo las estrategias con archivos existentes
   strategies:
-    Estrategia_Basica: true                      # ✅ UT Bot PSAR básica
-    Estrategia_Compensacion: true                # ✅ UT Bot PSAR con compensación
-    Solana4H: true                               # ✅ Solana 4H básica
-    Solana4HTrailing: true                       # ✅ Solana 4H con trailing stop
-    Solana4HRiskManaged: true                    # ✅ Solana 4H con gestión de riesgo
-    Solana4HOptimizedTrailing: true              # ✅ Solana 4H optimizada trailing
-    Solana4HEnhancedTrailingBalanced: true       # ✅ Solana 4H enhanced balanced
-    Solana4HTrailingLive: true                   # ✅ Solana 4H trailing compatible con live trading
-    
-  # Rutas de estrategias para carga dinámica
+    Solana4H: true
+    Solana4HSAR: true
+    HeikinAshiVolumenSar: true
   strategy_paths:
     Estrategia_Basica: ["strategies.ut_bot_psar", "UTBotPSARStrategy"]
     Estrategia_Compensacion: ["strategies.ut_bot_psar_compensation", "UTBotPSARCompensationStrategy"]
     Solana4H: ["strategies.solana_4h_strategy", "Solana4HStrategy"]
+    Solana4HSAR: ["strategies.solana_4h_sar_strategy", "Solana4HSARStrategy"]
     Solana4HTrailing: ["strategies.solana_4h_trailing_strategy", "Solana4HTrailingStrategy"]
     Solana4HRiskManaged: ["strategies.solana_4h_risk_managed_strategy", "Solana4HRiskManagedStrategy"]
     Solana4HOptimizedTrailing: ["strategies.solana_4h_optimized_trailing_strategy", "Solana4HOptimizedTrailingStrategy"]
-    Solana4HEnhancedTrailingBalanced: ["strategies.solana_4h_enhanced_trailing_balanced_strategy", "Solana4HEnhancedTrailingBalancedStrategy"]
-    Solana4HTrailingLive: ["strategies.solana_4h_trailing_live_strategy", "Solana4HTrailingLiveStrategy"]
- 
-# Configuración de Indicadores Técnicos
+    HeikinAshiVolumenSar: ["strategies.heikin_ashi_volumen_sar_strategy", "HeikinAshiVolumenSarStrategy"]
+    HeikinAshiVolumenSarImproved: ["strategies.heikin_ashi_volumen_sar_strategy_improved", "HeikinAshiVolumenSarStrategyImproved"]
+  optimized_parameters: {}
+  data_quality:
+    min_coverage_pct: 95
+    auto_retry: true
+    gap_fill:
+      enabled: true
+      method: forward
+      max_consecutive: 6
+
 indicators:
-  volatility:
-    enabled: true
-    period: 14
+  volatility: { enabled: true, period: 14 }
+  heiken_ashi: { enabled: true, trend_period: 3, size_comparison_threshold: 1.2 }
+  atr: { enabled: true, period: 14 }
+  ema: { enabled: true, periods: [10, 20, 200] }
+  parabolic_sar: { enabled: true, acceleration: 0.02, maximum: 0.2 }
+  adx: { enabled: true, period: 14, threshold: 25 }
 
-  heiken_ashi:
-    enabled: true
-    trend_period: 3
-    size_comparison_threshold: 1.2
-
-  atr:
-    enabled: true
-    period: 14
-
-  ema:
-    enabled: true
-    periods: [10, 20, 200]
-
-  parabolic_sar:
-    enabled: true
-    acceleration: 0.02
-    maximum: 0.2
-
-  adx:
-    enabled: true
-    period: 14
-    threshold: 25
-
-# Configuración de Almacenamiento
 storage:
   path: "data"
   csv_enabled: true
   sqlite_enabled: true
   cache_enabled: true
 
-# Configuración de Riesgo
 risk:
   risk_percent: 2.0
   tp_atr_multiplier: 2.0
   sl_atr_multiplier: 1.5
   max_drawdown_limit: 20.0
 
-# Configuración de Estrategia de Compensación - Parámetros Optimizados para 20 símbolos
 compensation_strategy:
   enabled: true
-  loss_threshold: 0.2        # Reducido a 0.2% para activar compensación más temprano
-  size_multiplier: 1.5       # Reducido a 1.5x para menos riesgo
-  tp_percent: 0.25          # Reducido a 0.25% TP más conservador
-  max_account_drawdown: 15.0  # AUMENTADO a 15% para permitir desarrollo de posiciones
-  compensation_max_loss: 0.3 # Reducido a 0.3% límite compensación
-  emergency_stop_buffer: 0.98 # AUMENTADO a 98% del límite para stops menos agresivos
-  risk_multiplier_high_dd: 0.7 # Reducir riesgo 30% si drawdown > 1%
+  loss_threshold: 0.2
+  size_multiplier: 1.5
+  tp_percent: 0.25
+  max_account_drawdown: 15.0
+  compensation_max_loss: 0.3
+  emergency_stop_buffer: 0.98
+  risk_multiplier_high_dd: 0.7
 
-# Configuración de Datos
 data:
-  use_mt5_for_stocks: true  # Activado ahora que MT5 está configurado
+  use_mt5_for_stocks: true
   use_ccxt_for_crypto: true
   max_retries: 3
   retry_delay: 5
   limit_per_request: 1000
   validate_data: true
 
-# Configuración de Reportes
 reports:
   save_individual_results: true
   save_equity_curves: true
@@ -200,33 +110,26 @@ reports:
   generate_comparison: true
   output_directory: "backtest_results"
 
-# Configuración de Trading en Vivo
 live_trading:
-  enabled: false  # Cambiar a true para activar el trading en vivo
-  mode: "MT5"     # "MT5" para forex/acciones o "CCXT" para cripto
-  account_type: "DEMO"  # DEMO o REAL (usar DEMO para pruebas)
-  
-  # Configuración específica por modo
-  mt5:
-    symbols: ["EURUSD", "USDJPY", "XAUUSD"]
-    timeframes: ["1h", "4h", "1d"]
-    
-  ccxt:
-    exchange: "bybit"  # bybit, binance, etc.
-    symbols: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-    timeframes: ["1h", "4h"]
-  
-  # Símbolo activo para live trading (configurable)
-  active_symbol: "BTC/USDT"  # Cambiar según el modo seleccionado
-  
-  # Estrategia activa para live trading
-  active_strategy: "Solana4HRiskManaged"  # Estrategia que se ejecutará en live
-  
-  # Configuración de riesgo para trading en vivo
-  risk_per_trade: 0.01  # 1% del capital por operación
-  max_positions: 5      # Máximo de posiciones abiertas simultáneamente
-  
-  # Parámetros operativos
-  update_interval_seconds: 5  # Intervalo para actualizar datos
-  initial_history_bars: 1000  # Barras históricas iniciales
-  apply_risk_management: true  # Aplicar gestión de riesgo a señales
+  enabled: true
+  mode: "MT5"
+  account_type: "DEMO"
+  risk_per_trade: 0.01
+  max_positions: 3
+  max_positions_per_symbol: 1
+  update_interval_seconds: 5
+  initial_history_bars: 1000
+  apply_risk_management: true
+  validation:
+    enabled: true
+    check_data_integrity: true
+    validate_signals: true
+    max_signal_age_seconds: 300
+  strategy_mapping:
+    Solana4H:
+      active: true
+      symbols: ["SOL/USDT", "AVAX/USDT", "DOGE/USDT"]
+      timeframes: ["4h"]
+      parameters:
+        take_profit_percent: 4.0
+        stop_loss_percent: 2.0

@@ -74,10 +74,10 @@ class Solana4HOptimizedTrailingStrategy:
         ha_high = pd.Series([max(h, o, c) for h, o, c in zip(df['high'], ha_open, ha_close)], index=df.index)
         ha_low = pd.Series([min(l, o, c) for l, o, c in zip(df['low'], ha_open, ha_close)], index=df.index)
         return pd.DataFrame({
-            'ha_open': ha_open,
-            'ha_high': ha_high,
-            'ha_low': ha_low,
-            'ha_close': ha_close
+            'HA_Open': ha_open,
+            'HA_High': ha_high,
+            'HA_Low': ha_low,
+            'HA_Close': ha_close
         }, index=df.index)
 
     def calculate_signals(self, df):
@@ -88,8 +88,8 @@ class Solana4HOptimizedTrailingStrategy:
         
         # Calcular Heiken Ashi
         ha_df = self.calculate_heikin_ashi(df)
-        df['ha_open'] = ha_df['ha_open']
-        df['ha_close'] = ha_df['ha_close']
+        df['ha_open'] = ha_df['HA_Open']
+        df['ha_close'] = ha_df['HA_Close']
 
         # Media móvil de volumen
         df['volume_sma'] = talib.SMA(df['volume'], timeperiod=self.volume_sma_period)
@@ -288,16 +288,10 @@ class Solana4HOptimizedTrailingStrategy:
                 win_rate = winning_trades / total_trades if total_trades > 0 else 0
                 total_pnl = sum(t['pnl'] for t in trades)
                 
-                # Calcular drawdown
-                max_drawdown = 0
-                peak = 10000.0
-                current_capital = 10000.0
-
+                # Calcular equity curve para que el backtester calcule métricas avanzadas
+                equity_curve = [10000.0]
                 for trade in trades:
-                    current_capital += trade['pnl']
-                    peak = max(peak, current_capital)
-                    drawdown = peak - current_capital
-                    max_drawdown = max(max_drawdown, drawdown)
+                    equity_curve.append(equity_curve[-1] + trade['pnl'])
 
                 profit_factor = (
                     sum(t['pnl'] for t in trades if t['pnl'] > 0) / 
@@ -313,6 +307,7 @@ class Solana4HOptimizedTrailingStrategy:
                 total_pnl = 0
                 max_drawdown = 0
                 profit_factor = 0
+                equity_curve = [10000.0]
 
             return {
                 'symbol': symbol,
@@ -323,7 +318,7 @@ class Solana4HOptimizedTrailingStrategy:
                 'losing_trades': losing_trades,
                 'win_rate': win_rate,
                 'total_pnl': total_pnl,
-                'max_drawdown': max_drawdown,
+                'max_drawdown': 0.0,  # Se calculará en el backtester
                 'sharpe_ratio': 0,  # Se calculará en el backtester
                 'sortino_ratio': 0,  # Se calculará en el backtester
                 'calmar_ratio': 0,  # Se calculará en el backtester
@@ -339,6 +334,7 @@ class Solana4HOptimizedTrailingStrategy:
                 'avg_compensation_pnl': 0,
                 'compensation_ratio': 0.0,
                 'adjusted_total_pnl': total_pnl,
+                'equity_curve': equity_curve,
                 'trades': trades
             }
 
@@ -370,5 +366,6 @@ class Solana4HOptimizedTrailingStrategy:
                 'avg_compensation_pnl': 0,
                 'compensation_ratio': 0.0,
                 'adjusted_total_pnl': 0,
+                'equity_curve': [10000.0],
                 'trades': []
             }

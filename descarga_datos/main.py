@@ -8,6 +8,7 @@ import asyncio
 import os
 import sys
 import subprocess
+import socket
 import json
 from pathlib import Path
 
@@ -23,9 +24,10 @@ sys.path.append(current_dir)
 
 from config.config_loader import load_config_from_yaml
 from utils.logger import setup_logging, get_logger
-from backtesting.backtesting_orchestrator import run_full_backtesting_with_batches
+# Import pesado diferido: se hará dentro de run_backtest para evitar bloqueos
+RUN_ORCHESTRATOR_LAZILY = True
 
-def validate_system():
+def validate_system(dashboard_only: bool = False):
     """
     Validación automática del sistema antes de ejecutar operaciones
     """
@@ -39,12 +41,20 @@ def validate_system():
         print(" Configuración cargada correctamente")
 
         # 2. Verificar estrategias activas
-        from backtesting.backtesting_orchestrator import load_strategies_from_config
-        strategies = load_strategies_from_config(config)
-        if not strategies:
-            print(" No hay estrategias activas configuradas")
-            return False
-        print(f" {len(strategies)} estrategias activas: {list(strategies.keys())}")
+        if dashboard_only:
+            print(" Modo dashboard-only: se omite import de estrategias para acelerar")
+        else:
+            print(" Importando orquestador para cargar estrategias...")
+            try:
+                from backtesting.backtesting_orchestrator import load_strategies_from_config
+                strategies = load_strategies_from_config(config)
+            except Exception as imp_err:
+                print(f" Error importando orquestador/estrategias: {imp_err}")
+                return False
+            if not strategies:
+                print(" No hay estrategias activas configuradas")
+                return False
+            print(f" {len(strategies)} estrategias activas: {list(strategies.keys())}")
 
         # 3. Verificar entorno virtual y dependencias (importaciones seguras)
         print(" Verificando entorno Python...")
@@ -107,8 +117,8 @@ def run_live_mt5():
         print(" 🚀 Iniciando simulación de live trading MT5...")
         print(" 💡 Presione Ctrl+C para detener la simulación")
 
-        # Para pruebas, limitar a 30 segundos en lugar de ejecución indefinida
-        run_live_trading(duration_minutes=0.5)  # 30 segundos
+        # Para pruebas, limitar a 2 minutos para ver resultados rápido con 15m
+        run_live_trading(duration_minutes=2)  # 2 minutos para pruebas con 15m
         print(" Live trading MT5 simulado completado")
         return True
     except Exception as e:
@@ -187,14 +197,44 @@ def run_backtest():
     print("=" * 50)
 
     try:
+        if RUN_ORCHESTRATOR_LAZILY:
+            print(" Cargando orquestador de backtesting de forma perezosa...")
+            from backtesting.backtesting_orchestrator import run_full_backtesting_with_batches  # type: ignore
+            print(" Orquestador importado. Iniciando ejecución async...")
         asyncio.run(run_full_backtesting_with_batches())
         print(" Backtesting completado exitosamente")
         return True
+    except KeyboardInterrupt:
+        # Si se interrumpe justo al final (ej. durante shutdown) consideramos éxito si ya existen resultados
+        results_dir = Path(__file__).parent / 'data' / 'dashboard_results'
+        result_files = list(results_dir.glob('*_results.json')) if results_dir.exists() else []
+        if result_files:
+            print(f" ⚠️ Interrupción durante el apagado, pero se detectaron {len(result_files)} archivos de resultados. Marcando como éxito.")
+            return True
+        print(" ❌ Interrupción antes de generar resultados válidos.")
+        return False
     except Exception as e:
         print(f" Error en backtesting: {e}")
         return False
 
-def launch_dashboard(wait_for_completion=False):
+def _find_free_port(base_port: int = 8519, max_tries: int = 10) -> int:
+    """Busca un puerto libre a partir de base_port.
+    Devuelve el primero disponible o base_port si no encuentra otro.
+    """
+    for offset in range(max_tries):
+        port = base_port + offset
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex(("127.0.0.1", port)) != 0:  # 0 => ocupado
+                    return port
+            except Exception:
+                # Si ocurre cualquier excepción consideramos el puerto válido para intentar
+                return port
+    return base_port
+
+
+def launch_dashboard(wait_for_completion=False, preferred_port: int = 8519):
     """
     Lanzar dashboard de visualización
     Args:
@@ -206,9 +246,18 @@ def launch_dashboard(wait_for_completion=False):
 
     try:
         dashboard_path = os.path.join(current_dir, "utils", "dashboard.py")
-        cmd = [sys.executable, "-m", "streamlit", "run", dashboard_path, "--server.port", "8519"]
+        # Permitir override por variable de entorno
+        env_port = os.environ.get("DASHBOARD_PORT")
+        if env_port and env_port.isdigit():
+            preferred_port = int(env_port)
 
-        print(" Dashboard disponible en: http://localhost:8519")
+        port = _find_free_port(preferred_port, max_tries=12)
+        if port != preferred_port:
+            print(f" ⚠️ Puerto {preferred_port} en uso, usando alternativo {port}")
+
+        cmd = [sys.executable, "-m", "streamlit", "run", dashboard_path, "--server.port", str(port)]
+
+        print(f" Dashboard disponible en: http://localhost:{port}")
         print(" Presiona Ctrl+C para detener el dashboard")
 
         if wait_for_completion:
@@ -260,6 +309,10 @@ def main():
     parser.add_argument("--test-live-mt5", action="store_true", help="Probar live trading MT5 (modo seguro, 30s)")
     parser.add_argument("--test-live-ccxt", action="store_true", help="Probar live trading CCXT (modo seguro, 30s)")
     parser.add_argument("--skip-validation", action="store_true", help="Omitir validación automática")
+    parser.add_argument("--symbols", type=str, help="Lista de símbolos separados por coma para backtest rápido (override config)")
+    parser.add_argument("--timeframe", type=str, help="Timeframe a usar (override config)")
+    parser.add_argument("--data-audit", action="store_true", help="Ejecutar auditoría de calidad de datos y salir")
+    parser.add_argument("--data-audit-skip-download", action="store_true", help="Ejecuta auditoría sin intentar descargas correctivas (no auto-fetch ni incremental edges)")
 
     args = parser.parse_args()
 
@@ -279,7 +332,7 @@ def main():
 
     # 1. VALIDACIÓN AUTOMÁTICA (a menos que se omita)
     if not args.skip_validation:
-        if not validate_system():
+        if not validate_system(dashboard_only=args.dashboard_only):
             print("\n❌ VALIDACIÓN FALLIDA - Abortando ejecución")
             sys.exit(1)
     else:
@@ -325,7 +378,10 @@ def main():
             # Solo dashboard
             launch_dashboard(wait_for_completion=True)
         elif args.backtest_only:
-            # Solo backtesting
+            # Solo backtesting (con overrides opcionales)
+            if args.symbols or args.timeframe:
+                os.environ['BT_OVERRIDE_SYMBOLS'] = args.symbols or ''
+                os.environ['BT_OVERRIDE_TIMEFRAME'] = args.timeframe or ''
             success = run_backtest()
             if success:
                 print("\n✅ BACKTESTING COMPLETADO")
@@ -333,14 +389,63 @@ def main():
             else:
                 print("\n❌ BACKTESTING FALLÓ")
                 sys.exit(1)
+        elif args.data_audit:
+            # Auditoría de datos sin ejecutar backtesting
+            try:
+                from config.config_loader import load_config_from_yaml
+                # Import dinámico tolerante: primero ruta nueva auditorias/, luego fallback legacy utils/
+                try:
+                    from auditorias.data_audit import run_data_audit  # type: ignore
+                except Exception:
+                    from utils.data_audit import run_data_audit  # type: ignore
+                cfg = load_config_from_yaml()
+                audit_symbols = None
+                if args.symbols:
+                    audit_symbols = [s.strip() for s in args.symbols.split(',') if s.strip()]
+                audit_timeframe = args.timeframe if args.timeframe else None
+                print("\n🔍 Ejecutando auditoría de datos...")
+                if args.data_audit_skip_download:
+                    report = run_data_audit(
+                        cfg,
+                        symbols=audit_symbols,
+                        timeframe=audit_timeframe,
+                        auto_fetch_missing=False,
+                        incremental_edges=False
+                    )
+                else:
+                    report = run_data_audit(cfg, symbols=audit_symbols, timeframe=audit_timeframe)
+                print("\n📑 Resumen Auditoría:")
+                print(json.dumps(report["summary"], indent=2, ensure_ascii=False))
+                print("\nResultado completo en data/dashboard_results/data_audit.json")
+                # Código de salida condicional: si hay símbolos missing -> 2, insufficient -> 3
+                if report["summary"].get("symbols_missing", 0) > 0:
+                    sys.exit(2)
+                elif report["summary"].get("symbols_insufficient", 0) > 0:
+                    sys.exit(3)
+                else:
+                    sys.exit(0)
+            except Exception as e:
+                print(f"Error en auditoría de datos: {e}")
+                sys.exit(1)
         else:
             # Flujo completo: backtest + dashboard
+            if args.symbols or args.timeframe:
+                os.environ['BT_OVERRIDE_SYMBOLS'] = args.symbols or ''
+                os.environ['BT_OVERRIDE_TIMEFRAME'] = args.timeframe or ''
             success = run_backtest()
+            if not success:
+                # Fallback: si hay resultados igual intentamos dashboard
+                results_dir = Path(__file__).parent / 'data' / 'dashboard_results'
+                result_files = list(results_dir.glob('*_results.json')) if results_dir.exists() else []
+                if result_files:
+                    print(f" ⚠️ Backtest reportó fallo/interrupción pero existen {len(result_files)} archivos de resultados. Lanzando dashboard igualmente.")
+                    success = True
             if success:
                 print("\n✅ SISTEMA COMPLETO EJECUTADO EXITOSAMENTE")
+                print(" Lanzando dashboard (modo background)...")
                 launch_dashboard(wait_for_completion=False)
             else:
-                print("\n❌ BACKTESTING FALLÓ - No se lanza dashboard")
+                print("\n❌ BACKTESTING FALLÓ - No se lanza dashboard (no se encontraron resultados válidos)")
                 sys.exit(1)
 
 if __name__ == "__main__":

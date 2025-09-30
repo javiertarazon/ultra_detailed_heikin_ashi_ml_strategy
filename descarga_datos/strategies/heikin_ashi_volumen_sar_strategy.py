@@ -1,23 +1,33 @@
 """
-Implementación de la estrategia Solana 4H con Trailing Stop.
-Versión mejorada con trailing stop para asegurar ganancias.
+Implementación de la estrategia multi-activo con Heikin Ashi, Volumen y Parabolic SAR.
+Versión mejorada con trailing stop para asegurar ganancias y SAR para confirmación de tendencia.
+Adecuada para acciones, forex y criptomonedas mediante ajuste de parámetros.
 """
 import numpy as np
 import pandas as pd
+import logging
 from utils.talib_wrapper import talib
 
-class Solana4HTrailingStrategy:
+class HeikinAshiVolumenSarStrategy:
     def __init__(self,
                  volume_threshold=1000,
                  take_profit_percent=5.0,
                  stop_loss_percent=3.0,
                  trailing_stop_percent=2.0,
-                 volume_sma_period=20):
+                 volume_sma_period=20,
+                 sar_acceleration=0.015,
+                 sar_maximum=0.15):
         self.volume_threshold = volume_threshold
         self.take_profit_percent = take_profit_percent
         self.stop_loss_percent = stop_loss_percent
         self.trailing_stop_percent = trailing_stop_percent
         self.volume_sma_period = volume_sma_period
+        self.sar_acceleration = sar_acceleration
+        self.sar_maximum = sar_maximum
+        self.logger = logging.getLogger(__name__)
+        
+        self.logger.info(f"Estrategia HeikinAshiVolumenSar inicializada con: TP={take_profit_percent}%, " +
+                        f"SL={stop_loss_percent}%, TrailStop={trailing_stop_percent}%, VolThreshold={volume_threshold}")
 
     def calculate_heikin_ashi(self, df):
         """Calcula velas Heiken Ashi"""
@@ -29,21 +39,24 @@ class Solana4HTrailingStrategy:
         ha_high = pd.Series([max(h, o, c) for h, o, c in zip(df['high'], ha_open, ha_close)], index=df.index)
         ha_low = pd.Series([min(l, o, c) for l, o, c in zip(df['low'], ha_open, ha_close)], index=df.index)
         return pd.DataFrame({
-            'ha_open': ha_open,
-            'ha_high': ha_high,
-            'ha_low': ha_low,
-            'ha_close': ha_close
+            'HA_Open': ha_open,
+            'HA_High': ha_high,
+            'HA_Low': ha_low,
+            'HA_Close': ha_close
         }, index=df.index)
 
     def calculate_signals(self, df):
         """
-        Calcula las señales usando Heiken Ashi y volumen.
+        Calcula las señales usando Heiken Ashi, volumen y Parabolic SAR.
         """
         # Calcular Heiken Ashi
         ha_df = self.calculate_heikin_ashi(df)
         df = df.copy()
-        df['ha_open'] = ha_df['ha_open']
-        df['ha_close'] = ha_df['ha_close']
+        df['ha_open'] = ha_df['HA_Open']
+        df['ha_close'] = ha_df['HA_Close']
+
+        # Calcular Parabolic SAR
+        df['sar'] = talib.SAR(df['high'], df['low'], acceleration=self.sar_acceleration, maximum=self.sar_maximum)
 
         # Media móvil de volumen
         df['volume_sma'] = talib.SMA(df['volume'], timeperiod=self.volume_sma_period)
@@ -51,9 +64,12 @@ class Solana4HTrailingStrategy:
         # Condición de volumen
         df['volume_condition'] = (df['volume'] > self.volume_threshold) & (df['volume'] > df['volume_sma'])
 
-        # Señales de entrada
-        df['long_condition'] = df['volume_condition'] & (df['ha_close'] > df['ha_open'])
-        df['short_condition'] = df['volume_condition'] & (df['ha_close'] < df['ha_open'])
+        # Señales de entrada con confirmación SAR
+        # Long: HA alcista, volumen alto, precio por encima de SAR (tendencia alcista)
+        df['long_condition'] = df['volume_condition'] & (df['ha_close'] > df['ha_open']) & (df['close'] > df['sar'])
+        
+        # Short: HA bajista, volumen alto, precio por debajo de SAR (tendencia bajista)
+        df['short_condition'] = df['volume_condition'] & (df['ha_close'] < df['ha_open']) & (df['close'] < df['sar'])
 
         return df
 
@@ -88,7 +104,7 @@ class Solana4HTrailingStrategy:
 
         return trailing_stop, highest_price, lowest_price
 
-    def run(self, data, symbol):
+    def run(self, data, symbol, timeframe=None, **kwargs):
         """
         Ejecuta la estrategia con trailing stop y devuelve los resultados del backtesting
         """
@@ -154,6 +170,7 @@ class Solana4HTrailingStrategy:
                             'exit_price': exit_price,
                             'pnl': pnl,
                             'type': 'long',
+                            'pnl_percent': (exit_price - entry_price) / entry_price * 100,
                             'exit_reason': 'take_profit' if current_price >= take_profit else 'trailing_stop'
                         })
 
@@ -179,6 +196,7 @@ class Solana4HTrailingStrategy:
                             'exit_price': exit_price,
                             'pnl': pnl,
                             'type': 'short',
+                            'pnl_percent': (entry_price - exit_price) / entry_price * 100,
                             'exit_reason': 'take_profit' if current_price <= take_profit else 'trailing_stop'
                         })
 
@@ -190,7 +208,8 @@ class Solana4HTrailingStrategy:
             total_trades = len(trades)
             winning_trades = len([t for t in trades if t['pnl'] > 0])
             losing_trades = total_trades - winning_trades
-            win_rate = (winning_trades / total_trades * 100.0) if total_trades > 0 else 0.0
+            # win_rate en formato decimal (0-1)
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
             total_pnl = sum(t['pnl'] for t in trades)
 
             # Calcular equity curve y max drawdown
@@ -216,30 +235,59 @@ class Solana4HTrailingStrategy:
             gross_profit = sum(t['pnl'] for t in trades if t['pnl'] > 0)
             gross_loss = abs(sum(t['pnl'] for t in trades if t['pnl'] < 0))
             profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
+            
+            # Calcular Sharpe Ratio simplificado
+            if trades and len(equity_curve) > 1:
+                returns = [(equity_curve[i] / equity_curve[i-1] - 1) for i in range(1, len(equity_curve))]
+                if len(returns) > 1 and np.std(returns) > 0:
+                    sharpe_ratio = np.mean(returns) / np.std(returns) * np.sqrt(252)  # Anualizado
+                else:
+                    sharpe_ratio = 0.0
+            else:
+                sharpe_ratio = 0.0
 
             # Calcular métricas adicionales del trailing stop
             trailing_stop_exits = len([t for t in trades if t.get('exit_reason') == 'trailing_stop'])
             take_profit_exits = len([t for t in trades if t.get('exit_reason') == 'take_profit'])
 
             return {
+                'symbol': symbol,
                 'total_trades': total_trades,
                 'winning_trades': winning_trades,
                 'losing_trades': losing_trades,
                 'win_rate': win_rate,
                 'total_pnl': total_pnl,
                 'max_drawdown': max_drawdown,
-                'sharpe_ratio': 0.0,  # Placeholder
+                'sharpe_ratio': sharpe_ratio,
+                'sortino_ratio': 0.0,  # Placeholder, podría calcularse si se necesita
+                'calmar_ratio': abs(total_pnl / max_drawdown) if max_drawdown != 0 else 0,
                 'profit_factor': profit_factor,
-                'symbol': symbol,
+                'avg_trade_pnl': total_pnl / total_trades if total_trades > 0 else 0,
+                'avg_win_pnl': gross_profit / winning_trades if winning_trades > 0 else 0,
+                'avg_loss_pnl': -gross_loss / losing_trades if losing_trades > 0 else 0,
+                'largest_win': max([t['pnl'] for t in trades]) if trades else 0,
+                'largest_loss': min([t['pnl'] for t in trades]) if trades else 0,
                 'trades': trades,
                 'equity_curve': equity_curve,
                 'trailing_stop_exits': trailing_stop_exits,
                 'take_profit_exits': take_profit_exits,
-                'trailing_stop_ratio': (trailing_stop_exits / total_trades * 100) if total_trades > 0 else 0
+                'trailing_stop_ratio': (trailing_stop_exits / total_trades) if total_trades > 0 else 0,
+                'compensated_trades': 0,  # No aplica para esta estrategia
+                'compensation_success_rate': 0,  # No aplica para esta estrategia
+                'total_compensation_pnl': 0,  # No aplica para esta estrategia
+                'avg_compensation_pnl': 0,  # No aplica para esta estrategia
+                'compensation_ratio': 0.0,  # No aplica para esta estrategia
+                'adjusted_total_pnl': total_pnl,  # No hay compensación en esta estrategia
+                'compensation_trades_data': [],  # No aplica para esta estrategia
+                'cagr': total_pnl / 10000.0,  # Crecimiento anual simplificado
+                'volatility': np.std([t['pnl_percent'] for t in trades]) if trades else 0,
             }
 
         except Exception as e:
-            print(f"Error ejecutando estrategia Solana4HTrailingStrategy: {e}")
+            self.logger.error(f"Error ejecutando estrategia HeikinAshiVolumenSarStrategy: {e}")
+            import traceback
+            traceback.print_exc()
+            
             return {
                 'total_trades': 0,
                 'winning_trades': 0,
@@ -250,7 +298,25 @@ class Solana4HTrailingStrategy:
                 'sharpe_ratio': 0.0,
                 'symbol': symbol,
                 'trades': [],
+                'equity_curve': [10000.0],
                 'trailing_stop_exits': 0,
                 'take_profit_exits': 0,
-                'trailing_stop_ratio': 0.0
+                'trailing_stop_ratio': 0.0,
+                'compensated_trades': 0,
+                'compensation_success_rate': 0,
+                'total_compensation_pnl': 0,
+                'avg_compensation_pnl': 0,
+                'compensation_ratio': 0.0,
+                'adjusted_total_pnl': 0.0,
+                'compensation_trades_data': [],
+                'sortino_ratio': 0.0,
+                'calmar_ratio': 0.0,
+                'profit_factor': 0.0,
+                'avg_trade_pnl': 0.0,
+                'avg_win_pnl': 0.0,
+                'avg_loss_pnl': 0.0,
+                'largest_win': 0.0,
+                'largest_loss': 0.0,
+                'cagr': 0.0,
+                'volatility': 0.0,
             }

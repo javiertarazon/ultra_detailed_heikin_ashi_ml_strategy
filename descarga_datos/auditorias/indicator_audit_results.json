@@ -1,0 +1,10 @@
+{
+  "summary": {
+    "strategies_analyzed": 10,
+    "indicators_found": 9,
+    "validations_passed": 4,
+    "total_validations": 5,
+    "issues_found": 0,
+    "recommendations": []
+  }
+}

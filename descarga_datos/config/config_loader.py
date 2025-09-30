@@ -37,6 +37,21 @@ class BacktestingConfig:
     slippage: float = 0.05
     strategies: Dict[str, bool] = field(default_factory=dict)
     strategy_paths: Dict[str, List[str]] = field(default_factory=dict)
+    optimized_parameters: Dict[str, Any] = field(default_factory=dict)  # Parámetros optimizados por símbolo/timeframe
+    # Nueva configuración de calidad de datos (opcional)
+    data_quality: Any = None  # Se llenará con DataQualityConfig si existe en YAML
+
+@dataclass
+class GapFillConfig:
+    enabled: bool = False
+    method: str = "forward"  # forward | nan
+    max_consecutive: int = 6
+
+@dataclass
+class DataQualityConfig:
+    min_coverage_pct: float = 95.0
+    auto_retry: bool = True
+    gap_fill: GapFillConfig = field(default_factory=GapFillConfig)
 
 @dataclass
 class IndicatorsConfig:
@@ -98,9 +113,12 @@ class LiveTradingConfig:
     active_strategy: str = "Solana4HRiskManaged"
     risk_per_trade: float = 0.01
     max_positions: int = 5
+    max_positions_per_symbol: int = 1
     update_interval_seconds: int = 5
     initial_history_bars: int = 1000
     apply_risk_management: bool = True
+    validation: Dict[str, Any] = field(default_factory=dict)
+    strategy_mapping: Dict[str, Any] = field(default_factory=dict)
 
     # Configuración específica por modo
     mt5_symbols: List[str] = field(default_factory=lambda: ["EURUSD", "USDJPY", "XAUUSD"])
@@ -209,8 +227,27 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Config:
 
         # Cargar configuración de backtesting
         if 'backtesting' in yaml_data:
-            bt_data = yaml_data['backtesting']
-            config.backtesting = BacktestingConfig(**bt_data)
+            raw_bt = dict(yaml_data['backtesting'])
+            dq_section = raw_bt.pop('data_quality', None)
+            # Filtrar solo campos soportados por BacktestingConfig para evitar errores si hay claves extra
+            allowed_bt_fields = {f.name for f in BacktestingConfig.__dataclass_fields__.values()}
+            filtered_bt = {k: v for k, v in raw_bt.items() if k in allowed_bt_fields}
+            bt_cfg = BacktestingConfig(**filtered_bt)
+            # Asignar campos adicionales que estén en raw_bt pero sean dicts relevantes (p.ej. optimized_parameters)
+            if 'optimized_parameters' in raw_bt:
+                bt_cfg.optimized_parameters = raw_bt['optimized_parameters'] or {}
+            if dq_section:
+                try:
+                    gap_section = dq_section.get('gap_fill', {}) if isinstance(dq_section, dict) else {}
+                    gap_cfg = GapFillConfig(**gap_section) if gap_section else GapFillConfig()
+                    bt_cfg.data_quality = DataQualityConfig(
+                        min_coverage_pct=dq_section.get('min_coverage_pct', 95),
+                        auto_retry=dq_section.get('auto_retry', True),
+                        gap_fill=gap_cfg
+                    )
+                except Exception:
+                    bt_cfg.data_quality = None
+            config.backtesting = bt_cfg
 
         # Cargar configuración de indicadores
         if 'indicators' in yaml_data:
@@ -241,6 +278,22 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Config:
         if 'reports' in yaml_data:
             reports_data = yaml_data['reports']
             config.reports = ReportsConfig(**reports_data)
+
+        # Cargar configuración de trading en vivo (opcional)
+        if 'live_trading' in yaml_data:
+            try:
+                lt_raw = dict(yaml_data['live_trading'])
+                strategy_mapping = lt_raw.pop('strategy_mapping', {})
+                validation = lt_raw.pop('validation', {})
+                # Filtrar campos a los definidos en LiveTradingConfig
+                allowed_lt_fields = {f.name for f in LiveTradingConfig.__dataclass_fields__.values()}
+                filtered_lt = {k: v for k, v in lt_raw.items() if k in allowed_lt_fields}
+                lt_cfg = LiveTradingConfig(**filtered_lt)
+                lt_cfg.strategy_mapping = strategy_mapping
+                lt_cfg.validation = validation
+                config.live_trading = lt_cfg
+            except Exception as e:
+                print(f"[CONFIG] ⚠️  Error cargando sección live_trading (se ignora): {e}")
 
         return config
 

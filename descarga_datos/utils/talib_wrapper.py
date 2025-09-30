@@ -83,24 +83,29 @@ class TalibWrapper:
 
     @staticmethod
     def SAR(high, low, acceleration=0.02, maximum=0.2):
-        """Parabolic SAR - Implementación simplificada"""
+        """Parabolic SAR - Implementación optimizada con numpy"""
         high = pd.Series(high)
         low = pd.Series(low)
 
-        sar = pd.Series(index=high.index, dtype=float)
-        sar.iloc[0] = low.iloc[0]  # Inicializar con el primer low
+        # Usar numpy arrays para mejor performance
+        high_arr = high.values
+        low_arr = low.values
 
-        for i in range(1, len(high)):
-            if high.iloc[i-1] > sar.iloc[i-1]:
+        sar = np.zeros(len(high_arr), dtype=float)
+        sar[0] = low_arr[0]  # Inicializar con el primer low
+
+        # Vectorizar el cálculo donde sea posible
+        for i in range(1, len(high_arr)):
+            if high_arr[i-1] > sar[i-1]:
                 # Tendencia alcista
-                sar.iloc[i] = sar.iloc[i-1] + acceleration * (high.iloc[i-1] - sar.iloc[i-1])
-                sar.iloc[i] = min(sar.iloc[i], low.iloc[i])  # No puede estar por encima del low actual
+                sar[i] = sar[i-1] + acceleration * (high_arr[i-1] - sar[i-1])
+                sar[i] = min(sar[i], low_arr[i])  # No puede estar por encima del low actual
             else:
                 # Tendencia bajista
-                sar.iloc[i] = sar.iloc[i-1] - acceleration * (sar.iloc[i-1] - low.iloc[i-1])
-                sar.iloc[i] = max(sar.iloc[i], high.iloc[i])  # No puede estar por debajo del high actual
+                sar[i] = sar[i-1] - acceleration * (sar[i-1] - low_arr[i-1])
+                sar[i] = max(sar[i], high_arr[i])  # No puede estar por debajo del high actual
 
-        return sar
+        return pd.Series(sar, index=high.index)
 
 # Crear instancia singleton para usar como talib
 talib = TalibWrapper()

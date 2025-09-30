@@ -74,7 +74,7 @@ class AdvancedBacktester:
         self.risk_manager = AdvancedRiskManager()
         self.compensation_enabled = True
 
-    def run(self, strategy, data: pd.DataFrame, symbol: str) -> Dict:
+    def run(self, strategy, data: pd.DataFrame, symbol: str, timeframe: str = '1d') -> Dict:
         """
         Ejecuta el backtesting invocando la lógica interna de la estrategia.
 
@@ -82,11 +82,12 @@ class AdvancedBacktester:
             strategy: Instancia de la estrategia a probar (debe tener un método `run`).
             data: DataFrame con datos OHLCV.
             symbol: Símbolo del activo.
+            timeframe: Timeframe de los datos (ej: '1d', '1h', '4h').
 
         Returns:
             Diccionario con resultados del backtesting.
         """
-        self.logger.info(f"Iniciando backtesting para {symbol} con estrategia {type(strategy).__name__}")
+        self.logger.info(f"Iniciando backtesting para {symbol} {timeframe} con estrategia {type(strategy).__name__}")
         # Ajuste dinámico de comisión y slippage según volatilidad (ATR/Precio)
         if 'atr' in data.columns and 'close' in data.columns:
             rel_atr = data['atr'] / data['close']
@@ -101,7 +102,7 @@ class AdvancedBacktester:
                 raise AttributeError(f"La estrategia {type(strategy).__name__} no tiene un método `run`.")
 
             # Ejecutar la lógica de la estrategia, que se encarga de todo el proceso.
-            strategy_results = strategy.run(data=data, symbol=symbol)
+            strategy_results = strategy.run(data=data, symbol=symbol, timeframe=timeframe)
             
             self.logger.info(f"Estrategia devolvió: {type(strategy_results)}, keys: {list(strategy_results.keys()) if isinstance(strategy_results, dict) else 'N/A'}")
 
@@ -250,9 +251,22 @@ class AdvancedBacktester:
         max_drawdown = self._calculate_max_drawdown(equity_curve)
         sharpe_ratio = self._calculate_sharpe_ratio(equity_curve)
         sortino_ratio = self._calculate_sortino_ratio(equity_curve)
-        
-        annual_return = (equity_curve.iloc[-1] / equity_curve.iloc[0] - 1) * 100 if not equity_curve.empty else 0
-        calmar_ratio = annual_return / abs(max_drawdown) if max_drawdown != 0 else 0
+
+        # Calcular retorno anualizado usando media geométrica (CORRECCIÓN)
+        if not equity_curve.empty and len(equity_curve) > 1:
+            returns = equity_curve.pct_change().dropna()
+            if len(returns) > 0:
+                gmean_daily_return = np.exp(np.log(returns + 1).sum() / len(returns)) - 1
+                annual_trading_days = 252
+                annualized_return = (1 + gmean_daily_return) ** annual_trading_days - 1
+                annual_return_pct = annualized_return * 100  # Para mantener compatibilidad
+            else:
+                annual_return_pct = 0.0
+        else:
+            annual_return_pct = 0.0
+
+        # Calmar Ratio corregido: usa retorno anualizado, no retorno total
+        calmar_ratio = annual_return_pct / max_drawdown if max_drawdown != 0 else 0
 
         # --- Métricas de P&L ---
         gross_profit = sum(t.get('pnl', 0) for t in trades if t.get('pnl', 0) > 0)
@@ -277,7 +291,7 @@ class AdvancedBacktester:
 
         # --- Métricas Adicionales: CAGR y Volatilidad ---
         # CAGR como retorno anualizado en porcentaje
-        cagr = annual_return
+        cagr = annual_return_pct
         # Volatilidad de retornos por trade en porcentaje
         try:
             returns = equity_curve.pct_change().dropna()
@@ -338,46 +352,82 @@ class AdvancedBacktester:
         return result
 
     def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
-        """Calcula el drawdown máximo"""
+        """Calcula el drawdown máximo como porcentaje"""
         if equity_curve.empty:
             return 0.0
 
         peak = equity_curve.expanding().max()
-        drawdown = equity_curve - peak
-        max_drawdown = drawdown.min()
+        # Evitar división por cero
+        peak = peak.replace(0, np.nan).ffill().fillna(1e-8)
 
-        return abs(max_drawdown)
+        # Calcular drawdown como porcentaje del pico
+        drawdown_pct = (equity_curve - peak) / peak * 100
+
+        # El drawdown máximo es el valor más negativo (pérdida máxima)
+        max_drawdown_pct = drawdown_pct.min()
+
+        # Limitar a 100% máximo (pérdida total) para valores realistas
+        # Pero permitir >100% para mostrar severidad en backtesting
+        return abs(max_drawdown_pct)
 
     def _calculate_sharpe_ratio(self, equity_curve: pd.Series, risk_free_rate: float = 0.02) -> float:
-        """Calcula el ratio de Sharpe"""
+        """Calcula el ratio de Sharpe CORREGIDO usando media geométrica"""
         if len(equity_curve) < 2:
             return 0.0
 
+        # Calcular retornos diarios
         returns = equity_curve.pct_change().dropna()
-        if returns.std() == 0:
+        if len(returns) == 0 or returns.std() == 0:
             return 0.0
 
-        excess_returns = returns - risk_free_rate / 252  # Daily risk-free rate
-        sharpe = excess_returns.mean() / returns.std() * np.sqrt(252)  # Annualized
+        # Media geométrica de retornos diarios (CORRECCIÓN CRÍTICA)
+        gmean_daily_return = np.exp(np.log(returns + 1).sum() / len(returns)) - 1
 
+        # Retorno anualizado (asumiendo ~252 días de trading)
+        annual_trading_days = 252
+        annualized_return = (1 + gmean_daily_return) ** annual_trading_days - 1
+
+        # Volatilidad anualizada
+        volatility_annualized = returns.std() * np.sqrt(annual_trading_days)
+
+        # Sharpe Ratio correcto: (Retorno_Anualizado - Tasa_Libre) / Volatilidad_Anualizada
+        if volatility_annualized == 0:
+            return 0.0
+
+        sharpe = (annualized_return - risk_free_rate) / volatility_annualized
         return sharpe
 
     def _calculate_sortino_ratio(self, equity_curve: pd.Series, risk_free_rate: float = 0.02) -> float:
-        """Calcula el ratio de Sortino"""
+        """Calcula el ratio de Sortino CORREGIDO usando media geométrica"""
         if len(equity_curve) < 2:
             return 0.0
 
         returns = equity_curve.pct_change().dropna()
-        negative_returns = returns[returns < 0]
-
-        if negative_returns.std() == 0:
+        if len(returns) == 0:
             return 0.0
 
-        excess_returns = returns - risk_free_rate / 252
-        downside_deviation = negative_returns.std() * np.sqrt(252)
+        # Retornos negativos para downside deviation
+        negative_returns = returns[returns < 0]
 
-        sortino = excess_returns.mean() / downside_deviation if downside_deviation > 0 else 0
+        # Media geométrica de retornos diarios (CORRECCIÓN CRÍTICA)
+        gmean_daily_return = np.exp(np.log(returns + 1).sum() / len(returns)) - 1
 
+        # Retorno anualizado
+        annual_trading_days = 252
+        annualized_return = (1 + gmean_daily_return) ** annual_trading_days - 1
+
+        # Downside deviation anualizada
+        if len(negative_returns) == 0:
+            return float('inf')  # No hay retornos negativos
+
+        downside_deviation_daily = negative_returns.std()
+        downside_deviation_annualized = downside_deviation_daily * np.sqrt(annual_trading_days)
+
+        # Sortino Ratio correcto: (Retorno_Anualizado - Tasa_Libre) / Downside_Deviation_Anualizada
+        if downside_deviation_annualized == 0:
+            return float('inf')
+
+        sortino = (annualized_return - risk_free_rate) / downside_deviation_annualized
         return sortino
 
     def _calculate_calmar_ratio(self, total_return: float, max_drawdown: float) -> float:

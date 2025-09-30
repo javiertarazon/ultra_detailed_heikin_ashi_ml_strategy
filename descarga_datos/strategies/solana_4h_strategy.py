@@ -27,10 +27,10 @@ class Solana4HStrategy:
         ha_high = pd.Series([max(h, o, c) for h, o, c in zip(df['high'], ha_open, ha_close)], index=df.index)
         ha_low = pd.Series([min(l, o, c) for l, o, c in zip(df['low'], ha_open, ha_close)], index=df.index)
         return pd.DataFrame({
-            'ha_open': ha_open,
-            'ha_high': ha_high,
-            'ha_low': ha_low,
-            'ha_close': ha_close
+            'HA_Open': ha_open,
+            'HA_High': ha_high,
+            'HA_Low': ha_low,
+            'HA_Close': ha_close
         }, index=df.index)
 
     def calculate_signals(self, df):
@@ -40,8 +40,8 @@ class Solana4HStrategy:
         # Calcular Heiken Ashi
         ha_df = self.calculate_heikin_ashi(df)
         df = df.copy()
-        df['ha_open'] = ha_df['ha_open']
-        df['ha_close'] = ha_df['ha_close']
+        df['ha_open'] = ha_df['HA_Open']
+        df['ha_close'] = ha_df['HA_Close']
 
         # Media móvil de volumen
         df['volume_sma'] = talib.SMA(df['volume'], timeperiod=self.volume_sma_period)
@@ -60,7 +60,7 @@ class Solana4HStrategy:
         risk_amount = capital * 0.02  # 2% de riesgo por trade
         return risk_amount / abs(entry_price - stop_loss)
 
-    def run(self, data, symbol):
+    def run(self, data, symbol, timeframe=None, **kwargs):
         """
         Ejecuta la estrategia y devuelve los resultados del backtesting
         """
@@ -137,7 +137,8 @@ class Solana4HStrategy:
             total_trades = len(trades)
             winning_trades = len([t for t in trades if t['pnl'] > 0])
             losing_trades = total_trades - winning_trades
-            win_rate = (winning_trades / total_trades * 100.0) if total_trades > 0 else 0.0
+            # win_rate en formato decimal (0-1)
+            win_rate = (winning_trades / total_trades) if total_trades > 0 else 0.0
             total_pnl = sum(t['pnl'] for t in trades)
 
             # Calcular equity curve y max drawdown
@@ -154,7 +155,11 @@ class Solana4HStrategy:
                     dd = peak - eq
                     if dd > max_dd:
                         max_dd = dd
-                max_drawdown = -max_dd
+                # max_dd es la pérdida máxima absoluta; representamos drawdown como porcentaje negativo relativo al pico
+                if peak > 0:
+                    max_drawdown = -(max_dd / peak * 100.0)
+                else:
+                    max_drawdown = 0.0
             else:
                 max_drawdown = 0.0
                 equity_curve = [10000.0]

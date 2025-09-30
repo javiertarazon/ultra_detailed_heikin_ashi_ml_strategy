@@ -195,16 +195,19 @@ class TechnicalIndicators:
             self.logger.error(f"Error calculando comparación de velas HA: {e}")
             return pd.Series(['normal'] * len(ha_df))
     
-    def calculate_atr(self, df: pd.DataFrame) -> pd.Series:
+    def calculate_atr(self, df: pd.DataFrame, period: int = None) -> pd.Series:
         """Calculate Average True Range (ATR)."""
         try:
+            # Usar período proporcionado o el de configuración
+            atr_period = period if period is not None else self.atr_period
+            
             high_low = df['high'] - df['low']
             high_close = np.abs(df['high'] - df['close'].shift(1))
             low_close = np.abs(df['low'] - df['close'].shift(1))
             
             tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
             
-            atr = tr.ewm(span=self.atr_period, adjust=False).mean()
+            atr = tr.ewm(span=atr_period, adjust=False).mean()
             
             return atr.fillna(0)
         except Exception as e:

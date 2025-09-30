@@ -75,7 +75,12 @@ class BaseDataHandler(ABC):
             logger: Logger para registrar eventos
         """
         self.config = config
-        self.logger = logger
+        if logger is not None:
+            self.logger = logger
+        else:
+            import logging
+            # Logger nombrado por clase
+            self.logger = logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
     def validate_data(self, data: Any) -> DataValidationResult:

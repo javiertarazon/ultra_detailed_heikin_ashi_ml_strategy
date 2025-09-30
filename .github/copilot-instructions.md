@@ -7,13 +7,74 @@
 - Además, eres un programador experto en JavaScript, Python, MQL5 y Pine Script, así como en desarrollo de bots de trading y machine learning.
 - Tu enfoque debe ser siempre profesional, resolviendo los requerimientos con la máxima calidad y eficiencia, aplicando las mejores prácticas del sector.
 
+## 🚨 **REGLAS CRÍTICAS DE DESARROLLO v2.6 - OBLIGATORIO CUMPLIR**
+
+### ⛔ **PROHIBIDO ABSOLUTO - MÓDULOS PROTEGIDOS**
+> **NO MODIFICAR BAJO NINGUNA CIRCUNSTANCIA** - Sistema testado y validado completamente
+
+#### **🔒 Archivos PROTEGIDOS (NO TOCAR):**
+```
+❌ NUNCA MODIFICAR:
+├── backtesting/backtesting_orchestrator.py  # 🔒 Orquestador TESTADO
+├── backtesting/backtester.py               # 🔒 Motor backtest VALIDADO  
+├── main.py                                 # 🔒 Punto entrada FUNCIONAL
+├── dashboard.py                            # 🔒 Dashboard OPERATIVO
+├── utils/storage.py                        # 🔒 Base datos CORREGIDA
+├── utils/logger.py                         # 🔒 Logging ESTABLE
+├── utils/dashboard.py                      # 🔒 Funciones TESTEADAS
+├── core/downloader.py                      # 🔒 Descargador ROBUSTO
+├── core/mt5_downloader.py                  # 🔒 MT5 FUNCIONAL
+├── core/cache_manager.py                   # 🔒 Cache OPTIMIZADO
+├── config/config_loader.py                 # 🔒 Config VALIDADO
+├── config/config.py                        # 🔒 Config ESTABLE
+└── tests/test_system_integrity.py          # 🔒 Tests COMPLETOS
+```
+
+#### **✅ PERMITIDO Modificar SOLO:**
+```
+✅ MODIFICACIÓN AUTORIZADA:
+├── strategies/                             # ✅ Agregar/optimizar estrategias
+├── config/config.yaml                      # ✅ Cambiar configuración
+├── indicators/technical_indicators.py      # ✅ Agregar indicadores
+└── risk_management/risk_management.py      # ✅ Ajustar riesgo
+```
+
+### 🎯 **Metodología ÚNICA para Cambios:**
+
+#### **Para Estrategias Nuevas (ÚNICO método permitido):**
+1. **Crear nuevo archivo** en `strategies/`
+2. **Registrar UNA línea** en `backtesting_orchestrator.py` 
+3. **Activar en config.yaml** cambiando `true/false`
+4. **Ejecutar tests obligatorios**
+
+#### **NUNCA hacer:**
+- ❌ Modificar estrategias existentes directamente
+- ❌ Cambiar lógica de backtester o dashboard  
+- ❌ Alterar sistema de storage o logging
+- ❌ Modificar archivos principales del core
+
+### 🧪 **Validación OBLIGATORIA después de CUALQUIER cambio:**
+```bash
+# Tests REQUERIDOS:
+python descarga_datos/validate_modular_system.py
+python -m pytest descarga_datos/tests/test_system_integrity.py -v
+python descarga_datos/main.py  # Debe funcionar completamente
+```
+
+### ⚠️ **Si sistema falla tras cambios:**
+```bash
+# Protocolo de emergencia:
+git checkout HEAD -- <archivos_modificados>
+python descarga_datos/validate_modular_system.py
+```
+
 ## 🏗️ Arquitectura Modular del Sistema
 
 ### 🎯 **Núcleo del Sistema Modular**
 Todo el procesamiento principal ocurre en `descarga_datos/` con arquitectura **100% modular**:
 
 #### **🔄 Componentes Principales**
-- **`run_backtesting_batches.py`**: 🚀 **Backtester principal** - Punto de entrada principal con carga dinámica
+- **`backtesting/backtesting_orchestrator.py`**: 🚀 **Backtester principal** - Punto de entrada principal con carga dinámica
 - **`main.py`**: 📊 Punto de entrada alternativo para operaciones específicas
 - **`dashboard.py`**: 📈 Dashboard de visualización de resultados
 - **`validate_modular_system.py`**: ✅ Validador del sistema modular
@@ -78,7 +139,7 @@ strategies:
 #### **🚀 Backtesting Principal (Recomendado)**
 ```bash
 cd descarga_datos
-python run_backtesting_batches.py
+python backtesting/backtesting_orchestrator.py
 ```
 - Descarga datos automáticamente desde CCXT/MT5
 - Carga dinámicamente TODAS las estrategias activas
@@ -123,7 +184,7 @@ class MiEstrategia:
 
 #### **Paso 2: Registrar en Backtester**
 ```python
-# En run_backtesting_batches.py, agregar UNA línea:
+# En backtesting/backtesting_orchestrator.py, agregar UNA línea:
 strategy_classes = {
     'MiEstrategia': ('strategies.mi_estrategia', 'MiEstrategia'),
 }
@@ -256,7 +317,7 @@ python validate_modular_system.py
 - **`CHANGELOG.md`**: Historial de cambios y versiones
 
 ### 🏗️ **Arquitectura de Referencia**
-- **`run_backtesting_batches.py`**: Ejemplo de carga dinámica
+- **`backtesting/backtesting_orchestrator.py`**: Ejemplo de carga dinámica
 - **`config/config.yaml`**: Estructura de configuración completa
 - **`strategies/solana_4h_trailing_strategy.py`**: Ejemplo de estrategia completa
 - **`validate_modular_system.py`**: Patrón de validación
@@ -271,7 +332,7 @@ python validate_modular_system.py
 code descarga_datos/strategies/mi_estrategia.py
 
 # Registrar en backtester (1 línea)
-edit run_backtesting_batches.py
+edit backtesting/backtesting_orchestrator.py
 
 # Activar en configuración
 edit config/config.yaml
@@ -286,7 +347,7 @@ python validate_modular_system.py
 ### 3. **Ejecutar Backtesting**
 ```bash
 cd descarga_datos
-python run_backtesting_batches.py
+python backtesting/backtesting_orchestrator.py
 ```
 
 ### 4. **Analizar Resultados**

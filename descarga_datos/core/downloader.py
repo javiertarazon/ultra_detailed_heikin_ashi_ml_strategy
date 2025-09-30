@@ -6,7 +6,7 @@ manejo de errores, normalización y almacenamiento múltiple.
 """
 import ccxt
 import ccxt.async_support as ccxt_async
-import asyncio
+import asyncio  # necesario para capturar asyncio.CancelledError en shutdown
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -19,6 +19,7 @@ import os
 
 from .mt5_downloader import MT5Downloader
 from utils.storage import DataStorage, save_to_csv
+from utils.market_sessions import get_asset_class, expected_candles_for_range, timeframe_to_seconds
 from utils.normalization import DataNormalizer
 
 class AdvancedDataDownloader:
@@ -42,6 +43,145 @@ class AdvancedDataDownloader:
         self.max_retries = getattr(config, 'max_retries', 3)
         self.retry_delay = getattr(config, 'retry_delay', 5)
         self.max_workers = 4  # Para paralelización
+        # Parámetros de calidad de datos (config opcional)
+        dq_cfg = getattr(getattr(config, 'backtesting', None), 'data_quality', None)
+        self.min_coverage_pct = getattr(dq_cfg, 'min_coverage_pct', 95) if dq_cfg else 95
+        self.enable_gap_fill = getattr(dq_cfg, 'gap_fill', False) if dq_cfg else False
+        self.auto_retry = getattr(dq_cfg, 'auto_retry', True) if dq_cfg else True
+        # Exchange activo preferido (prioridad en fallback)
+        self.active_exchange = getattr(config, 'active_exchange', None)
+
+    # ===================== SOPORTE Fallback Exchanges =====================
+    def _get_exchange_priority_list(self) -> List[str]:
+        """Devuelve la lista ordenada de exchanges a intentar.
+
+        Prioriza el exchange configurado como activo si está disponible,
+        seguido por el resto en el orden de self.ccxt_exchanges.
+        """
+        available = list(self.ccxt_exchanges.keys())
+        if self.active_exchange and self.active_exchange in available:
+            return [self.active_exchange] + [e for e in available if e != self.active_exchange]
+        return available
+
+    def _is_retryable_exchange_error(self, e: Exception) -> bool:
+        """Clasifica errores que justifican intentar un fallback a otro exchange."""
+        import ccxt
+        msg = str(e).lower()
+        retryable_substrings = [
+            '403', 'forbidden', 'ddos', 'blocked', 'country', 'unavailable', 'temporarily', '429'
+        ]
+        if any(s in msg for s in retryable_substrings):
+            return True
+        retryable_types = (
+            getattr(ccxt, 'DDoSProtection', Exception),
+            getattr(ccxt, 'ExchangeNotAvailable', Exception),
+            getattr(ccxt, 'NetworkError', Exception),
+            getattr(ccxt, 'RequestTimeout', Exception),
+            getattr(ccxt, 'PermissionDenied', Exception)
+        )
+        return isinstance(e, retryable_types)
+
+    async def _fetch_crypto_paginated(self, exchange, exchange_name: str, symbol: str, timeframe: str,
+                                      start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """Realiza la descarga paginada para un (exchange, symbol). Se separa para reutilizar en fallback."""
+        start_ms = int(pd.Timestamp(start_date).timestamp() * 1000)
+        end_ms = int(pd.Timestamp(end_date).timestamp() * 1000)
+        frame_sec = timeframe_to_seconds(timeframe)
+        frame_ms = frame_sec * 1000
+        limit = 1000
+        since = start_ms
+        all_rows: List[List[Any]] = []
+        last_progress_ts = None
+        stalls = 0
+
+        while since < end_ms:
+            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
+            if not ohlcv:
+                self.logger.warning(f"{symbol} sin datos adicionales (paginación detenida) [{exchange_name}]")
+                break
+            if last_progress_ts is not None and ohlcv[-1][0] <= last_progress_ts:
+                stalls += 1
+                if stalls >= 2:
+                    self.logger.warning(f"{symbol} paginación estancada, se detiene [{exchange_name}]")
+                    break
+            else:
+                stalls = 0
+            all_rows.extend(ohlcv)
+            last_progress_ts = ohlcv[-1][0]
+            since = last_progress_ts + frame_ms
+            if last_progress_ts >= end_ms:
+                break
+            await asyncio.sleep(0.05)
+
+        if not all_rows:
+            return None
+        df = pd.DataFrame(all_rows, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df = df[(df['timestamp'] >= pd.Timestamp(start_date)) & (df['timestamp'] <= pd.Timestamp(end_date))]
+        df = df.drop_duplicates(subset='timestamp').sort_values('timestamp').reset_index(drop=True)
+        # Marcar exchange origen (atributo para metadata; no guardamos la columna en tabla OHLCV)
+        df.attrs['source_exchange'] = exchange_name
+        return df
+
+    def _metadata_covers_range(self, symbol: str, timeframe: str, start_ts: int, end_ts: int) -> bool:
+        """Verifica mediante metadata si se puede reutilizar completamente el dataset existente.
+
+        Condiciones:
+          - Existe metadata
+          - coverage_pct >= min_coverage_pct
+          - start_ts >= stored_start_ts y end_ts <= stored_end_ts (el rango solicitado está contenido)
+        """
+        meta = self.storage.get_metadata(symbol, timeframe)
+        if not meta:
+            return False
+        if meta.get('coverage_pct', 0) < self.min_coverage_pct:
+            return False
+        stored_start = meta.get('start_ts') or 0
+        stored_end = meta.get('end_ts') or 0
+        return stored_start <= start_ts and stored_end >= end_ts
+
+    def _mt5_data_covers_range(self, symbol: str, timeframe: str, start_date: str, end_date: str) -> tuple[bool, Optional[pd.DataFrame]]:
+        """Verifica si existen datos MT5 suficientes para el rango solicitado.
+
+        Returns:
+            tuple: (covers_range, dataframe) - True si cubre el rango completo, False si necesita descarga
+        """
+        try:
+            # Verificar metadata primero (si existe)
+            start_ts = int(pd.Timestamp(start_date).timestamp())
+            end_ts = int(pd.Timestamp(end_date).timestamp())
+
+            meta = self.storage.get_metadata(symbol, timeframe)
+            if meta and meta.get('coverage_pct', 0) >= self.min_coverage_pct:
+                stored_start = meta.get('start_ts') or 0
+                stored_end = meta.get('end_ts') or 0
+                if stored_start <= start_ts and stored_end >= end_ts:
+                    # Metadata indica cobertura completa, intentar cargar desde DB
+                    df = self.get_data_from_db(symbol, timeframe, start_date, end_date)
+                    if df is not None and not df.empty:
+                        actual_records = len(df)
+                        expected_records = self._estimate_expected_records(symbol, timeframe, start_date, end_date)
+                        actual_coverage = (actual_records / expected_records) * 100 if expected_records > 0 else 0
+
+                        if actual_coverage >= self.min_coverage_pct:
+                            self.logger.info(f"💾 MT5 Cache HIT {symbol}: {actual_records} velas existentes (>= {self.min_coverage_pct:.0f}% cobertura)")
+                            return True, df
+
+            return False, None
+
+        except Exception as e:
+            self.logger.warning(f"Error verificando datos MT5 existentes para {symbol}: {e}")
+            return False, None
+
+    def _estimate_expected_records(self, symbol: str, timeframe: str, start_date: str, end_date: str) -> int:
+        """Estima el número esperado de registros para un rango temporal"""
+        from utils.market_sessions import expected_candles_for_range, get_asset_class
+
+        asset_class = get_asset_class(symbol)
+        start_ts = pd.Timestamp(start_date)
+        end_ts = pd.Timestamp(end_date)
+
+        return expected_candles_for_range(start_ts, end_ts, timeframe, asset_class)
 
     async def initialize(self) -> bool:
         """Inicializa todas las conexiones"""
@@ -92,6 +232,30 @@ class AdvancedDataDownloader:
                 success_count += 1
                 self.logger.info("Binance configurado")
 
+            # Configurar KuCoin
+            if 'kucoin' in self.config.exchanges and self.config.exchanges['kucoin'].enabled:
+                exchange_config = self.config.exchanges['kucoin']
+                self.ccxt_exchanges['kucoin'] = ccxt_async.kucoin({
+                    'apiKey': exchange_config.api_key or '',
+                    'secret': exchange_config.api_secret or '',
+                    'sandbox': exchange_config.sandbox,
+                    'timeout': exchange_config.timeout,
+                })
+                success_count += 1
+                self.logger.info("KuCoin configurado")
+
+            # Configurar OKX
+            if 'okx' in self.config.exchanges and self.config.exchanges['okx'].enabled:
+                exchange_config = self.config.exchanges['okx']
+                self.ccxt_exchanges['okx'] = ccxt_async.okx({
+                    'apiKey': exchange_config.api_key or '',
+                    'secret': exchange_config.api_secret or '',
+                    'sandbox': exchange_config.sandbox,
+                    'timeout': exchange_config.timeout,
+                })
+                success_count += 1
+                self.logger.info("OKX configurado")
+
             return success_count > 0
 
         except Exception as e:
@@ -119,24 +283,78 @@ class AdvancedDataDownloader:
 
         self.logger.info(f"Descargando {len(symbols)} símbolos en paralelo...")
 
-        # Crear tareas para paralelización
-        tasks = []
-        for symbol in symbols:
-            task = self._download_symbol_with_batches(symbol, timeframe, start_date, end_date)
-            tasks.append(task)
+        symbol_data: Dict[str, pd.DataFrame] = {}
 
-        # Ejecutar en paralelo
+        # Intentar usar metadata + caché (coverage session-aware) antes de descargar
+        start_ts_dt = pd.Timestamp(start_date)
+        end_ts_dt = pd.Timestamp(end_date)
+        start_ts_int = int(start_ts_dt.timestamp())
+        end_ts_int = int(end_ts_dt.timestamp())
+        for symbol in symbols:
+            # Para timeframe 1h, primero intentar cargar desde CSV sintético
+            if timeframe == '1h':
+                csv_df = await self.get_data_from_csv(symbol, timeframe, start_date, end_date)
+                if csv_df is not None and not csv_df.empty:
+                    self.logger.info(f"📄 CSV HIT {symbol}: {len(csv_df)} velas sintéticas de 1h")
+                    symbol_data[symbol] = csv_df
+                    continue
+
+            # Primero evaluar metadata para decidir si se puede saltar descarga
+            if self._metadata_covers_range(symbol, timeframe, start_ts_int, end_ts_int):
+                cached_df = await self.get_data_from_db(symbol, timeframe, start_date, end_date)
+                if cached_df is not None and not cached_df.empty:
+                    self.logger.info(f"💾 Metadata HIT {symbol}: reuse completo (>= {self.min_coverage_pct}% cobertura)")
+                    symbol_data[symbol] = cached_df
+                    continue
+                # Si metadata dice que hay cobertura pero la consulta falla, forzar descarga
+                self.logger.warning(f"⚠️ Metadata indica cobertura pero no se pudo cargar datos para {symbol}, se descargará")
+            else:
+                # Comprobar caché directamente en caso de no cumplir metadata (quizá metadata inexistente o rango diferente)
+                cached_df = await self.get_data_from_db(symbol, timeframe, start_date, end_date)
+                if cached_df is not None and not cached_df.empty:
+                    asset_class = get_asset_class(symbol)
+                    expected = expected_candles_for_range(start_ts_dt, end_ts_dt, timeframe, asset_class)
+                    actual = len(cached_df)
+                    coverage = (actual / expected * 100) if expected else 100
+                    if coverage >= self.min_coverage_pct:
+                        self.logger.info(f"💾 Cache HIT {symbol}: {actual} velas (coverage {coverage:.1f}% >= {self.min_coverage_pct}%)")
+                        symbol_data[symbol] = cached_df
+                        continue
+                    else:
+                        self.logger.info(f"🆕 Cache PARTIAL {symbol}: {coverage:.1f}% < {self.min_coverage_pct}% -> re-descarga")
+                else:
+                    self.logger.info(f"🆕 Cache MISS {symbol}: se descargará")
+
+        symbols_to_download = [s for s in symbols if s not in symbol_data]
+        if not symbols_to_download:
+            return symbol_data
+
+        tasks = [self._download_symbol_with_batches(s, timeframe, start_date, end_date) for s in symbols_to_download]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Procesar resultados
-        symbol_data = {}
         for i, result in enumerate(results):
-            symbol = symbols[i]
+            symbol = symbols_to_download[i]
             if isinstance(result, Exception):
                 self.logger.error(f"Error descargando {symbol}: {result}")
-            elif result is not None:
+            elif result is not None and not result.empty:
                 symbol_data[symbol] = result
                 self.logger.info(f"✅ {symbol}: {len(result)} velas descargadas")
+            else:
+                # Marcamos símbolo como missing en metadata mínima para que auditoría lo identifique
+                self.logger.warning(f"⚠️ {symbol}: descarga vacía (marcado missing)")
+                try:
+                    self.storage.upsert_metadata({
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'start_ts': None,
+                        'end_ts': None,
+                        'records': 0,
+                        'coverage_pct': 0,
+                        'asset_class': get_asset_class(symbol),
+                        'source_exchange': None
+                    })
+                except Exception as me:
+                    self.logger.debug(f"No se pudo registrar missing metadata {symbol}: {me}")
 
         return symbol_data
 
@@ -244,44 +462,54 @@ class AdvancedDataDownloader:
 
     async def _download_crypto_symbol(self, symbol: str, timeframe: str,
                                     start_date: str, end_date: str) -> Optional[pd.DataFrame]:
-        """Descarga datos de criptomoneda desde CCXT"""
+        """Descarga datos de criptomoneda con fallback entre múltiples exchanges.
+
+        Estrategia:
+          - Construir lista de prioridad (active_exchange primero si existe)
+          - Intentar cada exchange hasta obtener dataset válido (>=1 vela)
+          - Clasificar errores retryable (403, DDoS, 429, bloqueo geográfico) para intentar fallback
+          - Si todos fallan, relanzar último error
+        """
         if not self.ccxt_exchanges:
             raise Exception("No hay exchanges CCXT configurados")
 
-        # Usar el primer exchange disponible
-        exchange_name = list(self.ccxt_exchanges.keys())[0]
-        exchange = self.ccxt_exchanges[exchange_name]
-
-        try:
-            # Convertir fechas
-            since = int(pd.Timestamp(start_date).timestamp() * 1000)
-
-            # Descargar datos
-            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=1000)
-
-            if not ohlcv:
-                return None
-
-            # Convertir a DataFrame
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-
-            # Filtrar por fecha fin
-            end_dt = pd.Timestamp(end_date)
-            df = df[df['timestamp'] <= end_dt]
-
-            return df
-
-        except Exception as e:
-            self.logger.error(f"Error descargando {symbol} desde {exchange_name}: {e}")
-            raise e
+        priority = self._get_exchange_priority_list()
+        last_error: Optional[Exception] = None
+        for ex_name in priority:
+            exchange = self.ccxt_exchanges[ex_name]
+            try:
+                self.logger.info(f"{symbol}: intentando descarga en {ex_name}")
+                df = await self._fetch_crypto_paginated(exchange, ex_name, symbol, timeframe, start_date, end_date)
+                if df is None or df.empty:
+                    self.logger.warning(f"{symbol}: dataset vacío desde {ex_name}, intentando siguiente exchange")
+                    continue
+                self.logger.info(f"{symbol}: descarga exitosa en {ex_name} ({len(df)} velas)")
+                return df
+            except Exception as e:
+                last_error = e
+                if self._is_retryable_exchange_error(e):
+                    self.logger.warning(f"{symbol}: error retryable en {ex_name} -> fallback ({e})")
+                    continue
+                else:
+                    self.logger.error(f"{symbol}: error no retryable en {ex_name} -> aborta ({e})")
+                    break
+        if last_error:
+            raise last_error
+        return None
 
     def _download_stock_symbol(self, symbol: str, timeframe: str,
                              start_date: str, end_date: str) -> Optional[pd.DataFrame]:
-        """Descarga datos de acciones desde MT5"""
+        """Descarga datos de acciones desde MT5 con verificación de caché"""
+        # Primero verificar si ya tenemos datos suficientes
+        covers_range, existing_df = self._mt5_data_covers_range(symbol, timeframe, start_date, end_date)
+        if covers_range and existing_df is not None:
+            return existing_df
+
+        # Si no hay datos suficientes, proceder con descarga desde MT5
         if not self.mt5_downloader or not self.mt5_downloader.connected:
             raise Exception("MT5 no está disponible")
 
+        self.logger.info(f"📥 MT5 Download {symbol}: descargando nuevos datos ({start_date} a {end_date})")
         return self.mt5_downloader.download_symbol_data(symbol, timeframe, start_date, end_date)
 
     async def process_and_save_data(self, symbol_data: Dict[str, pd.DataFrame],
@@ -310,9 +538,40 @@ class AdvancedDataDownloader:
                 # Normalizar y escalar
                 df_normalized = self._normalize_and_scale(df_with_indicators)
 
+                # Añadir volumen escalado (median rolling 50) antes de guardado
+                if 'volume' in df_with_indicators.columns:
+                    vol_series = df_with_indicators['volume'].astype(float)
+                    med50 = vol_series.rolling(50, min_periods=10).median()
+                    df_with_indicators['volume_median_50'] = med50
+                    ratio = vol_series / med50.replace(0, np.nan)
+                    ratio = ratio.replace([np.inf, -np.inf], np.nan).fillna(0).clip(0, 10)
+                    df_with_indicators['volume_scaled'] = ratio
+
                 # Guardar en SQLite (para uso del sistema)
                 table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
                 success_sql = self.storage.save_to_sqlite(df_normalized, table_name)
+
+                # Metadata básica (coverage session-aware)
+                try:
+                    asset_class = get_asset_class(symbol)
+                    start_req = pd.Timestamp(df_normalized['timestamp'].min(), unit='s') if df_normalized['timestamp'].dtype != 'datetime64[ns]' else df_normalized['timestamp'].min()
+                    end_req = pd.Timestamp(df_normalized['timestamp'].max(), unit='s') if df_normalized['timestamp'].dtype != 'datetime64[ns]' else df_normalized['timestamp'].max()
+                    # NOTA: Para una estimación más precisa se debería usar el rango solicitado original; aquí se usa rango de datos disponibles.
+                    expected = expected_candles_for_range(start_req, end_req, timeframe, asset_class)
+                    coverage = (len(df_normalized) / expected * 100) if expected else 100
+                    source_exchange = df_normalized.attrs.get('source_exchange') if hasattr(df_normalized, 'attrs') else None
+                    self.storage.upsert_metadata({
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'start_ts': int(start_req.timestamp()),
+                        'end_ts': int(end_req.timestamp()),
+                        'records': len(df_normalized),
+                        'coverage_pct': round(coverage, 2),
+                        'asset_class': asset_class,
+                        'source_exchange': source_exchange
+                    })
+                except Exception as me:
+                    self.logger.debug(f"No se pudo registrar metadata {symbol}: {me}")
 
                 # Guardar en CSV (para verificación visual)
                 if save_csv and success_sql:
@@ -498,17 +757,105 @@ class AdvancedDataDownloader:
         """
         try:
             table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
+            if not self.storage.table_exists(table_name):
+                return None
 
-            # Query para obtener datos
-            query = f"SELECT * FROM {table_name}"
+            # Convertir fechas a timestamps si se proporcionan
+            start_ts = int(pd.Timestamp(start_date).timestamp()) if start_date else None
+            end_ts = int(pd.Timestamp(end_date).timestamp()) if end_date else None
 
-            # Aquí iría la lógica para ejecutar la query
-            # Por ahora retornamos None para indicar que no está implementado
-            self.logger.warning(f"get_data_from_db no implementado aún para {table_name}")
-            return None
+            df = self.storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
+            if df is None or df.empty:
+                return None
+
+            # Asegurar columnas estándar (en caso de columnas adicionales se mantienen)
+            required_cols = {'timestamp', 'open', 'high', 'low', 'close', 'volume'}
+            missing = required_cols - set(df.columns)
+            if missing:
+                self.logger.warning(f"Tabla {table_name} faltan columnas {missing}, no se usará caché")
+                return None
+
+            # Filtrar rango por seguridad
+            if start_date:
+                df = df[df['timestamp'] >= pd.Timestamp(start_date)]
+            if end_date:
+                df = df[df['timestamp'] <= pd.Timestamp(end_date)]
+
+            if df.empty:
+                return None
+
+            # Validar cobertura temporal mínima (al menos 70% del rango solicitado)
+            if start_date and end_date:
+                total_seconds = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).total_seconds()
+                cached_seconds = (df['timestamp'].max() - df['timestamp'].min()).total_seconds()
+                coverage = cached_seconds / total_seconds if total_seconds > 0 else 0
+                if coverage < 0.7:
+                    self.logger.info(f"Cobertura caché insuficiente {symbol}: {coverage:.1%} < 70% -> forzar descarga")
+                    return None
+
+            return df.reset_index(drop=True)
 
         except Exception as e:
             self.logger.error(f"Error obteniendo datos de DB: {e}")
+            return None
+
+    async def get_data_from_csv(self, symbol: str, timeframe: str,
+                              start_date: str = None, end_date: str = None) -> Optional[pd.DataFrame]:
+        """
+        Obtiene datos desde archivos CSV (usado principalmente para datos sintéticos de 1h)
+
+        Args:
+            symbol: Símbolo
+            timeframe: Timeframe
+            start_date: Fecha inicio (opcional)
+            end_date: Fecha fin (opcional)
+
+        Returns:
+            DataFrame con datos o None
+        """
+        try:
+            # Solo buscar CSV para timeframe de 1 hora
+            if timeframe != '1h':
+                return None
+
+            csv_path = f"data/csv/{symbol.replace('/', '_')}_{timeframe}.csv"
+
+            if not os.path.exists(csv_path):
+                return None
+
+            self.logger.info(f"📄 CSV encontrado para {symbol}: {csv_path}")
+            df = pd.read_csv(csv_path)
+
+            if df.empty:
+                return None
+
+            # Asegurar que timestamp esté en formato datetime
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+            # Filtrar por rango de fechas si se especifica
+            if start_date:
+                df = df[df['timestamp'] >= pd.Timestamp(start_date)]
+            if end_date:
+                df = df[df['timestamp'] <= pd.Timestamp(end_date)]
+
+            if df.empty:
+                return None
+
+            # Asegurar columnas estándar
+            required_cols = {'timestamp', 'open', 'high', 'low', 'close', 'volume'}
+            missing = required_cols - set(df.columns)
+            if missing:
+                self.logger.warning(f"CSV {csv_path} faltan columnas {missing}")
+                return None
+
+            # Ordenar por timestamp
+            df = df.sort_values('timestamp').reset_index(drop=True)
+
+            self.logger.info(f"✅ CSV cargado {symbol}: {len(df)} velas desde {df['timestamp'].min()} hasta {df['timestamp'].max()}")
+            return df
+
+        except Exception as e:
+            self.logger.warning(f"Error cargando CSV para {symbol}: {e}")
             return None
 
     async def shutdown(self):
@@ -516,7 +863,11 @@ class AdvancedDataDownloader:
         try:
             # Cerrar exchanges CCXT
             for exchange in self.ccxt_exchanges.values():
-                await exchange.close()
+                try:
+                    await exchange.close()
+                except Exception as ex:
+                    # Captura de errores de cierre individuales para no abortar el resto
+                    self.logger.warning(f"Error cerrando exchange {getattr(exchange, 'id', '?')}: {ex}")
 
             # Cerrar MT5
             if self.mt5_downloader:
@@ -524,12 +875,24 @@ class AdvancedDataDownloader:
 
             self.logger.info("AdvancedDataDownloader cerrado correctamente")
 
+        except asyncio.CancelledError:
+            # Evitar propagar CancelledError para no generar KeyboardInterrupt aguas arriba
+            self.logger.warning("Shutdown cancelado (asyncio.CancelledError) - forzando cierre suave")
+            try:
+                for exchange in self.ccxt_exchanges.values():
+                    try:
+                        await exchange.close()
+                    except Exception:
+                        pass
+                if self.mt5_downloader:
+                    try:
+                        self.mt5_downloader.shutdown()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         except Exception as e:
             self.logger.error(f"Error en shutdown: {e}")
-
-        except Exception as e:
-            self.logger.error(f"[ERROR] Error configurando exchanges: {e}")
-            return False
 
     async def async_download_ohlcv(self, symbol: str, exchange_name: str,
                                  timeframe: str = '1h', limit: int = 1000) -> tuple:
@@ -575,11 +938,69 @@ class AdvancedDataDownloader:
 
     async def close_exchanges(self):
         """Cierra todas las conexiones de exchanges"""
-        for exchange_name, exchange in self.exchanges.items():
+        for exchange_name, exchange in self.ccxt_exchanges.items():
             try:
                 await exchange.close()
                 self.logger.info(f"[INFO] Exchange {exchange_name} cerrado")
             except Exception as e:
                 self.logger.error(f"[ERROR] Error cerrando {exchange_name}: {e}")
 
-        self.exchanges.clear()
+        self.ccxt_exchanges.clear()
+
+    def _get_exchange_priority_list(self) -> List[str]:
+        """Retorna lista de exchanges en orden de prioridad para fallback.
+
+        Prioridad:
+        1. active_exchange (de config) si está disponible
+        2. Otros exchanges disponibles
+        """
+        available = list(self.ccxt_exchanges.keys())
+        if not available:
+            return []
+
+        # Exchange activo primero si existe
+        active = getattr(self.config, 'active_exchange', 'bybit')
+        if active in available:
+            priority = [active] + [ex for ex in available if ex != active]
+        else:
+            priority = available
+
+        self.logger.debug(f"Exchange priority: {priority}")
+        return priority
+
+    def _is_retryable_exchange_error(self, error: Exception) -> bool:
+        """Determina si un error de exchange permite intentar fallback.
+
+        Errores retryable: bloqueos geográficos, rate limits, DDoS, etc.
+        Errores no retryable: símbolos inválidos, problemas de autenticación, etc.
+        """
+        error_str = str(error).lower()
+
+        # Errores que permiten fallback (retryable)
+        retryable_patterns = [
+            '403', 'forbidden', 'blocked', 'geoblock', 'geo-block',
+            '429', 'rate limit', 'too many requests',
+            'ddos', 'service unavailable', 'bad gateway', 'gateway timeout',
+            'connection reset', 'connection refused', 'timeout',
+            'cloudflare', 'access denied'
+        ]
+
+        # Errores que NO permiten fallback (no retryable)
+        non_retryable_patterns = [
+            'invalid symbol', 'symbol not found', 'market not found',
+            'authentication', 'api key', 'invalid credentials',
+            'permission denied', 'insufficient funds'
+        ]
+
+        # Verificar patrones no retryable primero
+        for pattern in non_retryable_patterns:
+            if pattern in error_str:
+                return False
+
+        # Verificar patrones retryable
+        for pattern in retryable_patterns:
+            if pattern in error_str:
+                return True
+
+        # Por defecto, considerar retryable (para errores genéricos)
+        return True

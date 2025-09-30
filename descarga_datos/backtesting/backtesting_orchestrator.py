@@ -6,70 +6,113 @@ Contiene toda la lógica de backtesting, carga dinámica de estrategias y ejecuc
 import asyncio
 import os
 import sys
+print('[ORCHESTRATOR] Módulo backtesting_orchestrator cargando (inicio top-level)')
+# Agregar el directorio padre al path para importar módulos
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Agregar el directorio actual para importar módulos locales
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config.config_loader import load_config_from_yaml
+print('[ORCHESTRATOR] Config loader importado')
 from core.downloader import AdvancedDataDownloader
+print('[ORCHESTRATOR] Downloader importado')
 #from strategies.ut_bot_psar import UTBotPSARStrategy  # No utilizado actualmente
 #from strategies.ut_bot_psar_conservative import UTBotPSARConservativeStrategy  # Eliminado módulo faltante
-from strategies.ut_bot_psar import UTBotPSARStrategy
-from strategies.ut_bot_psar_compensation import UTBotPSARCompensationStrategy
-from strategies.solana_4h_strategy import Solana4HStrategy
-from strategies.solana_4h_trailing_strategy import Solana4HTrailingStrategy
-from strategies.solana_4h_risk_managed_strategy import Solana4HRiskManagedStrategy
-from strategies.solana_4h_trailing_live_strategy import Solana4HTrailingLiveStrategy
-from backtesting.backtester import AdvancedBacktester
+# NOTA: Evitamos imports ansiosos de estrategias para reducir tiempo/bloqueos en validación inicial.
+# Las estrategias se importan dinámicamente en load_strategies_from_config() usando __import__.
+from backtester import AdvancedBacktester
+print('[ORCHESTRATOR] AdvancedBacktester importado')
 from utils.logger import setup_logging, get_logger
+print('[ORCHESTRATOR] Logger utilities importadas')
 
 def load_strategies_from_config(config):
     """
-    Carga dinámicamente las estrategias activas desde la configuración.
-    Retorna un diccionario con las estrategias instanciadas.
+    Carga dinámicamente TODAS las estrategias activas desde la configuración central.
+    Sistema completamente modular - cualquier estrategia puede activarse/desactivarse desde config.yaml
     """
     strategies = {}
-    strategy_config = config.backtesting.strategies
 
-    # Mapeo de nombres de configuración a clases de estrategia - Solo archivos existentes
+    # Obtener configuración de estrategias desde backtesting
+    # Manejar tanto objetos Config (dataclasses) como diccionarios
+    if hasattr(config, 'backtesting'):
+        # Es un objeto Config (dataclass)
+        backtesting_config = config.backtesting
+        strategy_config = backtesting_config.strategies
+    else:
+        # Es un diccionario (compatibilidad hacia atrás)
+        backtesting_config = config.get('backtesting', {})
+        strategy_config = backtesting_config.get('strategies', {})
+
+    # Mapeo completo de estrategias disponibles - SISTEMA MODULAR TOTAL
     strategy_classes = {
         'Estrategia_Basica': ('strategies.ut_bot_psar', 'UTBotPSARStrategy'),
         'Estrategia_Compensacion': ('strategies.ut_bot_psar_compensation', 'UTBotPSARCompensationStrategy'),
         'Solana4H': ('strategies.solana_4h_strategy', 'Solana4HStrategy'),
+        'Solana4HSAR': ('strategies.solana_4h_sar_strategy', 'Solana4HSARStrategy'),
         'Solana4HTrailing': ('strategies.solana_4h_trailing_strategy', 'Solana4HTrailingStrategy'),
         'Solana4HRiskManaged': ('strategies.solana_4h_risk_managed_strategy', 'Solana4HRiskManagedStrategy'),
         'Solana4HOptimizedTrailing': ('strategies.solana_4h_optimized_trailing_strategy', 'Solana4HOptimizedTrailingStrategy'),
-        'Solana4HEnhancedTrailingBalanced': ('strategies.solana_4h_enhanced_trailing_balanced_strategy', 'Solana4HEnhancedTrailingBalancedStrategy'),
         'Solana4HTrailingLive': ('strategies.solana_4h_trailing_live_strategy', 'Solana4HTrailingLiveStrategy'),
+        'HeikinAshiVolumenSar': ('strategies.heikin_ashi_volumen_sar_strategy', 'HeikinAshiVolumenSarStrategy'),
+        'HeikinAshiVolumenSarImproved': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
     }
 
-    # Estrategias que requieren estado continuo (no pueden procesarse por lotes)
+    # Estrategias que requieren estado continuo (procesamiento completo)
     stateful_strategies = {
-        'Solana4HEnhancedTrailingBalanced',  # Estrategia balanceada con estado (archivo existente)
+        'Solana4HOptimizedTrailing',  # Requiere datos completos
     }
 
-    print(f"[BACKTEST] 📋 Cargando estrategias activas...")
+    print(f"[BACKTEST] 📋 Cargando estrategias activas desde configuración central...")
     print(f"[BACKTEST] 📋 Configuración de estrategias: {strategy_config}")
 
+    # Cargar TODAS las estrategias marcadas como activas en la configuración
+    active_count = 0
     for strategy_name, is_active in strategy_config.items():
-        if is_active and strategy_name in strategy_classes:
-            try:
-                module_name, class_name = strategy_classes[strategy_name]
-                module = __import__(module_name, fromlist=[class_name])
-                strategy_class = getattr(module, class_name)
-                strategy_instance = strategy_class()
+        if is_active:  # Solo cargar si está activada en config
+            active_count += 1
+            print(f"[BACKTEST] 🔄 Procesando estrategia activa: {strategy_name}")
 
-                # Marcar si requiere estado continuo
-                strategy_instance._requires_continuous_state = strategy_name in stateful_strategies
+            if strategy_name in strategy_classes:
+                try:
+                    module_name, class_name = strategy_classes[strategy_name]
+                    module = __import__(module_name, fromlist=[class_name])
+                    strategy_class = getattr(module, class_name)
 
-                strategies[strategy_name] = strategy_instance
-                print(f"[BACKTEST] ✅ {strategy_name} cargada exitosamente")
-            except Exception as e:
-                print(f"[BACKTEST] ❌ Error cargando {strategy_name}: {e}")
-                import traceback
-                traceback.print_exc()
-        elif is_active:
-            print(f"[BACKTEST] ⚠️  Estrategia '{strategy_name}' configurada pero no implementada")
+                    # Instanciar estrategia con configuración
+                    try:
+                        # Intentar instanciar con config para estrategias que lo soportan
+                        strategy_instance = strategy_class(config=config)
+                    except TypeError:
+                        # Fallback para estrategias que no aceptan config
+                        strategy_instance = strategy_class()
 
-    print(f"[BACKTEST] 📋 Estrategias activas finales: {list(strategies.keys())}")
+                    # Marcar si requiere estado continuo
+                    strategy_instance._requires_continuous_state = strategy_name in stateful_strategies
+
+                    strategies[strategy_name] = strategy_instance
+                    print(f"[BACKTEST] ✅ {strategy_name} cargada exitosamente desde {module_name}")
+
+                except ImportError as e:
+                    print(f"[BACKTEST] ❌ Error importando {strategy_name}: Módulo {module_name} no encontrado - {e}")
+                except AttributeError as e:
+                    print(f"[BACKTEST] ❌ Error importando {strategy_name}: Clase {class_name} no encontrada en {module_name} - {e}")
+                except Exception as e:
+                    print(f"[BACKTEST] ❌ Error instanciando {strategy_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[BACKTEST] ⚠️  Estrategia '{strategy_name}' activada pero no implementada en strategy_classes")
+        else:
+            print(f"[BACKTEST] ⏭️  {strategy_name} está desactivada en configuración")
+
+    print(f"[BACKTEST] 📊 Total estrategias activas en config: {active_count}")
+    print(f"[BACKTEST] 📋 Estrategias cargadas exitosamente: {len(strategies)}")
+    print(f"[BACKTEST] 📋 Lista final: {list(strategies.keys())}")
+
+    if not strategies:
+        print(f"[BACKTEST] ❌ ERROR: No se pudo cargar ninguna estrategia activa")
+        print(f"[BACKTEST] 💡 Verifica que al menos una estrategia esté activada en config.yaml")
+
     return strategies
 
 async def run_full_backtesting_with_batches():
@@ -106,13 +149,35 @@ async def run_full_backtesting_with_batches():
         print("[BACKTEST] ✅ Downloader inicializado (con soporte para lotes)")
 
         # Descargar datos con lotes
-        active_symbols = config.backtesting.symbols
+        # Overrides rápidos desde CLI (variables de entorno configuradas en main.py)
+        override_symbols = os.environ.get('BT_OVERRIDE_SYMBOLS', '').strip()
+        override_timeframe = os.environ.get('BT_OVERRIDE_TIMEFRAME', '').strip()
+
+        if override_symbols:
+            try:
+                parsed_symbols = [s.strip() for s in override_symbols.split(',') if s.strip()]
+                if parsed_symbols:
+                    print(f"[BACKTEST] 🛠️ Override de símbolos aplicado: {parsed_symbols}")
+                    active_symbols = parsed_symbols
+                else:
+                    active_symbols = config.backtesting.symbols
+            except Exception:
+                active_symbols = config.backtesting.symbols
+        else:
+            active_symbols = config.backtesting.symbols
+
+        if override_timeframe:
+            print(f"[BACKTEST] 🛠️ Override de timeframe aplicado: {override_timeframe}")
+            timeframe_used = override_timeframe
+        else:
+            timeframe_used = config.backtesting.timeframe
+
         print(f"[BACKTEST] 📦 Descargando {len(active_symbols)} símbolos usando lotes...")
 
         try:
             symbol_data = await downloader.download_multiple_symbols(
                 active_symbols,
-                timeframe=config.backtesting.timeframe,
+                timeframe=timeframe_used,
                 start_date=config.backtesting.start_date,
                 end_date=config.backtesting.end_date
             )
@@ -156,7 +221,7 @@ async def run_full_backtesting_with_batches():
         print(f"\n[BACKTEST] 💾 Procesando y guardando datos...")
         processed_symbol_data = await downloader.process_and_save_data(
             symbol_data,
-            config.backtesting.timeframe,
+            timeframe_used,
             save_csv=True
         )
 
@@ -166,53 +231,64 @@ async def run_full_backtesting_with_batches():
 
         print(f"[BACKTEST] ✅ Datos procesados para {len(processed_symbol_data)} símbolos")
 
-        # Ejecutar backtesting para cada símbolo
+        # Ejecutar backtesting SECUENCIAL OPTIMIZADO para todos los símbolos y estrategias
+        print(f"\n[BACKTEST] 🔄 Iniciando backtesting SECUENCIAL OPTIMIZADO para {len(processed_symbol_data)} símbolos")
+        print(f"[BACKTEST] 📋 Símbolos a procesar: {list(processed_symbol_data.keys())}")
+
+        # Cargar estrategias activas UNA SOLA VEZ (optimización)
+        active_strategies = load_strategies_from_config(config)
+        if not active_strategies:
+            print("[BACKTEST] ❌ ERROR: No hay estrategias activas configuradas")
+            return
+
+        print(f"[BACKTEST] 🎯 Estrategias activas cargadas: {list(active_strategies.keys())}")
+
+        # Procesamiento secuencial optimizado
         backtest_results = {}
-        total_trades = 0
+        total_trades_global = 0
 
-        print(f"[DEBUG] Iniciando backtesting para {len(processed_symbol_data)} símbolos")
-        print(f"[DEBUG] Símbolos a procesar: {list(processed_symbol_data.keys())}")
-
-        for i, (symbol, df) in enumerate(processed_symbol_data.items(), 1):
-            print(f"\n[BACKTEST] {i}/{len(processed_symbol_data)} 📈 PROCESANDO: {symbol}")
-            print("-" * 60)
+        for symbol_idx, (symbol, df) in enumerate(processed_symbol_data.items(), 1):
+            print(f"\n[BACKTEST] 📈 [{symbol_idx}/{len(processed_symbol_data)}] PROCESANDO: {symbol}")
+            print("-" * 70)
 
             try:
-                # Crear estrategias activas según configuración usando carga dinámica
-                strategies = load_strategies_from_config(config)
-
-                if not strategies:
-                    print(f"[BACKTEST] ⚠️  No hay estrategias activas para {symbol}")
-                    continue
-
-                # Ejecutar backtesting
-                backtester = AdvancedBacktester(
-                    initial_capital=config.backtesting.initial_capital,
-                    commission=config.backtesting.commission,
-                    slippage=config.backtesting.slippage
-                )
-
-                # Ejecutar cada estrategia
+                # Ejecutar TODAS las estrategias para este símbolo
                 symbol_results = {}
                 symbol_total_trades = 0
 
-                # Separar estrategias por tipo
-                stateless_strategies = {}
-                stateful_strategies = {}
+                for strategy_name, strategy in active_strategies.items():
+                    print(f"[BACKTEST] ⚡ Ejecutando {strategy_name}...")
 
-                for strategy_name, strategy in strategies.items():
-                    if hasattr(strategy, '_requires_continuous_state') and strategy._requires_continuous_state:
-                        stateful_strategies[strategy_name] = strategy
-                    else:
-                        stateless_strategies[strategy_name] = strategy
-
-                print(f"[BACKTEST] 📊 Estrategias stateless: {list(stateless_strategies.keys())}")
-                print(f"[BACKTEST] 🔄 Estrategias stateful: {list(stateful_strategies.keys())}")
-
-                # Ejecutar estrategias stateless (con datos por lotes)
-                for strategy_name, strategy in stateless_strategies.items():
                     try:
-                        result = backtester.run(strategy, df, symbol)
+                        # Crear backtester independiente para cada estrategia
+                        strategy_backtester = AdvancedBacktester(
+                            initial_capital=config.backtesting.initial_capital,
+                            commission=config.backtesting.commission,
+                            slippage=config.backtesting.slippage
+                        )
+
+                        # Verificar si requiere estado continuo
+                        requires_state = hasattr(strategy, '_requires_continuous_state') and strategy._requires_continuous_state
+
+                        if requires_state:
+                            # Cargar datos completos desde CSV para estrategias stateful
+                            import pandas as pd
+                            csv_path = f"data/csv/{symbol.replace('/', '_')}_{timeframe_used}.csv"
+                            if os.path.exists(csv_path):
+                                full_df = pd.read_csv(csv_path)
+                                full_df['timestamp'] = pd.to_datetime(full_df['timestamp'])
+                                full_df.set_index('timestamp', inplace=True)
+                                result_df = full_df
+                                print(f"[BACKTEST] 📊 {strategy_name}: Usando datos completos ({len(full_df)} filas)")
+                            else:
+                                result_df = df
+                                print(f"[BACKTEST] ⚠️  {strategy_name}: Datos completos no disponibles, usando datos por lotes")
+                        else:
+                            result_df = df
+
+                        # Ejecutar estrategia
+                        result = strategy_backtester.run(strategy, result_df, symbol, timeframe_used)
+
                         if result:
                             symbol_results[strategy_name] = result
                             trades = result.get('total_trades', 0)
@@ -223,58 +299,28 @@ async def run_full_backtesting_with_batches():
                             print(f"[BACKTEST] ✅ {strategy_name}: {trades} trades | P&L: ${pnl:.2f} | Win Rate: {win_rate:.1f}%")
                         else:
                             print(f"[BACKTEST] ❌ {strategy_name}: Sin resultados")
+
                     except Exception as e:
                         print(f"[BACKTEST] ❌ Error en {strategy_name}: {e}")
+                        continue
 
-                # Ejecutar estrategias stateful (con datos completos desde CSV)
-                if stateful_strategies:
-                    print(f"[BACKTEST] 🔄 Procesando estrategias stateful para {symbol}...")
-                    try:
-                        # Cargar datos completos desde CSV
-                        import pandas as pd
-                        csv_path = f"data/csv/{symbol.replace('/', '_')}_{config.backtesting.timeframe}.csv"
-                        if os.path.exists(csv_path):
-                            full_df = pd.read_csv(csv_path)
-                            full_df['timestamp'] = pd.to_datetime(full_df['timestamp'])
-                            full_df.set_index('timestamp', inplace=True)
-                            print(f"[BACKTEST] 📊 Datos completos cargados: {len(full_df)} filas")
-
-                            # Ejecutar cada estrategia stateful con datos completos
-                            for strategy_name, strategy in stateful_strategies.items():
-                                try:
-                                    result = backtester.run(strategy, full_df, symbol)
-                                    if result:
-                                        symbol_results[strategy_name] = result
-                                        trades = result.get('total_trades', 0)
-                                        symbol_total_trades += trades
-                                        pnl = result.get('total_pnl', 0)
-                                        win_rate = result.get('win_rate', 0) * 100
-
-                                        print(f"[BACKTEST] ✅ {strategy_name} (stateful): {trades} trades | P&L: ${pnl:.2f} | Win Rate: {win_rate:.1f}%")
-                                    else:
-                                        print(f"[BACKTEST] ❌ {strategy_name} (stateful): Sin resultados")
-                                except Exception as e:
-                                    print(f"[BACKTEST] ❌ Error en {strategy_name} (stateful): {e}")
-                        else:
-                            print(f"[BACKTEST] ❌ No se encontraron datos completos para estrategias stateful en {symbol}")
-                    except Exception as e:
-                        print(f"[BACKTEST] ❌ Error procesando estrategias stateful para {symbol}: {e}")
-
+                # Resultados del símbolo
                 if symbol_results:
                     backtest_results[symbol] = symbol_results
-                    total_trades += symbol_total_trades
-                    print(f"[BACKTEST] 📊 {symbol} completado: {symbol_total_trades} trades totales")
+                    total_trades_global += symbol_total_trades
+                    print(f"[BACKTEST] 📊 {symbol} COMPLETADO: {symbol_total_trades} trades totales")
                 else:
-                    print(f"[BACKTEST] ❌ {symbol}: Sin resultados válidos")
+                    print(f"[BACKTEST] ❌ {symbol}: Sin resultados válidos de ninguna estrategia")
 
             except Exception as e:
-                print(f"[BACKTEST] ❌ Error general en {symbol}: {e}")
+                print(f"[BACKTEST] ❌ Error general procesando {symbol}: {e}")
+                continue
 
         # Resultados finales
-        print(f"\n[BACKTEST] 🏆 RESULTADOS FINALES - BACKTESTING CON LOTES")
+        print(f"\n[BACKTEST] 🏆 RESULTADOS FINALES - BACKTESTING SECUENCIAL OPTIMIZADO")
         print("=" * 80)
         print(f"[BACKTEST] 📊 Símbolos procesados: {len(backtest_results)}")
-        print(f"[BACKTEST] 📊 Total operaciones: {total_trades}")
+        print(f"[BACKTEST] 📊 Total operaciones: {total_trades_global}")
         print(f"[BACKTEST] 📊 Velas totales analizadas: {total_velas:,}")
 
         if backtest_results:
@@ -321,7 +367,7 @@ async def run_full_backtesting_with_batches():
                 import json
                 from pathlib import Path
                 # Directorio de salida para dashboard
-                out_dir = Path(__file__).parent / "data" / "dashboard_results"
+                out_dir = Path(__file__).parent.parent / "data" / "dashboard_results"
                 # Limpiar resultados antiguos para evitar datos obsoletos
                 if out_dir.exists():
                     for old in out_dir.glob("*.json"):
@@ -347,7 +393,7 @@ async def run_full_backtesting_with_batches():
                     },
                     'metrics': {
                         'total_pnl': total_pnl,
-                        'total_trades': total_trades,
+                        'total_trades': total_trades_global,
                         'avg_win_rate': avg_win_rate
                     }
                 }
@@ -362,7 +408,7 @@ async def run_full_backtesting_with_batches():
             print(f"   • Win Rate Promedio: {avg_win_rate:.1f}%")
             print(f"   • Velas Analizadas: {total_velas:,}")
             print(f"   • Período: {config.backtesting.start_date} a {config.backtesting.end_date}")
-            print(f"   • Método: Descargas por lotes (9 lotes de ~3 meses)")
+            print(f"   • Método: Procesamiento secuencial optimizado")
 
         await downloader.shutdown()
         print("[BACKTEST] ✅ Backtesting completado exitosamente con descargas por lotes")
@@ -379,8 +425,8 @@ if __name__ == "__main__":
     try:
         import subprocess, sys
         from pathlib import Path
-        dash_file = Path(__file__).parent / 'dashboard.py'
-        workdir = str(Path(__file__).parent)
+        dash_file = Path(__file__).parent.parent / 'utils' / 'dashboard.py'
+        workdir = str(Path(__file__).parent.parent)
         print(f"[BACKTEST] 🚀 Lanzando dashboard con Streamlit: {dash_file}")
         cmd = [sys.executable, '-m', 'streamlit', 'run', str(dash_file), '--server.port', '8501']
         process = subprocess.Popen(cmd, cwd=workdir)

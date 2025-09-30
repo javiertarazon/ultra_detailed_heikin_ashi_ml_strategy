@@ -5,6 +5,49 @@ from pathlib import Path
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import yaml
+
+# ==============================================================
+# Funciones puras reutilizables (aptas para tests sin Streamlit)
+# ==============================================================
+def summarize_results_structured(results: dict) -> pd.DataFrame:
+    """Genera un DataFrame resumen (símbolo/estrategia) a partir de la
+    estructura de resultados cargada por load_results().
+
+    Estructura esperada:
+    {
+        'BTC/USDT': {
+            'symbol': 'BTC/USDT',
+            'strategies': {
+                'MyStrategy': { 'total_trades': ..., 'win_rate': ..., 'total_pnl': ... }
+            }
+        },
+        ...
+    }
+
+    Returns:
+        DataFrame con columnas: ['symbol','strategy','total_trades','win_rate','total_pnl','max_drawdown']
+        (win_rate en decimal 0-1, no porcentaje)
+    """
+    rows = []
+    for sym, data in results.items():
+        strategies = data.get('strategies', {}) if isinstance(data, dict) else {}
+        for strat_name, strat_data in strategies.items():
+            if not isinstance(strat_data, dict):
+                continue
+            wr = strat_data.get('win_rate', 0) or 0
+            # Normalizar win_rate si viene como porcentaje (>1)
+            if isinstance(wr, (int, float)) and wr > 1:
+                wr = wr / 100.0
+            rows.append({
+                'symbol': sym,
+                'strategy': strat_name,
+                'total_trades': strat_data.get('total_trades', 0) or 0,
+                'win_rate': wr,
+                'total_pnl': strat_data.get('total_pnl', 0.0) or 0.0,
+                'max_drawdown': strat_data.get('max_drawdown', 0.0) or 0.0
+            })
+    return pd.DataFrame(rows)
 
 st.set_page_config(layout="wide", page_title="Dashboard de Backtesting Avanzado", page_icon="🤖")
 
@@ -43,7 +86,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_data
+@st.cache_data(ttl=30)  # Cache por 30 segundos para permitir actualizaciones
 def load_results():
     """
     Carga archivos JSON de resultados por símbolo y el resumen global.
@@ -53,6 +96,9 @@ def load_results():
     if not base.exists():
         return {}, {}
 
+    # Guardar lista de estrategias encontradas para debug
+    all_strategies_found = set()
+    
     # Cargar archivos de símbolo
     for f in sorted(base.glob("*_results.json")):
         if f.name == 'global_summary.json':
@@ -60,38 +106,65 @@ def load_results():
         # Excluir archivos con datos simulados para mantener consistencia
         if 'realistic' in f.name:
             continue
-        with open(f, 'r', encoding='utf-8') as fh:
-            d = json.load(fh)
-        
-        # Extraer símbolo del nombre del archivo
-        sym = f.stem.replace('_results', '').replace('_', '/')
-        
-        # Compatibilidad con diferentes formatos JSON
-        if 'strategies' not in d and 'symbol' not in d:
-            # Nuevo formato: {"Solana4HTrailing": {...}, "Solana4HOptimizedTrailing": {...}}
-            # Verificar que todas las keys son nombres de estrategias (contienen datos dict con métricas)
-            all_strategies = True
-            for key, value in d.items():
-                if not isinstance(value, dict) or 'total_trades' not in value:
-                    all_strategies = False
-                    break
             
-            if all_strategies:
-                # Es el nuevo formato de múltiples estrategias
-                d = {'symbol': sym, 'strategies': d}
+        try:
+            with open(f, 'r', encoding='utf-8') as fh:
+                d = json.load(fh)
+            
+            # Extraer símbolo del nombre del archivo
+            sym = f.stem.replace('_results', '').replace('_', '/')
+            
+            # Normalización y validación de estructura JSON
+            if isinstance(d, dict):
+                # Caso 1: Formato estándar {'symbol': 'XXX', 'strategies': {'Strategy1': {...}, 'Strategy2': {...}}}
+                if 'symbol' in d and 'strategies' in d and isinstance(d['strategies'], dict):
+                    # Ya tiene el formato correcto
+                    normalized_data = d
+                    
+                # Caso 2: Solo tiene estrategias {'Strategy1': {...}, 'Strategy2': {...}}
+                elif all(isinstance(v, dict) and 'total_trades' in v for k, v in d.items()):
+                    normalized_data = {'symbol': sym, 'strategies': d}
+                    
+                # Caso 3: Un solo resultado sin estructura {'total_trades': X, 'win_rate': Y, ...}
+                elif 'total_trades' in d and 'win_rate' in d:
+                    normalized_data = {'symbol': sym, 'strategies': {'Default': d}}
+                    
+                # Caso 4: El símbolo es la clave principal {'EURUSD': {'Strategy1': {...}, 'Strategy2': {...}}}
+                elif len(d) == 1 and isinstance(list(d.values())[0], dict):
+                    symbol_key = list(d.keys())[0]
+                    strategies_data = d[symbol_key]
+                    
+                    # Verificar si strategies_data ya es un dict de estrategias o solo una estrategia
+                    if all(isinstance(v, dict) and 'total_trades' in v for k, v in strategies_data.items()):
+                        normalized_data = {'symbol': symbol_key, 'strategies': strategies_data}
+                    else:
+                        normalized_data = {'symbol': symbol_key, 'strategies': {'Default': strategies_data}}
+                else:
+                    # Formato desconocido, intentar adaptarlo lo mejor posible
+                    normalized_data = {'symbol': sym, 'strategies': {'Default': d}}
             else:
-                # Formato antiguo donde d es una sola estrategia
-                d = {'symbol': sym, 'strategies': {'Default': d}}
-        elif 'strategies' not in d and 'symbol' in d:
-            # Formato con símbolo pero sin strategies wrapper
-            d = {'symbol': sym, 'strategies': {'Default': d}}
-        elif 'strategies' not in d:
-            # Formato legacy - key principal es símbolo
-            symbol_key = list(d.keys())[0]
-            strategies_data = d[symbol_key]
-            d = {'symbol': symbol_key, 'strategies': strategies_data}
-        
-        results[sym] = d
+                # No es un diccionario, error en el archivo
+                st.warning(f"Archivo {f.name} no contiene un diccionario válido. Contenido: {d}")
+                continue
+            
+            # Recopilar todas las estrategias encontradas
+            for strategy_name in normalized_data['strategies'].keys():
+                all_strategies_found.add(strategy_name)
+                
+            results[sym] = normalized_data
+            
+        except Exception as e:
+            st.error(f"Error al cargar {f.name}: {str(e)}")
+            continue
+    
+    # Guardar lista de estrategias encontradas en un archivo para debug
+    try:
+        with open(base / "estrategias_encontradas.txt", 'w', encoding='utf-8') as f:
+            f.write("Estrategias encontradas en archivos JSON:\n")
+            for strategy in sorted(all_strategies_found):
+                f.write(f"- {strategy}\n")
+    except Exception:
+        pass
 
     # Cargar resumen global
     gs = base / 'global_summary.json'
@@ -102,16 +175,27 @@ def load_results():
     return results, global_summary
 
 
+@st.cache_data(ttl=60)  # Cache configuración por 1 minuto
+def load_config():
+    """
+    Carga la configuración actual del sistema.
+    """
+    config_path = Path(__file__).parent.parent / "config" / "config.yaml"
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        return config
+    except Exception as e:
+        st.error(f"Error cargando configuración: {e}")
+        return None
+
+
 def calculate_drawdown_percentage(max_drawdown, total_pnl):
     """
-    Calcula el drawdown como porcentaje del capital total.
+    DEPRECATED: El drawdown ya viene calculado correctamente del backtester.
+    Esta función se mantiene por compatibilidad pero no debe usarse.
     """
-    if total_pnl <= 0:
-        return 0.0
-    # Si max_drawdown es negativo, convertirlo a positivo
-    max_dd_abs = abs(max_drawdown)
-    initial_capital = 10000  # Capital inicial estándar
-    return (max_dd_abs / initial_capital) * 100
+    return max_drawdown  # Retornar el valor directo ya que viene en porcentaje
 
 
 def generate_equity_curve_from_trades(trades, initial_capital=10000):
@@ -222,7 +306,7 @@ def plot_equity_curve(equity_curve, symbol, strategy_name):
 
     df = pd.DataFrame({'Equity': equity_curve})
     df['Trade'] = df.index
-    df['Drawdown'] = df['Equity'] - df['Equity'].cummax()
+    df['Drawdown'] = ((df['Equity'] - df['Equity'].cummax()) / df['Equity'].cummax() * 100).fillna(0)
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                        subplot_titles=[f"Curva de Capital - {symbol} ({strategy_name})", "Drawdown"],
@@ -239,7 +323,7 @@ def plot_equity_curve(equity_curve, symbol, strategy_name):
 
     fig.update_layout(height=600, template="plotly_white", showlegend=True)
     fig.update_yaxes(title_text="Capital ($)", row=1, col=1)
-    fig.update_yaxes(title_text="Drawdown ($)", row=2, col=1)
+    fig.update_yaxes(title_text="Drawdown (%)", row=2, col=1)
     fig.update_xaxes(title_text="Número de Trade", row=2, col=1)
 
     # Añadir estadísticas como anotaciones
@@ -248,7 +332,7 @@ def plot_equity_curve(equity_curve, symbol, strategy_name):
     final_equity = df['Equity'].iloc[-1]
     
     fig.add_annotation(
-        text=f"Capital Final: ${final_equity:,.0f}<br>Máximo: ${max_equity:,.0f}<br>Max DD: ${min_drawdown:,.0f}",
+        text=f"Capital Final: ${final_equity:,.0f}<br>Máximo: ${max_equity:,.0f}<br>Max DD: {min_drawdown:.1f}%",
         xref="paper", yref="paper",
         x=0.02, y=0.98, xanchor='left', yanchor='top',
         showarrow=False, font=dict(size=10),
@@ -355,11 +439,14 @@ def plot_strategy_comparison(results, selected_symbol):
     for name, data in strategies.items():
         strategy_names.append(name)
         pnl_values.append(data.get('total_pnl', 0))
-        win_rates.append(data.get('win_rate', 0) * 100)
+        # Guardar win_rate en formato decimal (0-1) para evitar doble multiplicación
+        raw_wr = data.get('win_rate', 0)
+        # Normalizar si viene como porcentaje (>1)
+        if raw_wr > 1:
+            raw_wr = raw_wr / 100.0
+        win_rates.append(raw_wr)
         total_trades.append(data.get('total_trades', 0))
-        max_dd = data.get('max_drawdown', 0)
-        total_pnl = data.get('total_pnl', 0)
-        max_drawdowns.append(calculate_drawdown_percentage(max_dd, total_pnl))
+        max_drawdowns.append(data.get('max_drawdown', 0))  # Ya viene en porcentaje del backtester
 
     fig = make_subplots(rows=2, cols=2,
                        subplot_titles=["P&L Total por Estrategia",
@@ -395,17 +482,79 @@ def main():
     # Cargar datos
     results, global_summary = load_results()
 
+    # Generar equity_curve faltante si existen trades pero no equity (post-procesado)
+    def _build_equity_curve(trades, initial_capital=10000):
+        equity = [initial_capital]
+        running = initial_capital
+        for t in trades:
+            running += t.get('pnl', 0)
+            equity.append(running)
+        return equity
+
+    for sym, sym_data in list(results.items()):
+        strategies = sym_data.get('strategies', {}) if isinstance(sym_data, dict) else {}
+        for sname, sdata in strategies.items():
+            if isinstance(sdata, dict):
+                trades = sdata.get('trades', [])
+                eq = sdata.get('equity_curve', [])
+                if trades and (not eq or len(eq) < 2):
+                    sdata['equity_curve'] = _build_equity_curve(trades)
+
+    # Construir resumen tabular global (símbolo / estrategia)
+    summary_rows = []
+    for sym, sym_data in results.items():
+        strategies = sym_data.get('strategies', {}) if isinstance(sym_data, dict) else {}
+        for sname, sdata in strategies.items():
+            if not isinstance(sdata, dict):
+                continue
+            wr = sdata.get('win_rate', 0)
+            if wr > 1:
+                wr = wr / 100.0
+            summary_rows.append({
+                'Símbolo': sym,
+                'Estrategia': sname,
+                'Trades': sdata.get('total_trades', 0),
+                'WinRate%': round(wr * 100, 2),
+                'P&L': sdata.get('total_pnl', 0),
+                'MaxDD%': round(sdata.get('max_drawdown', 0), 2)
+            })
+
     if not results:
         st.error("❌ No se encontraron resultados de backtesting.")
         st.info("Ejecuta `python main.py` para generar resultados.")
         return
 
-    # Información del período y configuración
+    # Información del período y resumen global
     period_info = global_summary.get('period', {})
+    metrics_info = global_summary.get('metrics', {})
     if period_info:
-        st.info(f"📅 **Período Analizado:** {period_info.get('start_date', 'N/A')} → {period_info.get('end_date', 'N/A')} | "
-               f"⏱️ **Temporalidad:** {period_info.get('timeframe', 'N/A')} | "
-               f"📊 **Total Símbolos:** {global_summary.get('total_symbols', 0)}")
+        total_symbols = global_summary.get('total_symbols', len(results))
+        total_pnl_global = metrics_info.get('total_pnl', 0)
+        total_trades_global = metrics_info.get('total_trades', 0)
+        avg_win_rate_raw = metrics_info.get('avg_win_rate', 0)
+        # Normalizar win rate global si viene >1 (asumido porcentaje)
+        avg_win_rate = avg_win_rate_raw/100.0 if avg_win_rate_raw > 1 else avg_win_rate_raw
+        st.info(
+            f"📅 **Período:** {period_info.get('start_date', 'N/A')} → {period_info.get('end_date', 'N/A')}  | "
+            f"⏱️ **TF:** {period_info.get('timeframe', 'N/A')}  | "
+            f"📊 **Símbolos:** {total_symbols}  | "
+            f"💰 **P&L Total:** {total_pnl_global:,.2f}  | "
+            f"🎯 **Win Rate Promedio:** {avg_win_rate*100:.1f}%  | "
+            f"🧪 **Trades Totales:** {total_trades_global}"
+        )
+    else:
+        st.warning("No se encontró información de período en global_summary.json")
+
+    # Panel resumen global al inicio
+    if summary_rows:
+        import pandas as _pd
+        st.subheader("📌 Resumen Global de Estrategias")
+        df_summary = _pd.DataFrame(summary_rows)
+        # Ordenar por P&L desc
+        df_summary = df_summary.sort_values('P&L', ascending=False).reset_index(drop=True)
+        st.dataframe(df_summary, use_container_width=True, height=min(400, 40 + 25 * len(df_summary)))
+    else:
+        st.warning("No hay filas de resumen para mostrar (posible error de parsing de JSON).")
 
     # Sidebar con controles
     st.sidebar.title("🎛️ Controles")
@@ -420,11 +569,20 @@ def main():
 
     # Selector de estrategia
     symbol_data = results[selected_symbol]
-    available_strategies = list(symbol_data.get('strategies', {}).keys())
+    
+    # Verificar que symbol_data tiene la estructura correcta
+    if isinstance(symbol_data, dict) and 'strategies' in symbol_data and isinstance(symbol_data['strategies'], dict):
+        available_strategies = list(symbol_data['strategies'].keys())
+    else:
+        # Corregir estructura si no es correcta
+        st.error(f"⚠️ Formato incorrecto de datos para {selected_symbol}. Estructura: {type(symbol_data)}")
+        st.write(symbol_data)
+        st.stop()
     
     # Verificar si hay estrategias disponibles
     if not available_strategies:
         st.error(f"⚠️ No hay estrategias disponibles para {selected_symbol}. Por favor, ejecute un backtesting primero.")
+        st.write("Estructura de datos:", symbol_data)
         st.stop()
         
     selected_strategy = st.sidebar.selectbox(
@@ -434,9 +592,34 @@ def main():
     )
 
     # Botón de refresco para forzar recarga de datos
-    if st.sidebar.button("🔄 Refrescar Datos", key="refresh_button"):
+    if st.sidebar.button("🔄 Refrescar Datos", key="refresh_button", type="primary"):
         st.cache_data.clear()
+        st.success("✅ Datos refrescados correctamente")
         st.rerun()
+
+    # Mostrar información de carga de datos
+    from datetime import datetime
+    st.sidebar.write(f"📅 Datos cargados: {datetime.now().strftime('%H:%M:%S')}")
+
+    # Mostrar configuración actual
+    config = load_config()
+    if config:
+        with st.sidebar.expander("⚙️ Configuración Actual"):
+            if 'backtesting' in config:
+                bt_config = config['backtesting']
+                
+                # Símbolos configurados
+                if 'symbols' in bt_config:
+                    st.write(f"**📊 Símbolos ({len(bt_config['symbols'])}):**")
+                    for symbol in bt_config['symbols']:
+                        st.write(f"• {symbol}")
+                
+                # Estrategias activas
+                if 'strategies' in bt_config:
+                    active_strategies = [k for k, v in bt_config['strategies'].items() if v is True]
+                    st.write(f"**🎯 Estrategias activas ({len(active_strategies)}):**")
+                    for strategy in active_strategies:
+                        st.write(f"• {strategy}")
 
     # Debug info expandido
     with st.sidebar.expander("🐛 Debug Info - Datos Raw"):
@@ -485,10 +668,19 @@ def main():
 
     # Obtener y limpiar datos de la estrategia seleccionada
     if selected_strategy not in symbol_data.get('strategies', {}):
-        st.error(f"⚠️ La estrategia '{selected_strategy}' no existe en los datos para {selected_symbol}. Por favor, seleccione otra estrategia o ejecute un backtesting con esta estrategia.")
+        st.error(f"⚠️ La estrategia '{selected_strategy}' no existe en los datos para {selected_symbol}.")
+        st.write("Estrategias disponibles:", list(symbol_data.get('strategies', {}).keys()))
+        st.write("Datos brutos:", symbol_data)
         st.stop()
-        
+    
+    # Verificar que los datos de la estrategia son un diccionario    
     raw_strategy_data = symbol_data['strategies'][selected_strategy]
+    if not isinstance(raw_strategy_data, dict):
+        st.error(f"⚠️ Los datos para la estrategia '{selected_strategy}' no son válidos. Formato: {type(raw_strategy_data)}")
+        st.write("Datos recibidos:", raw_strategy_data)
+        # Intentar recuperar con un diccionario vacío
+        raw_strategy_data = {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0}
+        
     strategy_data = validate_and_clean_metrics(raw_strategy_data)
 
     # Métricas principales en cards
@@ -496,7 +688,9 @@ def main():
 
     # Extraer datos ya validados (ya están normalizados por validate_and_clean_metrics)
     total_pnl = strategy_data.get('total_pnl', 0.0)
-    win_rate = strategy_data.get('win_rate', 0.0)  # Ya está normalizado (0-1)
+    raw_wr = strategy_data.get('win_rate', 0.0)
+    # Normalizar win_rate: si >1 asumimos que ya era porcentaje
+    win_rate = raw_wr/100.0 if raw_wr > 1 else raw_wr
     total_trades = strategy_data.get('total_trades', 0)
     max_drawdown = abs(strategy_data.get('max_drawdown', 0.0))
     sharpe_ratio = strategy_data.get('sharpe_ratio', 0.0)
@@ -509,6 +703,13 @@ def main():
     total_trades_calc = winning_trades + losing_trades
     if total_trades != total_trades_calc:
         st.warning(f"⚠️ Inconsistencia: Total trades ({total_trades}) ≠ Sum ({total_trades_calc})")
+
+    # Validar consistencia del win_rate
+    if total_trades > 0:
+        win_rate_calc = winning_trades / total_trades
+        win_rate_diff = abs(win_rate - win_rate_calc)
+        if win_rate_diff > 0.01:  # Tolerancia del 1%
+            st.warning(f"⚠️ Win Rate inconsistente: Reportado ({win_rate:.1%}) ≠ Calculado ({win_rate_calc:.1%})")
     
     # Primera fila - Métricas principales
     st.subheader("📊 Métricas Principales")
@@ -530,12 +731,9 @@ def main():
         st.metric("📊 Trades", f"{total_trades}", delta=None)  # Sin formateo de miles para ahorro de espacio
 
     with col4:
-        # Calcular drawdown como porcentaje del capital inicial
-        initial_capital = 10000.0  # Capital inicial por defecto
-        dd_pct = (max_drawdown / initial_capital) * 100 if max_drawdown > 0 else 0
-        # Formato más compacto para el drawdown
-        formatted_dd = f"${max_drawdown/1000:.1f}K" if max_drawdown >= 1000 else f"${max_drawdown:.0f}"
-        st.metric("📉 Max DD", f"{formatted_dd} ({dd_pct:.1f}%)", delta=None)  # Título más corto
+        # Usar drawdown directo del backtester (ya viene en porcentaje)
+        # max_drawdown ya está validado y limpio de validate_and_clean_metrics
+        st.metric("📉 Max DD", f"{max_drawdown:.1f}%", delta=None)
 
     # Segunda fila - Métricas adicionales
     st.markdown('<hr style="margin: 0.3rem 0; border-top: 1px solid rgba(0,0,0,0.1);">', unsafe_allow_html=True)
@@ -660,12 +858,20 @@ def main():
     # Curva de equity
     st.subheader("Curva de Capital y Drawdown")
     
-    # Generar curva de equity si no existe
+    # Usar curva de equity del backtester (no generar datos sintéticos)
     equity_curve = strategy_data.get('equity_curve', [])
-    if not equity_curve and 'trades' in strategy_data:
-        equity_curve = generate_equity_curve_from_trades(strategy_data['trades'])
-    
-    equity_fig = plot_equity_curve(equity_curve, selected_symbol, selected_strategy)
+    if not equity_curve and strategy_data.get('trades'):
+        # Generar curva de equity sintética si faltaba
+        equity_curve = [10000]
+        running = 10000
+        for t in strategy_data.get('trades', []):
+            running += t.get('pnl', 0)
+            equity_curve.append(running)
+    if not equity_curve:
+        st.info("No hay curva de equity en este resultado (sin trades).")
+        equity_fig = plot_equity_curve([], selected_symbol, selected_strategy)
+    else:
+        equity_fig = plot_equity_curve(equity_curve, selected_symbol, selected_strategy)
     st.plotly_chart(equity_fig, width='stretch', key="equity_chart")
 
     # Distribución P&L
@@ -687,7 +893,15 @@ def main():
     # Tabla detallada de trades
     st.header("📋 Detalles de Operaciones")
 
-    trades_df = pd.DataFrame(strategy_data.get('trades', []))
+    trades_raw = strategy_data.get('trades', [])
+    # Opción para limitar trades (rendimiento)
+    show_all_trades = st.checkbox("Mostrar todos los trades", value=False, help="Desmarca para ver solo los primeros 500 si hay demasiados.")
+    if not show_all_trades and isinstance(trades_raw, list) and len(trades_raw) > 500:
+        trades_display = trades_raw[:500]
+        st.info(f"Mostrando primeros 500 de {len(trades_raw)} trades. Marca 'Mostrar todos los trades' para verlos completos.")
+    else:
+        trades_display = trades_raw
+    trades_df = pd.DataFrame(trades_display)
     if not trades_df.empty:
         # Agregar columna de resultado
         trades_df['Resultado'] = trades_df['pnl'].apply(lambda x: '✅ Ganador' if x > 0 else '❌ Perdedor')
