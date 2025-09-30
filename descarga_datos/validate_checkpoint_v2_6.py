@@ -186,13 +186,16 @@ def main():
     """Función principal del validador"""
     print_header()
     
-    # Cambiar al directorio correcto
-    if os.path.exists("descarga_datos"):
+    # Verificar directorio actual
+    current_dir = os.getcwd()
+    if "descarga_datos" in current_dir:
+        print(f"📁 Directorio: {Colors.BLUE}{current_dir.split('descarga_datos')[0]}descarga_datos/{Colors.END}\n")
+    elif os.path.exists("descarga_datos"):
         os.chdir("descarga_datos")
         print(f"📁 Directorio: {Colors.BLUE}descarga_datos/{Colors.END}\n")
     else:
-        print(f"❌ Directorio descarga_datos no encontrado")
-        return False
+        print(f"📁 Directorio actual: {Colors.BLUE}{current_dir}{Colors.END}")
+        print(f"✅ Ejecutando desde: {Colors.GREEN}descarga_datos/{Colors.END}\n")
     
     all_checks_passed = True
     

@@ -1,10 +1,10 @@
-# 🤖 Bot Trader Copilot - Sistema Modular v2.6 🚀
+# 🤖 Bot Trader Copilot - Sistema Modular v2.7 🚀
 
 ## 📋 Descripción General
 
-**Bot Trader Copilot v2.6** es un sistema avanzado de trading automatizado con arquitectura **100% modular** y **control centralizado**. El sistema combina análisis técnico profesional, machine learning y estrategias de trading cuantitativo para operar con múltiples activos financieros.
+**Bot Trader Copilot v2.7** es un sistema avanzado de trading automatizado con arquitectura **100% modular** y **control centralizado**. El sistema combina análisis técnico profesional, machine learning y estrategias de trading cuantitativo para operar con múltiples activos financieros.
 
-### 🎯 Características Principales v2.6
+### 🎯 Características Principales v2.7
 
 - **🔄 Arquitectura Modular Total**: Sistema completamente escalable sin modificar código principal
 - **🌍 Multi-Activo Avanzado**: Acciones, forex y criptos simultáneamente
@@ -20,18 +20,21 @@
 - **🎮 Control Centralizado**: Un único punto de entrada (`main.py`) para todos los modos
 - **🔴 TRADING LIVE OPERATIVO**: Sistema probado y funcionando en mercados reales
 
-## 🚨 **PUNTO DE CONTROL v2.6** - Sistema Completamente Funcional
+## 🚨 **VERSIÓN ACTUAL v2.7** - Desarrollo Activo
 
-> **📍 ESTADO ACTUAL**: Sistema 100% testado, validado y funcionando  
-> **📅 Checkpoint**: 30 de Septiembre de 2025  
-> **🎯 Referencia**: [`CHECKPOINT_v2_6_FUNCIONAL.md`](CHECKPOINT_v2_6_FUNCIONAL.md)
+> **📍 BASE ESTABLE**: Basada en v2.6 completamente testada y validada  
+> **📅 Creada**: 30 de Septiembre de 2025  
+> **🎯 Checkpoint Funcional**: [`CHECKPOINT_v2_6_FUNCIONAL.md`](CHECKPOINT_v2_6_FUNCIONAL.md)
 
-### 🔄 **Para Regresar a Estado Funcional:**
+### 🔄 **Para Regresar a Estado Funcional Probado:**
 ```bash
-# En caso de problemas tras modificaciones:
+# En caso de problemas en v2.7, regresar a v2.6 funcional:
 git checkout version-2.6
 python descarga_datos/validate_modular_system.py
 python descarga_datos/main.py  # Dashboard debe abrir automáticamente
+
+# O para continuar desarrollo en v2.7:
+git checkout version-2.7
 ```
 
 ### ✅ **Estado Validado en Este Checkpoint:**

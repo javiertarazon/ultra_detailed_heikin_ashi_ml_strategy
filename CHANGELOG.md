@@ -1,5 +1,36 @@
 # 📋 Changelog - Bot Trader Copilot
 
+## [2.7.0] - 2025-09-30
+
+### 🚀 **NUEVA RAMA DE DESARROLLO - Basada en v2.6 Estable**
+
+#### 🎯 **Inicialización de Rama v2.7**
+- **🔄 [NUEVO] Branch Creation**: Nueva rama `version-2.7` creada desde v2.6 funcional
+- **📊 [BASE] Estado Funcional**: Hereda todos los fixes y mejoras de v2.6
+- **🛡️ [PROTECCIÓN] Checkpoint Preservado**: v2.6 como punto de control estable
+- **🚀 [DESARROLLO] Nueva Versión**: Lista para nuevas funcionalidades y mejoras
+
+#### 🔧 **Estado Heredado de v2.6**
+- **✅ Sistema Completamente Funcional**: 5,465 trades, $990K P&L validados
+- **✅ Dashboard Auto-Launch**: Funcionando con fallback de puertos
+- **✅ Tests Integrales**: 7/7 tests pasando completamente
+- **✅ Base de Datos**: Sin errores SQL, metadata corregida
+- **✅ Documentación Completa**: Todos los problemas documentados y solucionados
+
+#### 🎯 **Objetivos para v2.7**
+- **🔮 [FUTURO] Nuevas Estrategias**: Espacio para desarrollo de estrategias avanzadas
+- **📈 [FUTURO] Optimizaciones**: Mejoras de performance y funcionalidades
+- **🧪 [FUTURO] Testing Expandido**: Cobertura adicional de testing
+- **📚 [FUTURO] Funcionalidades**: Nuevos módulos y características
+
+#### 🛡️ **Reglas de Desarrollo v2.7**
+- **🔒 Módulos Protegidos**: Mantener protección de módulos críticos
+- **✅ Solo Estrategias y Config**: Modificaciones permitidas solo en áreas seguras
+- **🧪 Validación Obligatoria**: Tests requeridos después de cada cambio
+- **🔄 Fallback Garantizado**: Siempre posible regresar a v2.6 funcional
+
+---
+
 ## [2.6.0] - 2025-09-30
 
 ### 🛠️ **HOTFIX CRÍTICO - Sistema de Integridad y Dashboard Auto-Launch**
