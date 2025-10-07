@@ -234,6 +234,157 @@ def _find_free_port(base_port: int = 8519, max_tries: int = 10) -> int:
     return base_port
 
 
+def train_ml_models():
+    """
+    Entrenar modelos ML con configuración actual
+    Verifica datos existentes y descarga automáticamente si es necesario
+    """
+    print("\n🧠 ENTRENANDO MODELOS ML")
+    print("=" * 50)
+    
+    try:
+        config = load_config_from_yaml()
+        
+        # Acceder a la configuración ML del objeto Config
+        if not hasattr(config, 'ml_training'):
+            print("❌ Configuración ml_training no encontrada en config")
+            return False
+            
+        ml_config = config.ml_training
+        
+        # Obtener configuración de entrenamiento
+        train_start = ml_config.train_start
+        train_end = ml_config.train_end
+        val_start = ml_config.val_start
+        val_end = ml_config.val_end
+        
+        print(f"📅 Período entrenamiento: {train_start} → {train_end}")
+        print(f"📅 Período validación: {val_start} → {val_end}")
+        
+        # Importar ml_trainer que ya maneja descarga automática
+        from ml_trainer import MLTrainer
+        
+        symbols = config.backtesting.symbols
+        timeframe = config.backtesting.timeframe
+        
+        for symbol in symbols:
+            print(f"\n🎯 Entrenando modelos para {symbol}...")
+            trainer = MLTrainer(symbol, timeframe)
+            
+            # download_data() ya verifica cache y descarga automáticamente si es necesario
+            print(f"📥 Verificando datos para {symbol}...")
+            data = asyncio.run(trainer.download_data())
+            
+            if data is None or len(data) < 100:
+                print(f"❌ No se pudieron obtener datos suficientes para {symbol}")
+                continue
+            
+            print(f"✅ Datos disponibles: {len(data)} velas")
+            
+            # Entrenar modelos
+            print(f"🔄 Entrenando modelos ML...")
+            results = trainer.train_models(data)
+            
+            print(f"✅ Modelos entrenados para {symbol}")
+            if results:
+                for model_name, metrics in results.items():
+                    print(f"   📊 {model_name}: Accuracy={metrics.get('accuracy', 0):.4f}, AUC={metrics.get('auc', 0):.4f}")
+        
+        return True
+    
+    except Exception as e:
+        print(f"❌ Error entrenando modelos ML: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+def run_optimization_pipeline():
+    """
+    Ejecutar pipeline completo de optimización ML
+    El pipeline se encarga de verificar y descargar datos automáticamente
+    """
+    print("\n🔬 EJECUTANDO PIPELINE DE OPTIMIZACIÓN ML")
+    print("=" * 50)
+    
+    try:
+        config = load_config_from_yaml()
+        
+        # Acceder directamente a los atributos del objeto Config
+        if not hasattr(config, 'ml_training'):
+            print("⚠️  Configuración ml_training no encontrada en config.yaml")
+            return False
+        
+        ml_config = config.ml_training
+        
+        # Verificar si optimización está habilitada
+        if not ml_config.optimization.get('enabled', False):
+            print("⚠️  Optimización deshabilitada en config.yaml")
+            print("💡 Para habilitar, cambiar ml_training.optimization.enabled: true")
+            return False
+        
+        # Obtener configuración
+        train_start = ml_config.training.get('train_start', '2023-01-01')
+        train_end = ml_config.training.get('train_end', '2023-12-31')
+        val_start = ml_config.training.get('val_start', '2024-01-01')
+        val_end = ml_config.training.get('val_end', '2025-10-06')
+        opt_start = ml_config.optimization.get('opt_start', '2024-01-01')
+        opt_end = ml_config.optimization.get('opt_end', '2025-10-06')
+        n_trials = ml_config.optimization.get('n_trials', 100)
+        
+        print(f"📅 Período entrenamiento ML: {train_start} → {train_end}")
+        print(f"📅 Período validación ML: {val_start} → {val_end}")
+        print(f"📅 Período optimización: {opt_start} → {opt_end}")
+        print(f"🔢 Número de trials: {n_trials}")
+        print(f"\n🔍 El sistema verificará automáticamente si los datos existen")
+        print(f"📥 Si no existen, los descargará automáticamente desde el exchange")
+        
+        # Importar y ejecutar run_optimization_pipeline2
+        # Este pipeline ya incluye descarga automática de datos
+        from run_optimization_pipeline2 import OptimizationPipeline
+        
+        symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else ['BTC/USDT']
+        timeframe = config.backtesting.timeframe if hasattr(config, 'backtesting') else '4h'
+        
+        print(f"\n🎯 Símbolos a procesar: {symbols}")
+        print(f"⏰ Timeframe: {timeframe}")
+        
+        pipeline = OptimizationPipeline(
+            symbols=symbols,
+            timeframe=timeframe,
+            train_start=train_start,
+            train_end=train_end,
+            val_start=val_start,
+            val_end=val_end,
+            opt_start=opt_start,
+            opt_end=opt_end,
+            n_trials=n_trials
+        )
+        
+        # Ejecutar pipeline completo (incluye descarga automática)
+        print(f"\n🚀 Iniciando pipeline de optimización...")
+        results = asyncio.run(pipeline.run_complete_pipeline())
+        
+        print("\n✅ PIPELINE DE OPTIMIZACIÓN COMPLETADO")
+        print(f"📊 Resultados guardados en data/optimization_results/")
+        
+        if results:
+            print(f"\n📈 Resumen de resultados:")
+            for symbol, result in results.items():
+                print(f"   🎯 {symbol}:")
+                if 'backtest_results' in result:
+                    br = result['backtest_results']
+                    print(f"      💰 P&L: ${br.get('total_pnl', 0):.2f}")
+                    print(f"      📊 Win Rate: {br.get('win_rate', 0)*100:.2f}%")
+                    print(f"      📉 Max DD: {br.get('max_drawdown', 0):.2f}%")
+        
+        return True
+    
+    except Exception as e:
+        print(f"❌ Error en pipeline de optimización: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def launch_dashboard(wait_for_completion=False, preferred_port: int = 8519):
     """
     Lanzar dashboard de visualización
@@ -313,6 +464,8 @@ def main():
     parser.add_argument("--timeframe", type=str, help="Timeframe a usar (override config)")
     parser.add_argument("--data-audit", action="store_true", help="Ejecutar auditoría de calidad de datos y salir")
     parser.add_argument("--data-audit-skip-download", action="store_true", help="Ejecuta auditoría sin intentar descargas correctivas (no auto-fetch ni incremental edges)")
+    parser.add_argument("--optimize", action="store_true", help="Ejecutar pipeline completo de optimización ML (entrenamiento + optimización + backtest)")
+    parser.add_argument("--train-ml", action="store_true", help="Solo entrenar modelos ML con configuración actual")
 
     args = parser.parse_args()
 
@@ -330,13 +483,16 @@ def main():
 
     print(f" MODO SELECCIONADO: {mode.upper()}")
 
-    # 1. VALIDACIÓN AUTOMÁTICA (a menos que se omita)
-    if not args.skip_validation:
+    # 1. VALIDACIÓN AUTOMÁTICA (a menos que se omita o sea modo data-audit)
+    if not args.skip_validation and not args.data_audit:
         if not validate_system(dashboard_only=args.dashboard_only):
             print("\n❌ VALIDACIÓN FALLIDA - Abortando ejecución")
             sys.exit(1)
     else:
-        print("  VALIDACIÓN OMITIDA")
+        if args.skip_validation:
+            print("  VALIDACIÓN OMITIDA")
+        elif args.data_audit:
+            print("  VALIDACIÓN OMITIDA (modo auditoría de datos)")
 
     # 2. EJECUTAR OPERACIONES SEGÚN MODO
     if mode == "test_live_mt5":
@@ -374,7 +530,30 @@ def main():
             sys.exit(1)
 
     else:  # backtest
-        if args.dashboard_only:
+        if args.optimize:
+            # Pipeline completo de optimización ML
+            print("\n🔬 EJECUTANDO PIPELINE DE OPTIMIZACIÓN ML")
+            print("=" * 60)
+            success = run_optimization_pipeline()
+            if success:
+                print("\n✅ OPTIMIZACIÓN COMPLETADA")
+                print("💡 Resultados guardados en data/optimization_results/")
+                print("💡 Para backtest con parámetros optimizados, ejecuta: python main.py --backtest-only")
+            else:
+                print("\n❌ OPTIMIZACIÓN FALLÓ")
+                sys.exit(1)
+        elif args.train_ml:
+            # Solo entrenamiento de modelos ML
+            print("\n🧠 ENTRENANDO MODELOS ML")
+            print("=" * 60)
+            success = train_ml_models()
+            if success:
+                print("\n✅ MODELOS ML ENTRENADOS EXITOSAMENTE")
+                print("💡 Modelos guardados en models/")
+            else:
+                print("\n❌ ENTRENAMIENTO ML FALLÓ")
+                sys.exit(1)
+        elif args.dashboard_only:
             # Solo dashboard
             launch_dashboard(wait_for_completion=True)
         elif args.backtest_only:
@@ -402,7 +581,7 @@ def main():
                 audit_symbols = None
                 if args.symbols:
                     audit_symbols = [s.strip() for s in args.symbols.split(',') if s.strip()]
-                audit_timeframe = args.timeframe if args.timeframe else None
+                audit_timeframe = args.timeframe if args.timeframe else '4h'
                 print("\n🔍 Ejecutando auditoría de datos...")
                 if args.data_audit_skip_download:
                     report = run_data_audit(
@@ -415,12 +594,12 @@ def main():
                 else:
                     report = run_data_audit(cfg, symbols=audit_symbols, timeframe=audit_timeframe)
                 print("\n📑 Resumen Auditoría:")
-                print(json.dumps(report["summary"], indent=2, ensure_ascii=False))
+                print(json.dumps(report, indent=2, ensure_ascii=False))
                 print("\nResultado completo en data/dashboard_results/data_audit.json")
                 # Código de salida condicional: si hay símbolos missing -> 2, insufficient -> 3
-                if report["summary"].get("symbols_missing", 0) > 0:
+                if report.get("critical_issues", 0) > 0:
                     sys.exit(2)
-                elif report["summary"].get("symbols_insufficient", 0) > 0:
+                elif report.get("average_quality_score", 100) < 70:
                     sys.exit(3)
                 else:
                     sys.exit(0)

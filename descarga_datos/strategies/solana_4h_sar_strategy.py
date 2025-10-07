@@ -22,7 +22,7 @@ PARÁMETROS OPTIMIZADOS XRP/USDT 1H (29/09/2025):
 """
 import numpy as np
 import pandas as pd
-import numpy as np
+import logging
 from utils.talib_wrapper import talib
 
 class Solana4HSARStrategy:
@@ -33,6 +33,12 @@ class Solana4HSARStrategy:
                  volume_sma_period=None,
                  sar_acceleration=None,
                  sar_maximum=None,
+                 # NUEVOS PARÁMETROS PARA MEJORAR DD Y WIN RATE
+                 atr_period=None,              # Período ATR para filtro de volatilidad
+                 atr_volatility_threshold=None, # Umbral de volatilidad ATR
+                 ema_trend_period=None,        # Período EMA para filtro de tendencia
+                 max_consecutive_losses=None,  # Máximo de pérdidas consecutivas
+                 trailing_stop_atr_multiplier=None, # Multiplicador ATR para trailing stop
                  symbol=None,
                  timeframe=None,
                  config=None):  # Nueva: objeto de configuración
@@ -43,7 +49,13 @@ class Solana4HSARStrategy:
             'stop_loss_percent': 1.287,
             'volume_sma_period': 25,
             'sar_acceleration': 0.064,
-            'sar_maximum': 0.207
+            'sar_maximum': 0.207,
+            # NUEVOS PARÁMETROS PARA MEJORAR DD Y WIN RATE
+            'atr_period': 14,
+            'atr_volatility_threshold': 2.5,  # Umbral de volatilidad (ATR/Precio)
+            'ema_trend_period': 50,           # EMA para filtro de tendencia
+            'max_consecutive_losses': 3,      # Máximo de pérdidas consecutivas
+            'trailing_stop_atr_multiplier': 1.5  # Multiplicador ATR para trailing stop
         }
 
         # Cargar parámetros optimizados desde configuración si está disponible
@@ -86,25 +98,57 @@ class Solana4HSARStrategy:
         self.sar_acceleration = sar_acceleration if sar_acceleration is not None else params['sar_acceleration']
         self.sar_maximum = sar_maximum if sar_maximum is not None else params['sar_maximum']
 
+        # NUEVOS PARÁMETROS PARA MEJORAR DD Y WIN RATE
+        self.atr_period = atr_period if atr_period is not None else params['atr_period']
+        self.atr_volatility_threshold = atr_volatility_threshold if atr_volatility_threshold is not None else params['atr_volatility_threshold']
+        self.ema_trend_period = ema_trend_period if ema_trend_period is not None else params['ema_trend_period']
+        self.max_consecutive_losses = max_consecutive_losses if max_consecutive_losses is not None else params['max_consecutive_losses']
+        self.trailing_stop_atr_multiplier = trailing_stop_atr_multiplier if trailing_stop_atr_multiplier is not None else params['trailing_stop_atr_multiplier']
+
+        # VARIABLES DE ESTADO PARA MEJORAR DD Y WIN RATE
+        self.consecutive_losses = 0  # Contador de pérdidas consecutivas
+        self.trailing_stops = {}     # Trailing stops activos por trade
+
         # Guardar símbolo y timeframe para logging
         self.symbol = symbol
         self.timeframe = timeframe
+        
+        # Inicializar logger
+        self.logger = logging.getLogger(__name__)
 
     def calculate_heikin_ashi(self, df):
         """Calcula velas Heiken Ashi"""
-        ha_close = (df['open'] + df['high'] + df['low'] + df['close']) / 4
-        ha_open = pd.Series(0.0, index=df.index)
-        ha_open.iloc[0] = (df['open'].iloc[0] + df['close'].iloc[0]) / 2
-        for i in range(1, len(df)):
-            ha_open.iloc[i] = (ha_open.iloc[i-1] + ha_close.iloc[i-1]) / 2
-        ha_high = pd.Series([max(h, o, c) for h, o, c in zip(df['high'], ha_open, ha_close)], index=df.index)
-        ha_low = pd.Series([min(l, o, c) for l, o, c in zip(df['low'], ha_open, ha_close)], index=df.index)
-        return pd.DataFrame({
-            'HA_Open': ha_open,
-            'HA_High': ha_high,
-            'HA_Low': ha_low,
-            'HA_Close': ha_close
-        }, index=df.index)
+        try:
+            # Reset index para trabajar con arrays numpy
+            df_reset = df.reset_index(drop=True)
+            
+            ha_close = (df_reset['open'] + df_reset['high'] + df_reset['low'] + df_reset['close']) / 4
+            ha_open = pd.Series(0.0, index=df_reset.index)
+            ha_open.iloc[0] = (df_reset['open'].iloc[0] + df_reset['close'].iloc[0]) / 2
+            
+            for i in range(1, len(df_reset)):
+                ha_open.iloc[i] = (ha_open.iloc[i-1] + ha_close.iloc[i-1]) / 2
+            
+            # Calcular HA High y HA Low usando numpy para mayor eficiencia
+            ha_high = np.maximum.reduce([df_reset['high'].values, ha_open.values, ha_close.values])
+            ha_low = np.minimum.reduce([df_reset['low'].values, ha_open.values, ha_close.values])
+            
+            # Crear DataFrame con índice original
+            ha_df = pd.DataFrame({
+                'HA_Open': ha_open,
+                'HA_High': ha_high,
+                'HA_Low': ha_low,
+                'HA_Close': ha_close
+            }, index=df.index)
+            
+            self.logger.info(f"Heikin Ashi calculado exitosamente: shape={ha_df.shape}")
+            return ha_df
+            
+        except Exception as e:
+            self.logger.error(f"Error calculando Heikin Ashi: {e}")
+            import traceback
+            self.logger.error(f"Traceback completo:\n{traceback.format_exc()}")
+            return pd.DataFrame()
 
     def calculate_signals(self, df):
         """
@@ -112,6 +156,10 @@ class Solana4HSARStrategy:
         """
         # Calcular Heiken Ashi
         ha_df = self.calculate_heikin_ashi(df)
+        if ha_df.empty:
+            self.logger.error("Heikin Ashi calculation failed, returning empty DataFrame")
+            return pd.DataFrame()
+            
         df = df.copy()
         df['ha_open'] = ha_df['HA_Open']
         df['ha_close'] = ha_df['HA_Close']
@@ -134,6 +182,17 @@ class Solana4HSARStrategy:
         # Condición de volumen
         df['volume_condition'] = (df['volume'] > self.volume_threshold) & (df['volume'] > df['volume_sma'])
 
+        # NUEVOS FILTROS PARA MEJORAR DD Y WIN RATE
+
+        # 1. ATR para filtro de volatilidad
+        df['atr'] = talib.ATR(df['high'], df['low'], df['close'], timeperiod=self.atr_period)
+        df['atr_ratio'] = df['atr'] / df['close']  # Ratio de volatilidad
+        df['volatility_filter'] = df['atr_ratio'] < self.atr_volatility_threshold  # Evitar alta volatilidad
+
+        # 2. EMA para filtro de tendencia
+        df['ema_trend'] = talib.EMA(df['close'], timeperiod=self.ema_trend_period)
+        df['trend_direction'] = df['close'] > df['ema_trend']  # True = uptrend, False = downtrend
+
         # Señales base de Heiken Ashi
         df['ha_long_signal'] = df['ha_close'] > df['ha_open']
         df['ha_short_signal'] = df['ha_close'] < df['ha_open']
@@ -142,9 +201,22 @@ class Solana4HSARStrategy:
         df['sar_long_confirm'] = df['close'] > df['sar']  # Precio por encima del SAR = bullish
         df['sar_short_confirm'] = df['close'] < df['sar']  # Precio por debajo del SAR = bearish
 
-        # Señales finales con confirmación SAR
-        df['long_condition'] = df['volume_condition'] & df['ha_long_signal'] & df['sar_long_confirm']
-        df['short_condition'] = df['volume_condition'] & df['ha_short_signal'] & df['sar_short_confirm']
+        # Señales finales con TODOS los filtros aplicados
+        df['long_condition'] = (
+            df['volume_condition'] &
+            df['ha_long_signal'] &
+            df['sar_long_confirm'] &
+            df['volatility_filter'] &  # NUEVO: Solo en baja volatilidad
+            df['trend_direction']      # NUEVO: Solo en uptrend
+        )
+
+        df['short_condition'] = (
+            df['volume_condition'] &
+            df['ha_short_signal'] &
+            df['sar_short_confirm'] &
+            df['volatility_filter'] &  # NUEVO: Solo en baja volatilidad
+            ~df['trend_direction']     # NUEVO: Solo en downtrend
+        )
 
         return df
 
@@ -217,12 +289,20 @@ class Solana4HSARStrategy:
 
                 # Verificar señales de entrada
                 if position == 0:
+                    # NUEVO: Verificar límite de pérdidas consecutivas
+                    if self.consecutive_losses >= self.max_consecutive_losses:
+                        continue  # Saltar entrada si hemos tenido demasiadas pérdidas consecutivas
+
                     if df['long_condition'].iloc[i]:
                         # Entrar en posición long
                         position = 1
                         entry_price = current_price
                         stop_loss = entry_price * (1 - self.stop_loss_percent / 100)
                         take_profit = entry_price * (1 + self.take_profit_percent / 100)
+
+                        # NUEVO: Inicializar trailing stop basado en ATR
+                        current_atr = df['atr'].iloc[i] if 'atr' in df.columns else (entry_price * 0.02)
+                        trailing_stop_level = entry_price - (current_atr * self.trailing_stop_atr_multiplier)
 
                         position_size = self.calculate_position_size(capital, entry_price, stop_loss)
 
@@ -233,15 +313,32 @@ class Solana4HSARStrategy:
                         stop_loss = entry_price * (1 + self.stop_loss_percent / 100)
                         take_profit = entry_price * (1 - self.take_profit_percent / 100)
 
+                        # NUEVO: Inicializar trailing stop basado en ATR
+                        current_atr = df['atr'].iloc[i] if 'atr' in df.columns else (entry_price * 0.02)
+                        trailing_stop_level = entry_price + (current_atr * self.trailing_stop_atr_multiplier)
+
                         position_size = self.calculate_position_size(capital, entry_price, stop_loss)
 
                 # Verificar condiciones de salida
                 elif position == 1:  # Posición long
-                    if current_price >= take_profit or current_price <= stop_loss:
+                    # NUEVO: Actualizar trailing stop
+                    if 'atr' in df.columns:
+                        current_atr = df['atr'].iloc[i]
+                        new_trailing_stop = current_price - (current_atr * self.trailing_stop_atr_multiplier)
+                        trailing_stop_level = max(trailing_stop_level, new_trailing_stop)
+
+                    # Verificar salida: take profit, stop loss o trailing stop
+                    if current_price >= take_profit or current_price <= stop_loss or current_price <= trailing_stop_level:
                         # Cerrar posición
                         exit_price = current_price
                         pnl = (exit_price - entry_price) * position_size
                         capital += pnl
+
+                        # NUEVO: Actualizar contador de pérdidas consecutivas
+                        if pnl < 0:
+                            self.consecutive_losses += 1
+                        else:
+                            self.consecutive_losses = 0  # Resetear en ganancia
 
                         trades.append({
                             'entry_price': entry_price,
@@ -253,11 +350,24 @@ class Solana4HSARStrategy:
                         position = 0
 
                 elif position == -1:  # Posición short
-                    if current_price <= take_profit or current_price >= stop_loss:
+                    # NUEVO: Actualizar trailing stop
+                    if 'atr' in df.columns:
+                        current_atr = df['atr'].iloc[i]
+                        new_trailing_stop = current_price + (current_atr * self.trailing_stop_atr_multiplier)
+                        trailing_stop_level = min(trailing_stop_level, new_trailing_stop)
+
+                    # Verificar salida: take profit, stop loss o trailing stop
+                    if current_price <= take_profit or current_price >= stop_loss or current_price >= trailing_stop_level:
                         # Cerrar posición
                         exit_price = current_price
                         pnl = (entry_price - exit_price) * position_size
                         capital += pnl
+
+                        # NUEVO: Actualizar contador de pérdidas consecutivas
+                        if pnl < 0:
+                            self.consecutive_losses += 1
+                        else:
+                            self.consecutive_losses = 0  # Resetear en ganancia
 
                         trades.append({
                             'entry_price': entry_price,

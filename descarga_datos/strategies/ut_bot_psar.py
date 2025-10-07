@@ -136,7 +136,7 @@ class UTBotPSARStrategy:
         else:
             return df['ha_close'] - (df['atr'] * self.tp_atr_multiplier)
 
-    def run(self, data, symbol):
+    def run(self, data, symbol, timeframe=None):
         """
         Ejecuta la estrategia y devuelve los resultados del backtesting
         """

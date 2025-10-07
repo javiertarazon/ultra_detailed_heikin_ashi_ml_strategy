@@ -1,0 +1,33 @@
+{
+  "symbol": "TSLA_US",
+  "timeframe": "4h",
+  "model_type": "RandomForest",
+  "features": [
+    "ha_close",
+    "ha_open",
+    "ha_high",
+    "ha_low",
+    "ema_10",
+    "ema_20",
+    "ema_200",
+    "macd",
+    "macd_signal",
+    "adx",
+    "sar",
+    "atr",
+    "volatility",
+    "bb_upper",
+    "bb_lower",
+    "rsi",
+    "momentum_5",
+    "momentum_10",
+    "volume_ratio",
+    "price_position",
+    "trend_strength",
+    "returns",
+    "log_returns"
+  ],
+  "cv_mean": 0.606013431013431,
+  "val_auc": 0.6363636363636365,
+  "timestamp": "20251003_233436"
+}

@@ -270,7 +270,7 @@ class UTBotPSARCompensationStrategy:
         else:
             return df['ha_close'] - (df['atr'] * self.tp_atr_multiplier)
 
-    def run(self, data, symbol):
+    def run(self, data, symbol, timeframe=None):
         """
         Ejecuta la estrategia con sistema de compensación y devuelve los resultados del backtesting
         """

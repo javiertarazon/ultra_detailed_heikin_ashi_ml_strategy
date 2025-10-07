@@ -43,23 +43,24 @@ def load_strategies_from_config(config):
         backtesting_config = config.get('backtesting', {})
         strategy_config = backtesting_config.get('strategies', {})
 
-    # Mapeo completo de estrategias disponibles - SISTEMA MODULAR TOTAL
+    # Mapeo completo de estrategias disponibles - SISTEMA MODULAR v2.7
     strategy_classes = {
         'Estrategia_Basica': ('strategies.ut_bot_psar', 'UTBotPSARStrategy'),
         'Estrategia_Compensacion': ('strategies.ut_bot_psar_compensation', 'UTBotPSARCompensationStrategy'),
         'Solana4H': ('strategies.solana_4h_strategy', 'Solana4HStrategy'),
-        'Solana4HSAR': ('strategies.solana_4h_sar_strategy', 'Solana4HSARStrategy'),
-        'Solana4HTrailing': ('strategies.solana_4h_trailing_strategy', 'Solana4HTrailingStrategy'),
-        'Solana4HRiskManaged': ('strategies.solana_4h_risk_managed_strategy', 'Solana4HRiskManagedStrategy'),
-        'Solana4HOptimizedTrailing': ('strategies.solana_4h_optimized_trailing_strategy', 'Solana4HOptimizedTrailingStrategy'),
-        'Solana4HTrailingLive': ('strategies.solana_4h_trailing_live_strategy', 'Solana4HTrailingLiveStrategy'),
-        'HeikinAshiVolumenSar': ('strategies.heikin_ashi_volumen_sar_strategy', 'HeikinAshiVolumenSarStrategy'),
+        'DeepAnalysis': ('strategies.deep_analysis_strategy', 'DeepAnalysisStrategy'),
+        'HeikinAshiVolumenSar': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
         'HeikinAshiVolumenSarImproved': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
+        'Solana4HSAR': ('strategies.solana_4h_strategy', 'Solana4HStrategy'),
+        'UltraDetailedHeikinAshi': ('strategies.ultra_detailed_heikin_ashi_strategy', 'UltraDetailedHeikinAshiStrategy'),
+        'OptimizedStrategy': ('strategies.optimized_strategy', 'OptimizedStrategy'),
+        'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
+        'UltraDetailedHeikinAshiML2': ('strategies.ultra_detailed_heikin_ashi_ml2_strategy', 'UltraDetailedHeikinAshiML2Strategy'),
     }
 
     # Estrategias que requieren estado continuo (procesamiento completo)
     stateful_strategies = {
-        'Solana4HOptimizedTrailing',  # Requiere datos completos
+        # Todas las estrategias actuales procesan en lotes eficientemente
     }
 
     print(f"[BACKTEST] 📋 Cargando estrategias activas desde configuración central...")
@@ -381,8 +382,25 @@ async def run_full_backtesting_with_batches():
                     # Reemplazar "/" por "_" para nombres de archivo válidos
                     safe_symbol = symbol.replace("/", "_")
                     file_path = out_dir / f"{safe_symbol}_results.json"
+                    
+                    # Convertir int64/float64 a tipos nativos de Python para JSON
+                    def convert_to_native(obj):
+                        import numpy as np
+                        if isinstance(obj, dict):
+                            return {k: convert_to_native(v) for k, v in obj.items()}
+                        elif isinstance(obj, list):
+                            return [convert_to_native(item) for item in obj]
+                        elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
+                            return int(obj)
+                        elif isinstance(obj, (np.float64, np.float32)):
+                            return float(obj)
+                        else:
+                            return obj
+                    
+                    strategies_native = convert_to_native(strategies)
+                    
                     with open(file_path, 'w', encoding='utf-8') as f:
-                        json.dump({'symbol': symbol, 'strategies': strategies}, f, indent=2, ensure_ascii=False)
+                        json.dump({'symbol': symbol, 'strategies': strategies_native}, f, indent=2, ensure_ascii=False)
                 # Resumen global
                 summary = {
                     'total_symbols': len(backtest_results),

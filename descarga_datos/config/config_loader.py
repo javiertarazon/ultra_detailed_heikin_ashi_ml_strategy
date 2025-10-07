@@ -136,6 +136,31 @@ class SystemConfig:
     auto_launch_dashboard: bool = True
 
 @dataclass
+class MLTrainingConfig:
+    """Configuración para entrenamiento y optimización ML"""
+    safe_mode: bool = False
+    enabled_models: Dict[str, bool] = field(default_factory=lambda: {
+        'random_forest': True,
+        'gradient_boosting': False,
+        'neural_network': False
+    })
+    training: Dict[str, Any] = field(default_factory=lambda: {
+        'train_start': '2023-01-01',
+        'train_end': '2023-12-31',
+        'val_start': '2024-01-01',
+        'val_end': '2025-10-06',
+        'min_samples': 1000
+    })
+    optimization: Dict[str, Any] = field(default_factory=lambda: {
+        'enabled': False,
+        'n_trials': 100,
+        'opt_start': '2024-01-01',
+        'opt_end': '2025-10-06',
+        'study_name': 'estrategia_gaadors_optimization'
+    })
+    models: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
 class Config:
     system: SystemConfig = field(default_factory=SystemConfig)
     active_exchange: str = "bybit"  # Exchange activo por defecto
@@ -148,6 +173,7 @@ class Config:
     compensation_strategy: CompensationConfig = field(default_factory=CompensationConfig)
     data: DataConfig = field(default_factory=DataConfig)
     reports: ReportsConfig = field(default_factory=ReportsConfig)
+    ml_training: MLTrainingConfig = field(default_factory=MLTrainingConfig)
     live_trading: LiveTradingConfig = field(default_factory=LiveTradingConfig)
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
@@ -294,6 +320,20 @@ def load_config_from_yaml(config_path: Optional[str] = None) -> Config:
                 config.live_trading = lt_cfg
             except Exception as e:
                 print(f"[CONFIG] ⚠️  Error cargando sección live_trading (se ignora): {e}")
+
+        # Cargar configuración de ML training y optimización
+        if 'ml_training' in yaml_data:
+            try:
+                ml_data = yaml_data['ml_training']
+                config.ml_training = MLTrainingConfig(
+                    safe_mode=ml_data.get('safe_mode', False),
+                    enabled_models=ml_data.get('enabled_models', {}),
+                    training=ml_data.get('training', {}),
+                    optimization=ml_data.get('optimization', {}),
+                    models=ml_data.get('models', {})
+                )
+            except Exception as e:
+                print(f"[CONFIG] ⚠️  Error cargando sección ml_training (se ignora): {e}")
 
         return config
 

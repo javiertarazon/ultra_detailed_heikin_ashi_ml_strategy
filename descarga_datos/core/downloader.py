@@ -20,7 +20,7 @@ import os
 from .mt5_downloader import MT5Downloader
 from utils.storage import DataStorage, save_to_csv
 from utils.market_sessions import get_asset_class, expected_candles_for_range, timeframe_to_seconds
-from utils.normalization import DataNormalizer
+# from utils.normalization import DataNormalizer  # TEMP: Comentado por scipy issue en Python 3.13
 
 class AdvancedDataDownloader:
     """
@@ -37,7 +37,7 @@ class AdvancedDataDownloader:
         self.ccxt_exchanges = {}
         self.mt5_downloader = MT5Downloader(config.mt5) if hasattr(config, 'mt5') else None
         self.storage = DataStorage(f"{config.storage.path}/data.db")
-        self.normalizer = DataNormalizer()
+        # self.normalizer = DataNormalizer()  # TEMP: Comentado por scipy issue
 
         # Configuración
         self.max_retries = getattr(config, 'max_retries', 3)
@@ -291,11 +291,11 @@ class AdvancedDataDownloader:
         start_ts_int = int(start_ts_dt.timestamp())
         end_ts_int = int(end_ts_dt.timestamp())
         for symbol in symbols:
-            # Para timeframe 1h, primero intentar cargar desde CSV sintético
-            if timeframe == '1h':
+            # Para timeframe 1h y 4h, primero intentar cargar desde CSV sintético
+            if timeframe in ['1h', '4h']:
                 csv_df = await self.get_data_from_csv(symbol, timeframe, start_date, end_date)
                 if csv_df is not None and not csv_df.empty:
-                    self.logger.info(f"📄 CSV HIT {symbol}: {len(csv_df)} velas sintéticas de 1h")
+                    self.logger.info(f"📄 CSV HIT {symbol}: {len(csv_df)} velas sintéticas de {timeframe}")
                     symbol_data[symbol] = csv_df
                     continue
 
@@ -814,8 +814,8 @@ class AdvancedDataDownloader:
             DataFrame con datos o None
         """
         try:
-            # Solo buscar CSV para timeframe de 1 hora
-            if timeframe != '1h':
+            # Solo buscar CSV para timeframe de 1h y 4h
+            if timeframe not in ['1h', '4h']:
                 return None
 
             csv_path = f"data/csv/{symbol.replace('/', '_')}_{timeframe}.csv"
@@ -829,7 +829,16 @@ class AdvancedDataDownloader:
             if df.empty:
                 return None
 
-            # Asegurar que timestamp esté en formato datetime
+            # Asegurar columna timestamp
+            if 'timestamp' not in df.columns:
+                if 'time' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['time'])
+                elif 'Timestamp' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['Timestamp'])
+                else:
+                    self.logger.error(f"No se encontró columna de timestamp en {csv_path}")
+                    return None
+            
             df['timestamp'] = pd.to_datetime(df['timestamp'])
 
             # Filtrar por rango de fechas si se especifica
@@ -1004,3 +1013,83 @@ class AdvancedDataDownloader:
 
         # Por defecto, considerar retryable (para errores genéricos)
         return True
+
+
+# ===================== FUNCIÓN DE COMPATIBILIDAD =====================
+def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_date: str, exchange: str = "bybit") -> Optional[pd.DataFrame]:
+    """
+    Función de compatibilidad para el sistema de optimización.
+    Descarga y cachea datos usando el AdvancedDataDownloader.
+
+    Args:
+        symbol: Símbolo del activo (ej: 'SOL/USDT')
+        timeframe: Timeframe (ej: '4h', '1h', '1d')
+        start_date: Fecha de inicio en formato YYYY-MM-DD
+        end_date: Fecha de fin en formato YYYY-MM-DD
+        exchange: Exchange a usar (por defecto 'bybit')
+
+    Returns:
+        DataFrame con datos OHLCV o None si falla
+    """
+    try:
+        # Importar configuración
+        from config.config_loader import load_config_from_yaml
+
+        # Cargar configuración
+        config = load_config_from_yaml()
+
+        # Crear instancia del downloader
+        downloader = AdvancedDataDownloader(config)
+
+        # Usar un enfoque más simple: intentar obtener datos de la DB primero
+        # sin inicializar exchanges complejos que pueden causar problemas
+        table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
+
+        if downloader.storage.table_exists(table_name):
+            # Convertir fechas a timestamps
+            start_ts = int(pd.Timestamp(start_date).timestamp()) if start_date else None
+            end_ts = int(pd.Timestamp(end_date).timestamp()) if end_date else None
+
+            df = downloader.storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
+            if df is not None and not df.empty and len(df) > 10:
+                logging.info(f"✅ Datos obtenidos de caché para {symbol}: {len(df)} velas")
+                return df
+
+        # Si no hay datos en caché, devolver None por ahora
+        # La optimización debería manejar este caso
+        logging.warning(f"⚠️ No hay datos en caché para {symbol}, intentando descarga...")
+
+        # Intentar descarga simple sin async complications
+        try:
+            # Crear un nuevo loop si no existe
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            # Ejecutar descarga
+            result = loop.run_until_complete(
+                downloader.download_multiple_symbols(
+                    symbols=[symbol],
+                    timeframe=timeframe,
+                    start_date=start_date,
+                    end_date=end_date,
+                    exchanges=[exchange]
+                )
+            )
+
+            if result and symbol in result and result[symbol] is not None:
+                data = result[symbol]
+                logging.info(f"✅ Datos descargados para {symbol}: {len(data)} velas")
+                return data
+
+        except Exception as download_error:
+            logging.error(f"❌ Error en descarga para {symbol}: {str(download_error)}")
+
+        logging.warning(f"❌ No se pudieron obtener datos para {symbol}")
+        return None
+
+    except Exception as e:
+        logging.error(f"❌ Error en download_and_cache_data para {symbol}: {str(e)}")
+        return None

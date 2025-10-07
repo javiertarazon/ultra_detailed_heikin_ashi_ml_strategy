@@ -1,135 +1,256 @@
-###############################################
-# CONFIGURACIÓN CENTRAL BOT TRADER COPILOT   #
-# Versión unificada y optimizada             #
-###############################################
-
-system:
-  name: "Bot Trader Copilot"
-  version: "2.6.0"
-  log_level: "INFO"
-  log_file: "logs/bot_trader.log"
-  auto_launch_dashboard: true
-
-active_exchange: "bybit"
-
-exchanges:
-  bybit:
-    enabled: true
-    api_key: ""
-    api_secret: ""
-    sandbox: false
-    timeout: 30000
-  binance:
-    enabled: false
-    api_key: ""
-    api_secret: ""
-    sandbox: false
-    timeout: 30000
-
-mt5:
-  enabled: true
-  terminal_path: ""
-  server: "Pepperstone-Demo"
-  login: 61406481
-  password: "Jatr280371$"
-  timeout: 60000
-
+active_exchange: binance
 backtesting:
-  symbols: ["DOGE/USDT", "SOL/USDT", "XRP/USDT", "AVAX/USDT", "SUSHI/USDT"]
-  timeframe: "4h"
-  start_date: "2023-09-29"
-  end_date: "2025-09-29"
-  initial_capital: 10000
   commission: 0.1
-  slippage: 0.05
+  end_date: '2025-10-06'
+  initial_capital: 10000
   strategies:
-    Solana4H: true
-    Solana4HSAR: true
-    HeikinAshiVolumenSar: true
-  strategy_paths:
-    Estrategia_Basica: ["strategies.ut_bot_psar", "UTBotPSARStrategy"]
-    Estrategia_Compensacion: ["strategies.ut_bot_psar_compensation", "UTBotPSARCompensationStrategy"]
-    Solana4H: ["strategies.solana_4h_strategy", "Solana4HStrategy"]
-    Solana4HSAR: ["strategies.solana_4h_sar_strategy", "Solana4HSARStrategy"]
-    Solana4HTrailing: ["strategies.solana_4h_trailing_strategy", "Solana4HTrailingStrategy"]
-    Solana4HRiskManaged: ["strategies.solana_4h_risk_managed_strategy", "Solana4HRiskManagedStrategy"]
-    Solana4HOptimizedTrailing: ["strategies.solana_4h_optimized_trailing_strategy", "Solana4HOptimizedTrailingStrategy"]
-    HeikinAshiVolumenSar: ["strategies.heikin_ashi_volumen_sar_strategy", "HeikinAshiVolumenSarStrategy"]
-    HeikinAshiVolumenSarImproved: ["strategies.heikin_ashi_volumen_sar_strategy_improved", "HeikinAshiVolumenSarStrategyImproved"]
-  optimized_parameters: {}
-  data_quality:
-    min_coverage_pct: 95
-    auto_retry: true
-    gap_fill:
-      enabled: true
-      method: forward
-      max_consecutive: 6
-
-indicators:
-  volatility: { enabled: true, period: 14 }
-  heiken_ashi: { enabled: true, trend_period: 3, size_comparison_threshold: 1.2 }
-  atr: { enabled: true, period: 14 }
-  ema: { enabled: true, periods: [10, 20, 200] }
-  parabolic_sar: { enabled: true, acceleration: 0.02, maximum: 0.2 }
-  adx: { enabled: true, period: 14, threshold: 25 }
-
-storage:
-  path: "data"
-  csv_enabled: true
-  sqlite_enabled: true
-  cache_enabled: true
-
-risk:
-  risk_percent: 2.0
-  tp_atr_multiplier: 2.0
-  sl_atr_multiplier: 1.5
-  max_drawdown_limit: 20.0
-
+    Estrategia_Basica: false
+    Estrategia_Compensacion: false
+    DeepAnalysis: false
+    HeikinAshiVolumenSar: false
+    HeikinAshiVolumenSarImproved: false
+    Solana4H: false
+    Solana4HSAR: false
+    UltraDetailedHeikinAshi: false  # Desactivada - archivo no existe
+    OptimizedStrategy: false
+    UltraDetailedHeikinAshiML: true  # Activada - estrategia principal con ML
+    UltraDetailedHeikinAshiML2: true  # Activada - estrategia avanzada con NN
+  optimized_parameters:
+    SOL/USDT:
+      4h:
+        ml_threshold: 0.3  # MUY PERMISIVO - más señales (antes 0.8)
+        stoch_overbought: 85  # Más permisivo
+        stoch_oversold: 15  # Más permisivo
+        cci_threshold: 80  # Más bajo para más señales
+        volume_ratio_min: 0.3  # ULTRA PERMISIVO - más entradas (antes 1.2)
+        sar_acceleration: 0.02  # Conservador
+        sar_maximum: 0.2  # Conservador
+        atr_period: 14  # Estándar
+        stop_loss_atr_multiplier: 2.0  # Conservador
+        take_profit_atr_multiplier: 3.0  # Conservador
+        ema_trend_period: 50  # Estándar
+        max_drawdown: 0.08  # Más tolerante (antes 0.05)
+        max_portfolio_heat: 0.06  # Más agresivo (antes 0.04)
+        max_concurrent_trades: 5  # Más oportunidades (antes 2)
+        kelly_fraction: 0.5  # Más agresivo (antes 0.3)
+        liquidity_score_min: 5  # MUY PERMISIVO (antes 10)
+    DOGE/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    SOL/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    XRP/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    AVAX/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    SUSHI/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+  slippage: 0.05
+  start_date: '2025-01-01'
+  strategies:
+    Estrategia_Basica: false
+    Estrategia_Compensacion: false
+    DeepAnalysis: false
+    HeikinAshiVolumenSar: false
+    HeikinAshiVolumenSarImproved: false
+    Solana4H: false
+    Solana4HSAR: false
+    UltraDetailedHeikinAshi: false  # Desactivada - archivo no existe
+    OptimizedStrategy: false
+    UltraDetailedHeikinAshiML: true  # Activada - estrategia principal con ML
+    UltraDetailedHeikinAshiML2: true  # Activada - estrategia avanzada con NN
+  symbols:
+  - SOL/USDT
+  timeframe: 4h
 compensation_strategy:
-  enabled: true
-  loss_threshold: 0.2
-  size_multiplier: 1.5
-  tp_percent: 0.25
-  max_account_drawdown: 15.0
   compensation_max_loss: 0.3
   emergency_stop_buffer: 0.98
-  risk_multiplier_high_dd: 0.7
-
-data:
-  use_mt5_for_stocks: true
-  use_ccxt_for_crypto: true
-  max_retries: 3
-  retry_delay: 5
-  limit_per_request: 1000
-  validate_data: true
-
-reports:
-  save_individual_results: true
-  save_equity_curves: true
-  save_trade_details: true
-  generate_comparison: true
-  output_directory: "backtest_results"
-
-live_trading:
   enabled: true
-  mode: "MT5"
-  account_type: "DEMO"
-  risk_per_trade: 0.01
-  max_positions: 3
-  max_positions_per_symbol: 1
-  update_interval_seconds: 5
-  initial_history_bars: 1000
-  apply_risk_management: true
-  validation:
+  loss_threshold: 0.2
+  max_account_drawdown: 25.0
+  size_multiplier: 1.5
+  tp_percent: 0.25
+exchanges:
+  binance:
+    api_key: ''
+    api_secret: ''
     enabled: true
-    check_data_integrity: true
-    validate_signals: true
-    max_signal_age_seconds: 300
-  strategy_mapping:
-    Solana4H:
-      active: true
-      symbols: ["SOL/USDT", "AVAX/USDT", "DOGE/USDT"]
-      timeframes: ["4h"]
-      parameters:
-        take_profit_percent: 4.0
-        stop_loss_percent: 2.0
+    sandbox: false
+    timeout: 30000
+  bybit:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: false
+    timeout: 30000
+indicators:
+  adx:
+    enabled: true
+    period: 14
+    threshold: 25
+  atr:
+    enabled: true
+    period: 14
+  ema:
+    enabled: true
+    periods:
+    - 10
+    - 20
+    - 200
+  heiken_ashi:
+    enabled: true
+    size_comparison_threshold: 1.2
+    trend_period: 3
+  parabolic_sar:
+    acceleration: 0.02
+    enabled: true
+    maximum: 0.2
+  volatility:
+    enabled: true
+    period: 14
+mt5:
+  enabled: true
+  login: 61406481
+  password: Jatr280371$
+  server: Pepperstone-Demo
+  terminal_path: ''
+  timeout: 60000
+risk:
+  max_drawdown_limit: 30.0
+  risk_percent: 2.0
+  sl_atr_multiplier: 1.5
+  tp_atr_multiplier: 2.0
+storage:
+  cache_enabled: true
+  csv_enabled: true
+  path: data
+  sqlite_enabled: true
+system:
+  auto_launch_dashboard: true
+  log_file: logs/bot_trader.log
+  log_level: INFO
+  name: Bot Trader Copilot
+  version: 2.6.0
+
+# Configuración de Machine Learning
+ml_training:
+  # Modo agresivo para maximizar P&L con drawdown 5-10%
+  safe_mode: false  # DESACTIVADO para re-entrenamiento completo
+
+  # Modelos ML activados para optimización
+  enabled_models:
+    random_forest: true          # Activado para optimización
+    gradient_boosting: false     # Mantenido desactivado por estabilidad
+    neural_network: false        # Mantenido desactivado por estabilidad
+
+  # Parámetros de entrenamiento
+  training:
+    train_start: '2023-01-01'    # ✅ CORREGIDO: Usar datos disponibles (2023)
+    train_end: '2023-12-31'      # ✅ Entrenamiento: todo 2023
+    val_start: '2024-01-01'      # ✅ Validación: 2024
+    val_end: '2024-06-30'        # ✅ Primera mitad 2024
+    min_samples: 500             # ✅ Reducido para período más corto
+
+  # Configuración de optimización con Optuna
+  optimization:
+    enabled: true                # ✅ ACTIVADO - Ejecutar optimización
+    n_trials: 100                # Número de pruebas Optuna
+    opt_start: '2023-01-01'      # ✅ CORREGIDO: Inicio período optimización
+    opt_end: '2024-06-30'        # ✅ CORREGIDO: Fin período optimización
+    study_name: 'estrategia_gaadors_optimization'
+    
+    # Objetivos de optimización (targets específicos)
+    targets:
+      maximize:
+        - total_pnl              # Maximizar ganancia total
+        - win_rate               # Maximizar tasa de aciertos
+        - profit_factor          # Maximizar factor de ganancia
+        - sharpe_ratio           # Maximizar Sharpe ratio
+      minimize:
+        - max_drawdown           # Minimizar drawdown máximo
+      constraints:
+        min_trades: 20           # Mínimo de trades para validar
+        max_drawdown_limit: 0.15 # Máximo drawdown permitido (15%)
+        min_win_rate: 0.55       # Mínimo win rate aceptable (55%)
+
+  # Parámetros de modelos
+  models:
+    random_forest:
+      n_estimators: 100
+      max_depth: 10
+      n_jobs: 1  # Importante para Python 3.13 - evitar problemas de paralelismo
+      random_state: 42
+    gradient_boosting:
+      n_estimators: 100
+      max_depth: 3
+      learning_rate: 0.1
+      random_state: 42
+    neural_network:  # XGBoost
+      n_estimators: 100
+      max_depth: 4
+      learning_rate: 0.1
+      eval_metric: 'logloss'

@@ -10,6 +10,24 @@ import yaml
 # ==============================================================
 # Funciones puras reutilizables (aptas para tests sin Streamlit)
 # ==============================================================
+
+def sanitize_numeric_value(value, max_value=1e12):
+    """Sanitiza valores numéricos para evitar overflow y valores irreales."""
+    if value is None:
+        return 0.0
+    
+    if not isinstance(value, (int, float)):
+        return 0.0
+    
+    if np.isnan(value) or np.isinf(value):
+        return 0.0
+    
+    # Limitar valores extremos
+    if abs(value) > max_value:
+        return max_value if value > 0 else -max_value
+    
+    return float(value)
+
 def summarize_results_structured(results: dict) -> pd.DataFrame:
     """Genera un DataFrame resumen (símbolo/estrategia) a partir de la
     estructura de resultados cargada por load_results().
@@ -39,13 +57,18 @@ def summarize_results_structured(results: dict) -> pd.DataFrame:
             # Normalizar win_rate si viene como porcentaje (>1)
             if isinstance(wr, (int, float)) and wr > 1:
                 wr = wr / 100.0
+            
+            # Sanitizar valores numéricos para evitar overflow
+            total_pnl = sanitize_numeric_value(strat_data.get('total_pnl', 0.0))
+            max_drawdown = sanitize_numeric_value(strat_data.get('max_drawdown', 0.0))
+            
             rows.append({
                 'symbol': sym,
                 'strategy': strat_name,
                 'total_trades': strat_data.get('total_trades', 0) or 0,
                 'win_rate': wr,
-                'total_pnl': strat_data.get('total_pnl', 0.0) or 0.0,
-                'max_drawdown': strat_data.get('max_drawdown', 0.0) or 0.0
+                'total_pnl': total_pnl,
+                'max_drawdown': max_drawdown
             })
     return pd.DataFrame(rows)
 
@@ -438,7 +461,8 @@ def plot_strategy_comparison(results, selected_symbol):
 
     for name, data in strategies.items():
         strategy_names.append(name)
-        pnl_values.append(data.get('total_pnl', 0))
+        # Sanitizar P&L para evitar valores extremos
+        pnl_values.append(sanitize_numeric_value(data.get('total_pnl', 0)))
         # Guardar win_rate en formato decimal (0-1) para evitar doble multiplicación
         raw_wr = data.get('win_rate', 0)
         # Normalizar si viene como porcentaje (>1)
@@ -446,7 +470,7 @@ def plot_strategy_comparison(results, selected_symbol):
             raw_wr = raw_wr / 100.0
         win_rates.append(raw_wr)
         total_trades.append(data.get('total_trades', 0))
-        max_drawdowns.append(data.get('max_drawdown', 0))  # Ya viene en porcentaje del backtester
+        max_drawdowns.append(sanitize_numeric_value(data.get('max_drawdown', 0)))  # Sanitizar drawdown también
 
     fig = make_subplots(rows=2, cols=2,
                        subplot_titles=["P&L Total por Estrategia",
@@ -515,8 +539,8 @@ def main():
                 'Estrategia': sname,
                 'Trades': sdata.get('total_trades', 0),
                 'WinRate%': round(wr * 100, 2),
-                'P&L': sdata.get('total_pnl', 0),
-                'MaxDD%': round(sdata.get('max_drawdown', 0), 2)
+                'P&L': sanitize_numeric_value(sdata.get('total_pnl', 0)),
+                'MaxDD%': round(sanitize_numeric_value(sdata.get('max_drawdown', 0)), 2)
             })
 
     if not results:
@@ -529,7 +553,7 @@ def main():
     metrics_info = global_summary.get('metrics', {})
     if period_info:
         total_symbols = global_summary.get('total_symbols', len(results))
-        total_pnl_global = metrics_info.get('total_pnl', 0)
+        total_pnl_global = sanitize_numeric_value(metrics_info.get('total_pnl', 0))
         total_trades_global = metrics_info.get('total_trades', 0)
         avg_win_rate_raw = metrics_info.get('avg_win_rate', 0)
         # Normalizar win rate global si viene >1 (asumido porcentaje)
@@ -552,7 +576,7 @@ def main():
         df_summary = _pd.DataFrame(summary_rows)
         # Ordenar por P&L desc
         df_summary = df_summary.sort_values('P&L', ascending=False).reset_index(drop=True)
-        st.dataframe(df_summary, use_container_width=True, height=min(400, 40 + 25 * len(df_summary)))
+        st.dataframe(df_summary, width='stretch', height=min(400, 40 + 25 * len(df_summary)))
     else:
         st.warning("No hay filas de resumen para mostrar (posible error de parsing de JSON).")
 

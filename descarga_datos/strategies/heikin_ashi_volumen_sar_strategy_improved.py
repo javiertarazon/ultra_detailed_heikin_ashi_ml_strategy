@@ -1,24 +1,9 @@
-"""
-Implementación MEJORADA de la estrategia multi-activo con Heikin Ashi, Volumen y Par        # Señales de entrada ajustadas para balance 50/50
-        # Long: Más flexible - solo requiere HA alcista + volumen + SAR bullish (muy amplio)
-        df['long_condition'] = (
-            df['volume_condition'] &
-            df['ha_bullish'] &
-            (df['close'] > df['sar'] * 1.005) &  # Buffer mínimo para longs
-            (df['rsi'] < 85)  # RSI muy flexible
-            # Sin requerimiento de tendencia para favorecer longs
-        )
+"""Estrategia Heikin Ashi + Volumen + SAR mejorada.
 
-        # Short: Más estricto - requiere todas las condiciones
-        df['short_condition'] = (
-            df['volume_condition'] &
-            df['ha_bearish'] &
-            df['sar_bearish'] &  # Buffer estricto
-            (df['rsi'] > 35) &   # RSI más estricto
-            df['trend_down']     # Requiere tendencia bajista
-        )sión mejorada con balance long/short, RSI para sobrecompra/sobreventa, y SAR más flexible.
-Adecuada para acciones, forex y criptomonedas mediante ajuste de parámetros.
-"""
+Esta versión aplica filtros de volumen, Parabolic SAR y RSI para generar
+entradas balanceadas long/short, incorpora trailing stop y límites de riesgo,
+y se adapta a distintos mercados (acciones, forex, cripto) mediante
+parámetros configurables."""
 import numpy as np
 import pandas as pd
 import logging
@@ -36,7 +21,9 @@ class HeikinAshiVolumenSarStrategyImproved:
                  rsi_period=14,
                  rsi_overbought=75,        # Relajado de 70 a 75
                  rsi_oversold=25,          # Relajado de 30 a 25
-                 max_long_ratio=0.7):      # Ajustado de 0.65 a 0.7
+                 max_long_ratio=0.7,       # Ajustado de 0.65 a 0.7
+                 initial_capital=10000.0,
+                 max_position_value_ratio=0.1):
         self.volume_threshold = volume_threshold
         self.take_profit_percent = take_profit_percent
         self.stop_loss_percent = stop_loss_percent
@@ -48,27 +35,80 @@ class HeikinAshiVolumenSarStrategyImproved:
         self.rsi_overbought = rsi_overbought
         self.rsi_oversold = rsi_oversold
         self.max_long_ratio = max_long_ratio
+        self.initial_capital = float(initial_capital)
+        self.max_position_value_ratio = max(0.0, float(max_position_value_ratio))
 
         self.logger = logging.getLogger(__name__)
 
-        self.logger.info(f"Estrategia HeikinAshiVolumenSar MEJORADA inicializada con: TP={take_profit_percent}%, " +
-                        f"SL={stop_loss_percent}%, TrailStop={trailing_stop_percent}%, VolThreshold={volume_threshold}")
+        self.logger.info(
+            "Estrategia HeikinAshiVolumenSar MEJORADA inicializada con: "
+            f"TP={take_profit_percent}%, SL={stop_loss_percent}%, "
+            f"TrailStop={trailing_stop_percent}%, VolThreshold={volume_threshold}, "
+            f"CapitalInicial={self.initial_capital}, MaxPositionRatio={self.max_position_value_ratio}"
+        )
 
     def calculate_heikin_ashi(self, df):
-        """Calcula velas Heiken Ashi"""
-        ha_close = (df['open'] + df['high'] + df['low'] + df['close']) / 4
-        ha_open = pd.Series(0.0, index=df.index)
-        ha_open.iloc[0] = (df['open'].iloc[0] + df['close'].iloc[0]) / 2
-        for i in range(1, len(df)):
-            ha_open.iloc[i] = (ha_open.iloc[i-1] + ha_close.iloc[i-1]) / 2
-        ha_high = pd.Series([max(h, o, c) for h, o, c in zip(df['high'], ha_open, ha_close)], index=df.index)
-        ha_low = pd.Series([min(l, o, c) for l, o, c in zip(df['low'], ha_open, ha_close)], index=df.index)
-        return pd.DataFrame({
-            'HA_Open': ha_open,
-            'HA_High': ha_high,
-            'HA_Low': ha_low,
-            'HA_Close': ha_close
-        }, index=df.index)
+        """Calcula velas Heiken Ashi de forma robusta"""
+        try:
+            self.logger.info(f"Calculando Heikin Ashi para DataFrame con shape: {df.shape}")
+            self.logger.info(f"Columnas disponibles: {list(df.columns)}")
+
+            # Asegurar que tenemos las columnas necesarias
+            required_cols = ['open', 'high', 'low', 'close']
+            if not all(col in df.columns for col in required_cols):
+                self.logger.error(f"Faltan columnas requeridas: {required_cols}")
+                return pd.DataFrame()
+
+            if df.empty or len(df) < 2:
+                self.logger.error(f"DataFrame vacío o muy pequeño: {len(df)} filas")
+                return pd.DataFrame()
+
+            # Resetear índice para trabajar con índices enteros
+            df_reset = df.reset_index()
+
+            # Calcular HA Close como array numpy para mayor eficiencia
+            ha_close_values = ((df_reset['open'].values + df_reset['high'].values +
+                               df_reset['low'].values + df_reset['close'].values) / 4)
+
+            # Calcular HA Open
+            ha_open_values = np.zeros(len(df_reset))
+            ha_open_values[0] = (df_reset['open'].iloc[0] + df_reset['close'].iloc[0]) / 2
+
+            for i in range(1, len(df_reset)):
+                ha_open_values[i] = (ha_open_values[i-1] + ha_close_values[i-1]) / 2
+
+            # Convertir a Series manteniendo el índice original del DataFrame fuente
+            ha_open_series = pd.Series(ha_open_values, index=df.index, dtype=float)
+            ha_close_series = pd.Series(ha_close_values, index=df.index, dtype=float)
+
+            # Calcular HA High y HA Low usando numpy para mayor eficiencia y reconstruir Series alineadas
+            ha_high = pd.Series(
+                np.maximum.reduce([df_reset['high'].values, ha_open_values, ha_close_values]),
+                index=df.index,
+                dtype=float
+            )
+            ha_low = pd.Series(
+                np.minimum.reduce([df_reset['low'].values, ha_open_values, ha_close_values]),
+                index=df.index,
+                dtype=float
+            )
+
+            # Crear DataFrame con índice original para evitar desalineaciones y NaN innecesarios
+            ha_df = pd.DataFrame({
+                'HA_Open': ha_open_series,
+                'HA_High': ha_high,
+                'HA_Low': ha_low,
+                'HA_Close': ha_close_series
+            }, index=df.index)
+
+            self.logger.info(f"Heikin Ashi calculado exitosamente: shape={ha_df.shape}")
+            return ha_df
+
+        except Exception as e:
+            self.logger.error(f"Error calculando Heikin Ashi: {e}")
+            import traceback
+            self.logger.error(f"Traceback completo:\n{traceback.format_exc()}")
+            return pd.DataFrame()
 
     def calculate_signals(self, df):
         """
@@ -123,9 +163,49 @@ class HeikinAshiVolumenSarStrategyImproved:
         return df
 
     def calculate_position_size(self, capital, entry_price, stop_loss):
-        """Calcula el tamaño de posición basado en riesgo"""
-        risk_amount = capital * 0.02  # 2% de riesgo por trade
-        return risk_amount / abs(entry_price - stop_loss)
+        """Calcula un tamaño de posición conservador limitado por el capital disponible."""
+        if entry_price <= 0:
+            return 0.0
+
+        price_diff = abs(entry_price - stop_loss)
+        # Evitar divisiones por cero o difs extremadamente pequeñas que generan overflow
+        if price_diff <= 1e-6 * max(abs(entry_price), 1.0):
+            return 0.0
+
+        usable_capital = max(capital, 0.0)
+        if usable_capital <= 0:
+            return 0.0
+
+        max_risk_per_trade = max(self.initial_capital * 0.02, 1e-6)
+        risk_amount = min(usable_capital * 0.02, max_risk_per_trade)  # Riesgo máximo 2% del capital inicial o actual, lo que sea menor
+        if risk_amount <= 0:
+            return 0.0
+
+        position_size = risk_amount / price_diff
+
+        # Limitar a la cantidad máxima de unidades que se puede comprar sin apalancamiento
+        max_units = usable_capital / max(entry_price, 1e-8)
+        max_notional_cap = max(
+            1.0,
+            min(self.initial_capital, usable_capital) * self.max_position_value_ratio
+        )
+        max_notional_units = max_notional_cap / max(entry_price, 1e-8)
+        if max_units <= 0 or max_notional_units <= 0:
+            return 0.0
+
+        final_size = float(min(position_size, max_units, max_notional_units))
+
+        if final_size < position_size:
+            notional = final_size * entry_price
+            self.logger.debug(
+                "Tamaño de posición ajustado por límites. pedido=%.6f, final=%.6f, riesgo=%.2f, notional=%.2f",
+                position_size,
+                final_size,
+                risk_amount,
+                notional
+            )
+
+        return final_size
 
     def check_long_short_balance(self, long_count, short_count, max_ratio=0.65):
         """
@@ -170,7 +250,7 @@ class HeikinAshiVolumenSarStrategyImproved:
 
         return trailing_stop, highest_price, lowest_price
 
-    def run(self, data, symbol):
+    def run(self, data, symbol, timeframe=None):
         """
         Ejecuta la estrategia mejorada con balance long/short y trailing stop
         """
@@ -179,7 +259,8 @@ class HeikinAshiVolumenSarStrategyImproved:
             df = self.calculate_signals(data.copy())
 
             # Inicializar variables de trading
-            capital = 10000.0
+            initial_capital = self.initial_capital
+            capital = float(initial_capital)
             position = 0  # 0: sin posición, 1: long, -1: short
             entry_price = 0.0
             stop_loss = 0.0
@@ -192,36 +273,53 @@ class HeikinAshiVolumenSarStrategyImproved:
             short_count = 0
 
             # Simular trading con balance long/short
+            position_size = 0.0
             for i in range(len(df)):
                 current_price = df['close'].iloc[i]
+
+                # Si no hay capital disponible, no se abren nuevas posiciones
+                if capital <= 0:
+                    position = 0
+                    position_size = 0.0
+                    continue
 
                 # Verificar señales de entrada (sin restricciones de balance para más señales)
                 if position == 0:
                     # Verificar señal long
                     if df['long_condition'].iloc[i]:
+                        candidate_stop_loss = current_price * (1 - self.stop_loss_percent / 100)
+                        candidate_size = self.calculate_position_size(capital, current_price, candidate_stop_loss)
+                        if candidate_size <= 0:
+                            continue
+
                         # Entrar en posición long
                         position = 1
                         entry_price = current_price
-                        stop_loss = entry_price * (1 - self.stop_loss_percent / 100)
+                        stop_loss = candidate_stop_loss
                         take_profit = entry_price * (1 + self.take_profit_percent / 100)
                         trailing_stop = stop_loss  # Initial trailing stop is the stop loss
                         highest_price = current_price
                         long_count += 1
 
-                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+                        position_size = candidate_size
 
                     # Verificar señal short
                     elif df['short_condition'].iloc[i]:
+                        candidate_stop_loss = current_price * (1 + self.stop_loss_percent / 100)
+                        candidate_size = self.calculate_position_size(capital, current_price, candidate_stop_loss)
+                        if candidate_size <= 0:
+                            continue
+
                         # Entrar en posición short
                         position = -1
                         entry_price = current_price
-                        stop_loss = entry_price * (1 + self.stop_loss_percent / 100)
+                        stop_loss = candidate_stop_loss
                         take_profit = entry_price * (1 - self.take_profit_percent / 100)
                         trailing_stop = stop_loss  # Initial trailing stop is the stop loss
                         lowest_price = current_price
                         short_count += 1
 
-                        position_size = self.calculate_position_size(capital, entry_price, stop_loss)
+                        position_size = candidate_size
 
                 # Gestionar posiciones abiertas con trailing stop
                 elif position == 1:  # Posición long
@@ -236,6 +334,7 @@ class HeikinAshiVolumenSarStrategyImproved:
                         exit_price = current_price
                         pnl = (exit_price - entry_price) * position_size
                         capital += pnl
+                        capital = max(capital, 0.0)
 
                         trades.append({
                             'entry_price': entry_price,
@@ -249,6 +348,7 @@ class HeikinAshiVolumenSarStrategyImproved:
                         position = 0
                         trailing_stop = 0.0
                         highest_price = 0.0
+                        position_size = 0.0
 
                 elif position == -1:  # Posición short
                     # Update trailing stop
@@ -262,6 +362,7 @@ class HeikinAshiVolumenSarStrategyImproved:
                         exit_price = current_price
                         pnl = (entry_price - exit_price) * position_size
                         capital += pnl
+                        capital = max(capital, 0.0)
 
                         trades.append({
                             'entry_price': entry_price,
@@ -275,6 +376,7 @@ class HeikinAshiVolumenSarStrategyImproved:
                         position = 0
                         trailing_stop = 0.0
                         lowest_price = float('inf')
+                        position_size = 0.0
 
             # Calcular métricas
             total_trades = len(trades)
@@ -285,7 +387,7 @@ class HeikinAshiVolumenSarStrategyImproved:
 
             # Calcular equity curve y max drawdown
             if trades:
-                equity_curve = [10000.0]
+                equity_curve = [float(initial_capital)]
                 for tr in trades:
                     equity_curve.append(equity_curve[-1] + tr['pnl'])
 
@@ -300,7 +402,7 @@ class HeikinAshiVolumenSarStrategyImproved:
                 max_drawdown = -max_dd
             else:
                 max_drawdown = 0.0
-                equity_curve = [10000.0]
+                equity_curve = [float(initial_capital)]
 
             # Profit factor
             gross_profit = sum(t['pnl'] for t in trades if t['pnl'] > 0)
@@ -353,7 +455,7 @@ class HeikinAshiVolumenSarStrategyImproved:
                 'compensation_ratio': 0.0,  # No aplica para esta estrategia
                 'adjusted_total_pnl': total_pnl,  # No hay compensación en esta estrategia
                 'compensation_trades_data': [],  # No aplica para esta estrategia
-                'cagr': total_pnl / 10000.0,  # Crecimiento anual simplificado
+                'cagr': total_pnl / initial_capital if initial_capital else 0.0,  # Crecimiento anual simplificado
                 'volatility': np.std([t['pnl_percent'] for t in trades]) if trades else 0,
             }
 
@@ -372,7 +474,7 @@ class HeikinAshiVolumenSarStrategyImproved:
                 'sharpe_ratio': 0.0,
                 'symbol': symbol,
                 'trades': [],
-                'equity_curve': [10000.0],
+                'equity_curve': [float(self.initial_capital)],
                 'trailing_stop_exits': 0,
                 'take_profit_exits': 0,
                 'trailing_stop_ratio': 0.0,

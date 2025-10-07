@@ -1,0 +1,215 @@
+active_exchange: bybit
+backtesting:
+  commission: 0.1
+  end_date: '2025-01-01'
+  initial_capital: 10000
+  strategies:
+    Estrategia_Basica: false
+    Estrategia_Compensacion: false
+    DeepAnalysis: false
+    HeikinAshiVolumenSar: false
+    HeikinAshiVolumenSarImproved: false
+    Solana4H: false
+    Solana4HSAR: false
+    UltraDetailedHeikinAshi: false
+    OptimizedStrategy: true
+  optimized_parameters:
+    BTC/USDT:
+      4h:
+        ml_threshold: 0.7
+        stoch_overbought: 85
+        stoch_oversold: 15
+    DOGE/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    SOL/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    XRP/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    AVAX/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+    SUSHI/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+  slippage: 0.05
+  start_date: '2022-01-01'
+  strategies:
+    Estrategia_Basica: false
+    Estrategia_Compensacion: false
+    DeepAnalysis: false
+    HeikinAshiVolumenSar: false
+    HeikinAshiVolumenSarImproved: false
+    Solana4H: false
+    Solana4HSAR: false
+    UltraDetailedHeikinAshi: true
+  symbols:
+  - BTC/USDT
+  timeframe: 4h
+compensation_strategy:
+  compensation_max_loss: 0.3
+  emergency_stop_buffer: 0.98
+  enabled: true
+  loss_threshold: 0.2
+  max_account_drawdown: 25.0
+  size_multiplier: 1.5
+  tp_percent: 0.25
+exchanges:
+  binance:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: false
+    timeout: 30000
+  bybit:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: false
+    timeout: 30000
+indicators:
+  adx:
+    enabled: true
+    period: 14
+    threshold: 25
+  atr:
+    enabled: true
+    period: 14
+  ema:
+    enabled: true
+    periods:
+    - 10
+    - 20
+    - 200
+  heiken_ashi:
+    enabled: true
+    size_comparison_threshold: 1.2
+    trend_period: 3
+  parabolic_sar:
+    acceleration: 0.02
+    enabled: true
+    maximum: 0.2
+  volatility:
+    enabled: true
+    period: 14
+mt5:
+  enabled: true
+  login: 61406481
+  password: Jatr280371$
+  server: Pepperstone-Demo
+  terminal_path: ''
+  timeout: 60000
+risk:
+  max_drawdown_limit: 30.0
+  risk_percent: 2.0
+  sl_atr_multiplier: 1.5
+  tp_atr_multiplier: 2.0
+storage:
+  cache_enabled: true
+  csv_enabled: true
+  path: data
+  sqlite_enabled: true
+system:
+  auto_launch_dashboard: true
+  log_file: logs/bot_trader.log
+  log_level: INFO
+  name: Bot Trader Copilot
+  version: 2.6.0
+
+# Configuración de Machine Learning
+ml_training:
+  # Modo seguro para Python 3.13 - desactivar todos los modelos ML durante optimización
+  safe_mode: true  # Activar para evitar KeyboardInterrupt en Python 3.13
+
+  # Modelos ML activados/desactivados para evitar problemas de compatibilidad
+  enabled_models:
+    random_forest: false         # Desactivado en modo seguro
+    gradient_boosting: false     # Desactivado en modo seguro
+    neural_network: false        # Desactivado en modo seguro
+
+  # Parámetros de entrenamiento
+  training:
+    train_start: '2020-01-01'    # Inicio período entrenamiento
+    train_end: '2023-12-31'      # Fin período entrenamiento
+    val_start: '2024-01-01'      # Inicio validación
+    val_end: '2024-12-31'        # Fin validación
+    min_samples: 1000            # Mínimo velas para entrenamiento
+
+  # Parámetros de modelos
+  models:
+    random_forest:
+      n_estimators: 100
+      max_depth: 10
+      random_state: 42
+    gradient_boosting:
+      n_estimators: 100
+      max_depth: 3
+      learning_rate: 0.1
+      random_state: 42
+    neural_network:  # XGBoost
+      n_estimators: 100
+      max_depth: 4
+      learning_rate: 0.1
+      eval_metric: 'logloss'

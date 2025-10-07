@@ -1,0 +1,28 @@
+{
+  "symbol": "TSLA.US",
+  "timeframe": "4h",
+  "model_type": "XGBoost",
+  "features": [
+    "ha_close",
+    "ha_open",
+    "ha_high",
+    "ha_low",
+    "ema_10",
+    "ema_20",
+    "ema_200",
+    "adx",
+    "sar",
+    "atr",
+    "volatility",
+    "momentum_5",
+    "momentum_10",
+    "volume_ratio",
+    "price_position",
+    "trend_strength",
+    "returns",
+    "log_returns"
+  ],
+  "cv_mean": 0.4720297393455752,
+  "val_auc": 0.997737556561086,
+  "timestamp": "20251003_224710"
+}
