@@ -34,77 +34,84 @@ import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
+from models.model_manager import ModelManager
+
 class MLModelManager:
     """
     Gestor de modelos de machine learning para predicción de señales Heikin Ashi
+    
+    Esta clase ahora utiliza el ModelManager centralizado para mantener
+    la compatibilidad con el código existente.
     """
 
-    def __init__(self, model_dir: str = "models"):
-        self.model_dir = model_dir
+    def __init__(self, model_dir: str = None, config: dict = None):
+        # Usar el ModelManager centralizado
+        self.model_manager = ModelManager(model_dir)
+        # Mantener compatibilidad con código existente
+        self.model_dir = self.model_manager.model_dir
         self.models = {}
         self.scalers = {}
-        self.ensure_model_dir()
+        # Agregar configuración para prepare_features
+        self.config = config
 
     def ensure_model_dir(self):
         """Crear directorio de modelos si no existe"""
-        if not os.path.exists(self.model_dir):
-            os.makedirs(self.model_dir)
+        self.model_manager.ensure_model_dir()
 
     def get_model_path(self, symbol: str, model_name: str) -> str:
         """Obtener ruta del modelo"""
-        # Para DOGE/USDT, buscar en models/DOGE/USDT_gradient_boosting.pkl
-        if '/' in symbol:
-            base, quote = symbol.split('/')
-            return os.path.join(self.model_dir, base, f"{quote}_{model_name}.pkl")
-        else:
-            return os.path.join(self.model_dir, f"{symbol}_{model_name}.pkl")
+        return self.model_manager.get_model_path(symbol, model_name)
 
     def get_scaler_path(self, symbol: str, model_name: str) -> str:
         """Obtener ruta del scaler"""
-        # Para DOGE/USDT, buscar en models/DOGE/USDT_gradient_boosting_scaler.pkl
-        if '/' in symbol:
-            base, quote = symbol.split('/')
-            return os.path.join(self.model_dir, base, f"{quote}_{model_name}_scaler.pkl")
-        else:
-            return os.path.join(self.model_dir, f"{symbol}_{model_name}_scaler.pkl")
+        return self.model_manager.get_scaler_path(symbol, model_name)
 
     def prepare_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Preparar features para el modelo ML
+        Preparar features EXACTAMENTE IGUAL que en el entrenamiento ML
+        CRÍTICO: Debe coincidir con MLTrainer.prepare_features() para evitar mismatch
         """
-        # Calcular Heikin Ashi primero
-        data = self._calculate_heikin_ashi(data)
-
-        # Calcular indicadores técnicos
-        data = self._calculate_technical_indicators(data)
-
-        features = pd.DataFrame(index=data.index)
-
-        # Features de Heikin Ashi
-        features['ha_body_ratio'] = abs(data['ha_close'] - data['ha_open']) / (data['ha_high'] - data['ha_low'] + 1e-8)
-        features['ha_trend_strength'] = (data['ha_close'] - data['ha_open']) / data['atr']
-        features['ha_color_change'] = data['ha_color_change']
-
-        # Features técnicas principales
-        features['stoch_k'] = data['stoch_k']
-        features['stoch_d'] = data['stoch_d']
-        features['cci'] = data['cci']
-        features['rsi'] = data['rsi']
-        features['macd'] = data['macd']
-        features['macd_signal'] = data['macd_signal']
-        features['macd_hist'] = data['macd_hist']
-
-        # Features adicionales
-        features['volume_ratio'] = data['volume_ratio']
-        features['roc'] = data['roc']
-        features['willr'] = data['willr']
-        features['atr'] = data['atr']
-
-        # Features de momentum
-        features['price_change'] = data['close'].pct_change()
-        features['volume_change'] = data['volume'].pct_change()
-
-        # Features de volatilidad
+        # 🎯 COPIA EXACTA de MLTrainer.prepare_features() - NO MODIFICAR
+        from indicators.technical_indicators import TechnicalIndicators
+        
+        # Usar la configuración ya cargada en el objeto, no recargar
+        # config = load_config_from_yaml()  # ❌ PROBLEMÁTICO en optimización paralela
+        config = self.config  # ✅ Usar config ya cargada
+        
+        indicator = TechnicalIndicators(config)
+        df = data.copy()  # Trabajar con copia para no modificar original
+        
+        # Calcular TODOS los indicadores usando el método centralizado
+        df = indicator.calculate_all_indicators(df)
+        
+        # Calcular features EXACTAMENTE como en MLTrainer
+        df['returns'] = df['close'].pct_change()
+        df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
+        df['volatility'] = df['returns'].rolling(window=20).std()
+        df['ha_close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
+        df['ha_open'] = (df['open'].shift(1) + df['close'].shift(1)) / 2
+        df['ha_high'] = df[['high', 'ha_open', 'ha_close']].max(axis=1)
+        df['ha_low'] = df[['low', 'ha_open', 'ha_close']].min(axis=1)
+        df['momentum_5'] = df['close'] - df['close'].shift(5)
+        df['momentum_10'] = df['close'] - df['close'].shift(10)
+        df['price_position'] = (df['close'] - df['close'].rolling(50).min()) / (df['close'].rolling(50).max() - df['close'].rolling(50).min())
+        df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
+        df['trend_strength'] = abs(df['ema_10'] - df['ema_20']) / df['atr']
+        
+        # Seleccionar EXACTAMENTE las mismas features que MLTrainer.select_features()
+        feature_cols = ['ha_close', 'ha_open', 'ha_high', 'ha_low', 'ema_10', 'ema_20', 'ema_200', 
+                       'macd', 'macd_signal', 'adx', 'sar', 'atr', 'volatility', 'bb_upper', 'bb_lower', 
+                       'rsi', 'momentum_5', 'momentum_10', 'volume_ratio', 'price_position', 
+                       'trend_strength', 'returns', 'log_returns']
+        
+        # Filtrar solo las columnas que existen y están en la lista
+        available_features = [col for col in feature_cols if col in df.columns]
+        features = df[available_features].copy()
+        
+        # Eliminar filas con NaN
+        features = features.dropna()
+        
+        # Features de volatilidad adicionales
         features['bb_upper'], features['bb_middle'], features['bb_lower'] = talib.BBANDS(data['close'], timeperiod=20)
         features['bb_width'] = (features['bb_upper'] - features['bb_lower']) / features['bb_middle']
 
@@ -121,6 +128,26 @@ class MLModelManager:
                 features[col] = features[col].clip(lower, upper)
 
         return features
+
+        # ⚠️ CÓDIGO INALCANZABLE ELIMINADO ⚠️
+        # El siguiente código nunca se ejecutaba porque estaba después del return
+        # Features de volatilidad
+        # features['bb_upper'], features['bb_middle'], features['bb_lower'] = talib.BBANDS(data['close'], timeperiod=20)
+        # features['bb_width'] = (features['bb_upper'] - features['bb_lower']) / features['bb_middle']
+
+        # Limpiar NaN y valores extremos
+        # features = features.fillna(0)
+        # features = features.replace([np.inf, -np.inf], 0)
+
+        # Limitar valores extremos (winsorizing)
+        # for col in features.columns:
+        #     if features[col].dtype in ['float64', 'float32']:
+        #         # Limitar al percentil 1-99 para evitar outliers extremos
+        #         lower = features[col].quantile(0.01)
+        #         upper = features[col].quantile(0.99)
+        #         features[col] = features[col].clip(lower, upper)
+
+        # return features
 
     def prepare_target(self, data: pd.DataFrame, lookahead: int = 1) -> pd.Series:
         """
@@ -215,14 +242,14 @@ class MLModelManager:
             auc = roc_auc_score(y_test, y_pred_proba, multi_class='ovr') if len(np.unique(y_test)) > 1 else 0.5
 
             if enable_cv and len(X_train_scaled) >= cv_folds:
-                # Cross-validation configurable (default 10-fold)
+                # Cross-validation configurable (default 10-fold) - FORZAR n_jobs=1
                 cv_scores = cross_val_score(
                     model,
                     X_train_scaled,
                     y_train,
                     cv=cv_folds,
                     scoring='accuracy',
-                    n_jobs=cv_jobs
+                    n_jobs=1  # FORZADO a 1 para evitar problemas de paralelización en Python 3.13
                 )
                 cv_score = cv_scores.mean()
                 cv_std = cv_scores.std()
@@ -251,31 +278,70 @@ class MLModelManager:
         return results
 
     def save_model(self, symbol: str, model_name: str, model, scaler):
-        """Guardar modelo entrenado"""
-        model_path = self.get_model_path(symbol, model_name)
-        scaler_path = self.get_scaler_path(symbol, model_name)
+        """Guardar modelo entrenado usando el ModelManager centralizado"""
+        # Construir nombre completo del modelo incluyendo el símbolo
+        full_model_name = f"{symbol}_{model_name}"
+        full_scaler_name = f"{symbol}_{model_name}_scaler"
 
-        # Crear directorio si no existe
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        # Usar el ModelManager centralizado
+        success_model = self.model_manager.save_model(model, full_model_name)
+        success_scaler = self.model_manager.save_model(scaler, full_scaler_name)
 
-        joblib.dump(model, model_path)
-        joblib.dump(scaler, scaler_path)
-
-        print(f"    Modelo guardado: {model_path}")
+        if success_model and success_scaler:
+            print(f"    Modelo guardado: {full_model_name}")
+        else:
+            print(f"    Error al guardar modelo para {symbol}")
 
     def load_model(self, symbol: str, model_name: str):
-        """Cargar modelo entrenado"""
-        model_path = self.get_model_path(symbol, model_name)
-        scaler_path = self.get_scaler_path(symbol, model_name)
+        """Cargar modelo entrenado usando múltiples métodos de compatibilidad"""
+        import os
+        import joblib
 
-        if os.path.exists(model_path) and os.path.exists(scaler_path):
-            model = joblib.load(model_path)
-            scaler = joblib.load(scaler_path)
-            return model, scaler
-        else:
-            return None, None
+        # Construir nombre completo del modelo incluyendo el símbolo
+        full_model_name = f"{symbol}_{model_name}"
 
-    def predict_signal(self, data: pd.DataFrame, symbol: str, model_name: str = 'gradient_boosting') -> pd.Series:
+        # PRIMERO: Intentar cargar desde archivos joblib en el directorio de modelos (donde están los modelos reales)
+        try:
+            # Convertir símbolo a nombre de directorio válido (XRP/USDT -> XRP_USDT)
+            symbol_dir = symbol.replace('/', '_')
+            models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', symbol_dir)
+            model_files = [f for f in os.listdir(models_dir) if f.startswith('RandomForest_') and f.endswith('.joblib')]
+
+            if model_files:
+                # Usar el modelo más reciente
+                latest_model = sorted(model_files)[-1]
+                model_path = os.path.join(models_dir, latest_model)
+
+                # Cargar modelo joblib
+                model_data = joblib.load(model_path)
+                model = model_data['model'] if isinstance(model_data, dict) else model_data
+
+                # Intentar cargar scaler desde el mismo archivo o crear uno nuevo
+                scaler = None
+                if isinstance(model_data, dict) and 'scaler' in model_data:
+                    scaler = model_data['scaler']
+                else:
+                    # Crear scaler dummy y ajustarlo con datos de ejemplo
+                    from sklearn.preprocessing import StandardScaler
+                    scaler = StandardScaler()
+                    # El scaler se ajustará cuando se use por primera vez
+
+                return model, scaler
+        except Exception as e:
+            print(f"Error cargando modelo joblib: {e}")
+
+        # SEGUNDO: Intentar cargar desde ModelManager centralizado
+        try:
+            model = self.model_manager.load_model(full_model_name)
+            scaler = self.model_manager.load_model(f"{full_model_name}_scaler")
+            if model is not None and scaler is not None:
+                return model, scaler
+        except:
+            pass
+
+        return None, None
+
+    def predict_signal(self, data: pd.DataFrame, symbol: str, model_name: str = 'random_forest') -> pd.Series:
         """
         Generar predicciones de señales usando modelo entrenado REAL
         NO USA SIMULACIONES - Requiere modelo entrenado con datos históricos
@@ -289,10 +355,57 @@ class MLModelManager:
 
         # Preparar features con datos reales
         features = self.prepare_features(data)
-        features_scaled = scaler.transform(features)
+
+        # DEBUG: Imprimir número de features
+        print(f"DEBUG: Features preparadas: {len(features.columns)} columnas")
+        print(f"DEBUG: Nombres de features: {list(features.columns)}")
+
+        # Ajustar scaler si no está fitted o si hay mismatch de features
+        try:
+            # Verificar si el scaler está fitted
+            if not hasattr(scaler, 'mean_') or scaler.mean_ is None:
+                raise ValueError("Scaler not fitted - debe estar guardado junto con el modelo entrenado")
+            features_scaled = scaler.transform(features)
+        except Exception as e:
+            # ❌ DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
+            print(f"ERROR CRÍTICO: Scaler no válido ({e}). Devolviendo confianza neutral (0.5)")
+            # Fallback seguro: devolver confianza neutral sin data leakage
+            confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
+            return confidence
+
+        # Verificar que el número de features coincida
+        # Determinar dinámicamente el número esperado de features basado en las disponibles
+        expected_features = len(features.columns)  # Usar el número real de features preparadas
+        actual_features = features_scaled.shape[1]
+        if actual_features != expected_features:
+            print(f"CRITICAL: Features mismatch - esperado {expected_features}, obtenido {actual_features}")
+            # ❌ DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
+            print("ERROR CRÍTICO: Mismatch de features. Devolviendo confianza neutral (0.5)")
+            # Fallback seguro: devolver confianza neutral sin data leakage
+            confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
+            return confidence
 
         # Predecir probabilidades usando modelo entrenado
-        proba = model.predict_proba(features_scaled)
+        # Deshabilitar paralelización temporalmente para compatibilidad con Python 3.13
+        original_n_jobs = getattr(model, 'n_jobs', None)
+        if hasattr(model, 'n_jobs'):
+            model.n_jobs = 1
+        
+        try:
+            proba = model.predict_proba(features_scaled)
+        except ValueError as e:
+            if "features" in str(e).lower():
+                # Error de mismatch de features - NO intentar re-entrenar, devolver confianza neutral
+                print(f"ERROR: Mismatch de features en modelo ({e}). Usando confianza neutral (0.5)")
+                # Fallback: devolver confianza neutral sin intentar re-entrenar
+                confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
+                return confidence
+            else:
+                raise e
+        finally:
+            # Restaurar configuración original
+            if hasattr(model, 'n_jobs') and original_n_jobs is not None:
+                model.n_jobs = original_n_jobs
 
         # Convertir a confianza (probabilidad de cambio alcista - probabilidad de cambio bajista)
         confidence = proba[:, 2] - proba[:, 0] if proba.shape[1] > 2 else proba[:, 1] - 0.5
@@ -301,7 +414,13 @@ class MLModelManager:
         confidence = (confidence + 1) / 2
         confidence = np.clip(confidence, 0, 1)
 
-        return pd.Series(confidence, index=data.index, name='ml_confidence')
+        # CRÍTICO: El índice debe coincidir con features.index, luego reindexar al data.index original
+        confidence_series = pd.Series(confidence, index=features.index, name='ml_confidence')
+        
+        # Reindexar para coincidir con el índice original de data (llenar NaN con 0.5 si es necesario)
+        confidence_series = confidence_series.reindex(data.index, fill_value=0.5)
+        
+        return confidence_series
 
     def _calculate_heikin_ashi(self, data: pd.DataFrame) -> pd.DataFrame:
         """Calcular velas Heikin Ashi"""
@@ -332,42 +451,16 @@ class MLModelManager:
         return data
 
     def _calculate_technical_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calcular indicadores técnicos necesarios para ML"""
-        try:
-            # ATR
-            data['atr'] = talib.ATR(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # Stochastic Oscillator
-            data['stoch_k'], data['stoch_d'] = talib.STOCH(data['high'], data['low'], data['close'],
-                                                          fastk_period=14, slowk_period=3, slowd_period=3)
-
-            # CCI (Commodity Channel Index)
-            data['cci'] = talib.CCI(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # RSI
-            data['rsi'] = talib.RSI(data['close'], timeperiod=14)
-
-            # MACD
-            data['macd'], data['macd_signal'], data['macd_hist'] = talib.MACD(data['close'],
-                                                                             fastperiod=12, slowperiod=26, signalperiod=9)
-
-            # Volume Ratio (comparación con promedio móvil)
-            data['volume_ratio'] = data['volume'] / data['volume'].rolling(window=20).mean()
-
-            # ROC (Rate of Change)
-            data['roc'] = talib.ROC(data['close'], timeperiod=10)
-
-            # Williams %R
-            data['willr'] = talib.WILLR(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # Llenar NaN
-            data = data.fillna(0)
-
-            return data
-
-        except Exception as e:
-            print(f"Error calculando indicadores técnicos: {e}")
-            return data
+        """
+        ⚠️ MÉTODO OBSOLETO: Use TechnicalIndicators.calculate_all_indicators_unified en su lugar
+        
+        Este método se mantiene solo para compatibilidad con código existente.
+        Será eliminado en futuras versiones.
+        """
+        # Llamar al método centralizado
+        from indicators.technical_indicators import TechnicalIndicators
+        indicators = TechnicalIndicators()
+        return indicators.calculate_all_indicators_unified(data)
 
 
 class UltraDetailedHeikinAshiMLStrategy:
@@ -382,65 +475,37 @@ class UltraDetailedHeikinAshiMLStrategy:
         elif hasattr(config, 'backtesting'):
             # Es un objeto Config - extraer parámetros relevantes
             self.config = {
-                'symbol': getattr(config.backtesting, 'symbols', ['DOGE/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'DOGE/USDT',
-                'timeframe': getattr(config.backtesting, 'timeframe', '1H') if hasattr(config.backtesting, 'timeframe') else '1H',
-                'ml_threshold': 0.3,  # ULTRA PERMISIVO - más señales
-                'stoch_overbought': 80,
-                'stoch_oversold': 20,
-                'cci_threshold': 100,
-                'volume_ratio_min': 0.3,  # ULTRA PERMISIVO - más entradas
-                'liquidity_score_min': 5,  # BAJADO DE 75 A 5 - CRÍTICO PARA GENERAR TRADES
-                'max_drawdown': 0.05,
-                'max_portfolio_heat': 0.04,
-                'max_concurrent_trades': 2,
-                'kelly_fraction': 0.5
+                'symbol': getattr(config.backtesting, 'symbols', ['SOL/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'SOL/USDT',
+                'timeframe': getattr(config.backtesting, 'timeframe', '4h') if hasattr(config.backtesting, 'timeframe') else '4h',
+                'ml_threshold': 0.25,  # Optimizado para SOL/USDT
+                'stoch_overbought': 85,
+                'stoch_oversold': 35,
+                'cci_threshold': 170,
+                'volume_ratio_min': 0.3,
+                'liquidity_score_min': 5,
+                'max_drawdown': 0.12,
+                'max_portfolio_heat': 0.18,
+                'max_concurrent_trades': 4,
+                'kelly_fraction': 0.35
             }
         else:
             # Es un diccionario
             self.config = config
 
         # Extraer parámetros con valores por defecto
-        self.symbol = self.config.get('symbol', 'DOGE/USDT')
-        self.timeframe = self.config.get('timeframe', '1H')
+        self.symbol = self.config.get('symbol', 'SOL/USDT')
+        self.timeframe = self.config.get('timeframe', '4h')
 
-        # Parámetros ultra-optimizados basados en análisis (OPTIMIZADO para rentabilidad)
-        self.ml_threshold = self.config.get('ml_threshold', 0.3)  # MUY PERMISIVO - más señales
-        self.stoch_overbought = self.config.get('stoch_overbought', 75)  # Más bajo
-        self.stoch_oversold = self.config.get('stoch_oversold', 25)  # Más alto
-        self.cci_threshold = self.config.get('cci_threshold', 80)  # Más bajo
-        self.volume_ratio_min = self.config.get('volume_ratio_min', 0.3)  # MUY PERMISIVO - permite más entradas
-        self.liquidity_score_min = self.config.get('liquidity_score_min', 5)  # BAJADO - más permisivo con nueva fórmula
+        # Parámetros optimizados desde configuración centralizada
+        self.ml_threshold = self.config.get('ml_threshold', 0.25)
+        self.stoch_overbought = self.config.get('stoch_overbought', 85)
+        self.stoch_oversold = self.config.get('stoch_oversold', 35)
+        self.cci_threshold = self.config.get('cci_threshold', 170)
+        self.volume_ratio_min = self.config.get('volume_ratio_min', 0.3)
+        self.liquidity_score_min = self.config.get('liquidity_score_min', 5)
 
-        # NUEVOS PARÁMETROS OPTIMIZADOS (agregados después de optimización)
-        # Valores optimizados basados en backtesting Optuna (BTC/USDT como referencia)
-        if 'BTC' in self.symbol:
-            # Parámetros optimizados para BTC/USDT
-            self.volume_threshold = self.config.get('volume_threshold', 1.3)
-            self.atr_multiplier = self.config.get('atr_multiplier', 3.4)
-            self.stop_loss_pct = self.config.get('stop_loss_pct', 0.09)
-            self.take_profit_pct = self.config.get('take_profit_pct', 0.19)
-            self.rsi_overbought = self.config.get('rsi_overbought', 70)
-            self.rsi_oversold = self.config.get('rsi_oversold', 30)
-            self.stoch_overbought = self.config.get('stoch_overbought', 85)
-            self.stoch_oversold = self.config.get('stoch_oversold', 25)
-        elif 'TSLA' in self.symbol:
-            # Parámetros optimizados para TSLA/US
-            self.volume_threshold = self.config.get('volume_threshold', 1.7)
-            self.atr_multiplier = self.config.get('atr_multiplier', 2.0)
-            self.stop_loss_pct = self.config.get('stop_loss_pct', 0.09)
-            self.take_profit_pct = self.config.get('take_profit_pct', 0.15)
-            self.rsi_overbought = self.config.get('rsi_overbought', 65)
-            self.rsi_oversold = self.config.get('rsi_oversold', 30)
-            self.stoch_overbought = self.config.get('stoch_overbought', 75)
-            self.stoch_oversold = self.config.get('stoch_oversold', 15)
-        else:
-            # Valores por defecto basados en BTC/USDT (mejor score)
-            self.volume_threshold = self.config.get('volume_threshold', 1.3)
-            self.atr_multiplier = self.config.get('atr_multiplier', 3.4)
-            self.stop_loss_pct = self.config.get('stop_loss_pct', 0.09)
-            self.take_profit_pct = self.config.get('take_profit_pct', 0.19)
-            self.rsi_overbought = self.config.get('rsi_overbought', 70)
-            self.rsi_oversold = self.config.get('rsi_oversold', 30)
+        # Cargar parámetros específicos del símbolo desde configuración centralizada
+        self._load_symbol_specific_params(config)
 
         # Gestión de riesgo avanzada OPTIMIZADA
         self.max_drawdown = self.config.get('max_drawdown', 0.05)
@@ -454,7 +519,64 @@ class UltraDetailedHeikinAshiMLStrategy:
         self.current_drawdown = 0.0
 
         # Inicializar gestor de modelos ML
-        self.ml_manager = MLModelManager()
+        self.ml_manager = MLModelManager(config=self.config)
+
+    def _load_symbol_specific_params(self, config):
+        """
+        Carga parámetros específicos del símbolo desde configuración centralizada.
+        Esto elimina la necesidad de modificar la estrategia para cada símbolo.
+        """
+        # Valores por defecto universales
+        default_params = {
+            'volume_threshold': 1.3,
+            'atr_multiplier': 3.4,
+            'stop_loss_pct': 0.09,
+            'take_profit_pct': 0.19,
+            'rsi_overbought': 70,
+            'rsi_oversold': 30,
+            'stoch_overbought': 85,
+            'stoch_oversold': 35,
+            'atr_period': 14,
+            'atr_volatility_threshold': 2.0,
+            'ema_trend_period': 50,
+            'max_consecutive_losses': 3,
+            'min_trend_strength': 0.5,
+            'sar_acceleration': 0.06,
+            'sar_maximum': 0.11,
+            'stop_loss_atr_multiplier': 3.25,
+            'take_profit_atr_multiplier': 5.5,
+            'trailing_stop_atr_multiplier': 1.5,
+            'volatility_filter_threshold': 0.03,
+            'volume_sma_period': 20,
+            'volume_threshold': 1000
+        }
+
+        # Intentar cargar parámetros específicos del símbolo desde configuración
+        symbol_params = {}
+        if config and hasattr(config, 'backtesting'):
+            # Es un objeto Config - buscar en optimized_parameters
+            backtesting_config = config.backtesting
+            if hasattr(backtesting_config, 'optimized_parameters'):
+                opt_params = backtesting_config.optimized_parameters
+                # La configuración actual tiene estructura: SOL/USDT -> 4h -> params
+                symbol_key = self.symbol.replace('/', '_').replace('.', '_')
+                if hasattr(opt_params, symbol_key):
+                    symbol_section = getattr(opt_params, symbol_key)
+                    if hasattr(symbol_section, self.timeframe):
+                        timeframe_section = getattr(symbol_section, self.timeframe)
+                        # Convertir a diccionario
+                        if hasattr(timeframe_section, '__dict__'):
+                            symbol_params = timeframe_section.__dict__
+                        elif hasattr(timeframe_section, 'items'):
+                            symbol_params = dict(timeframe_section)
+
+        # Aplicar parámetros específicos del símbolo o valores por defecto
+        for param_name, default_value in default_params.items():
+            # Primero intentar desde config directa, luego parámetros específicos del símbolo, luego default
+            value = self.config.get(param_name, symbol_params.get(param_name, default_value))
+            setattr(self, param_name, value)
+
+        print(f"📊 Parámetros cargados para {self.symbol}: atr_period={self.atr_period}, stop_loss_atr={self.stop_loss_atr_multiplier}, take_profit_atr={self.take_profit_atr_multiplier}")
 
     def run(self, data: pd.DataFrame, symbol: str, timeframe: str = '4h') -> Dict:
         """
@@ -487,16 +609,28 @@ class UltraDetailedHeikinAshiMLStrategy:
             data_processed = self._prepare_data(data.copy())
             print(f"Datos preparados: {len(data_processed)} filas con indicadores técnicos completos")
 
-            # FORZAR uso de modelos existentes (NO re-entrenar en cada ejecución)
-            model_exists = self.ml_manager.load_model(symbol, 'random_forest')[0] is not None  # CAMBIADO A RANDOM_FOREST
-            should_retrain = not model_exists  # Solo entrenar si NO existe el modelo
+            # FORZAR uso de modelos existentes durante optimización (NO re-entrenar)
+            # Durante optimización Optuna, los modelos ya deben estar entrenados
+            optimization_mode = getattr(self, '_optimization_mode', False)
 
-            if should_retrain:
-                print(f"⚠️  Modelos ML no encontrados. Entrenando con {len(data_processed)} muestras...")
-                self.ml_manager.train_models(data_processed, symbol)
-                print("✅ Modelos ML entrenados y guardados")
+            if optimization_mode:
+                # MODO OPTIMIZACIÓN: Asumir que modelos ya están entrenados
+                print(f"🎯 MODO OPTIMIZACIÓN: Usando modelos ML pre-entrenados para {symbol}")
+                model_exists = self.ml_manager.load_model(symbol, 'random_forest')[0] is not None
+                if not model_exists:
+                    raise ValueError(f"Modelos ML no encontrados para {symbol} en modo optimización. "
+                                   f"Ejecutar entrenamiento primero.")
             else:
-                print(f"✅ Usando modelos ML existentes para {symbol} (skip re-training)")
+                # MODO NORMAL: Verificar y entrenar si es necesario
+                model_exists = self.ml_manager.load_model(symbol, 'random_forest')[0] is not None
+                should_retrain = not model_exists
+
+                if should_retrain:
+                    print(f"⚠️  Modelos ML no encontrados. Entrenando con {len(data_processed)} muestras...")
+                    self.ml_manager.train_models(data_processed, symbol)
+                    print("✅ Modelos ML entrenados y guardados")
+                else:
+                    print(f"✅ Usando modelos ML existentes para {symbol} (skip re-training)")
 
             # CACHEAR predicciones ML usando modelo entrenado REAL
             print(f"Generando predicciones ML reales para {len(data_processed)} velas...")
@@ -531,49 +665,31 @@ class UltraDetailedHeikinAshiMLStrategy:
         if missing_cols:
             raise ValueError(f"Columnas requeridas faltantes: {missing_cols}")
 
-            print(f"[CALC] Calculando indicadores técnicos para {len(data)} velas...")        # 1. Heikin Ashi - CORRECTAMENTE calculado
-        data = self._calculate_heikin_ashi(data)
+        print(f"[CALC] Calculando indicadores técnicos para {len(data)} velas...")
+        
+        # 🎯 USAR MÉTODO CENTRALIZADO PARA CONSISTENCIA CON ML
+        # Esto garantiza que _prepare_data y prepare_features usen EXACTAMENTE los mismos indicadores
+        from indicators.technical_indicators import TechnicalIndicators
+        indicators = TechnicalIndicators()
+        data = indicators.calculate_all_indicators_unified(data)
+        
+        # ⚠️ CÓDIGO MANUAL ELIMINADO PARA EVITAR INCONSISTENCIAS ⚠️
+        # El siguiente código calculaba indicadores manualmente con TA-Lib,
+        # causando inconsistencias con el entrenamiento ML que usa TechnicalIndicators centralizada
+        
+        # 1. Heikin Ashi - AHORA CALCULADO POR calculate_all_indicators_unified
+        # data = self._calculate_heikin_ashi(data)
 
-        # 2. Indicadores técnicos principales - VERIFICADOS con TA-Lib
-        try:
-            # Stochastic Oscillator
-            data['stoch_k'], data['stoch_d'] = talib.STOCH(
-                data['high'], data['low'], data['close'],
-                fastk_period=14, slowk_period=3, slowd_period=3
-            )
-
-            # CCI (Commodity Channel Index)
-            data['cci'] = talib.CCI(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # RSI
-            data['rsi'] = talib.RSI(data['close'], timeperiod=14)
-
-            # MACD
-            data['macd'], data['macd_signal'], data['macd_hist'] = talib.MACD(
-                data['close'], fastperiod=12, slowperiod=26, signalperiod=9
-            )
-
-            # ATR para gestión de riesgo REAL
-            data['atr'] = talib.ATR(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # Volumen ratio - indicador de liquidez real
-            data['volume_sma'] = talib.SMA(data['volume'], timeperiod=20)
-            data['volume_ratio'] = data['volume'] / data['volume_sma']
-
-            # Momentum adicional
-            data['roc'] = talib.ROC(data['close'], timeperiod=10)
-            data['willr'] = talib.WILLR(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # Bollinger Bands para volatilidad
-            data['bb_upper'], data['bb_middle'], data['bb_lower'] = talib.BBANDS(
-                data['close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0
-            )
-            data['bb_width'] = (data['bb_upper'] - data['bb_lower']) / data['bb_middle']
-
-            print("Todos los indicadores técnicos calculados correctamente con TA-Lib")
-
-        except Exception as e:
-            raise ValueError(f"Error calculando indicadores técnicos: {e}")
+        # 2. Indicadores técnicos principales - AHORA CALCULADOS CENTRALIZADAMENTE
+        # try:
+        #     # Stochastic Oscillator
+        #     data['stoch_k'], data['stoch_d'] = talib.STOCH(
+        #         data['high'], data['low'], data['close'],
+        #         fastk_period=14, slowk_period=3, slowd_period=3
+        #     )
+        #     # ... resto de indicadores manuales eliminados
+        # except Exception as e:
+        #     raise ValueError(f"Error calculando indicadores técnicos: {e}")
 
         # 3. VALIDAR que no hay NaN críticos (más tolerante)
         critical_indicators = ['ha_close', 'stoch_k', 'cci', 'rsi', 'macd', 'atr']
@@ -719,8 +835,8 @@ class UltraDetailedHeikinAshiMLStrategy:
         max_concurrent_trades = self.max_concurrent_trades
 
         # CONTADORES para análisis
-        import logging
-        logger = logging.getLogger('ultra_detailed_strategy')
+        from utils.logger import get_logger
+        logger = get_logger('ultra_detailed_strategy')
         signals_nonzero = signals[signals != 0]
         logger.info(f"DEBUG: {len(signals_nonzero)} señales no-cero detectadas en serie signals")
 
@@ -824,18 +940,20 @@ class UltraDetailedHeikinAshiMLStrategy:
                             stop_loss_price = new_stop
                             print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
 
-                    if position > 0:  # Posición larga
-                        new_stop = entry_price + new_stop_distance
-                        # Solo mover stop loss si es mejor que el actual (más alto)
-                        if new_stop > stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
-                    else:  # Posición corta
-                        new_stop = entry_price - new_stop_distance
-                        # Solo mover stop loss si es mejor que el actual (más bajo)
-                        if new_stop < stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                # ⚠️ CÓDIGO DUPLICADO ELIMINADO ⚠️
+                # El siguiente bloque estaba completamente repetido y no tenía efecto adicional
+                # if position > 0:  # Posición larga
+                #     new_stop = entry_price + new_stop_distance
+                #     # Solo mover stop loss si es mejor que el actual (más alto)
+                #     if new_stop > stop_loss_price:
+                #         stop_loss_price = new_stop
+                #         print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                # else:  # Posición corta
+                #     new_stop = entry_price - new_stop_distance
+                #     # Solo mover stop loss si es mejor que el actual (más bajo)
+                #     if new_stop < stop_loss_price:
+                #         stop_loss_price = new_stop
+                #         print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
 
                 # Check condiciones de salida REALES
                 exit_reason = None

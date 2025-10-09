@@ -13,7 +13,7 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import logging
+from utils.logger import get_logger
 import threading
 from typing import Dict, List, Optional, Union, Tuple, Any
 from enum import Enum

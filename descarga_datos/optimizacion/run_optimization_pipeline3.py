@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pipeline de Optimización Completo para UltraDetailedHeikinAshiML2 v3
+Pipeline de Optimización Completo - UltraDetailedHeikinAshiML2 v3
 
 Este script implementa el pipeline completo de optimización para la estrategia ML2:
 1. Entrena redes neuronales avanzadas optimizadas con datos históricos
@@ -37,7 +37,7 @@ import dataclasses
 from config.config_loader import load_config_from_yaml
 # Importaciones lazy para evitar KeyboardInterrupt en Python 3.13
 # from ml_trainer2 import MLTrainer2  # Importado solo cuando se necesita
-# from strategy_optimizer2 import StrategyOptimizer2  # Optimizador v2 para NN
+from optimizacion.strategy_optimizer2 import StrategyOptimizer2  # Optimizador v2 para NN
 from strategies.ultra_detailed_heikin_ashi_ml2_strategy import UltraDetailedHeikinAshiML2Strategy
 from utils.logger import setup_logger
 
@@ -48,38 +48,137 @@ class OptimizationPipeline:
     def __init__(self,
                  symbols=None,
                  timeframe="4h",
-                 train_start="2024-12-26",
-                 train_end="2025-06-30",
-                 val_start="2025-07-01",
-                 val_end="2025-10-06",
-                 opt_start="2024-12-26",
-                 opt_end="2025-10-06",
+                 train_start=None,
+                 train_end=None,
+                 val_start=None,
+                 val_end=None,
+                 opt_start=None,
+                 opt_end=None,
+                 test_start=None,
+                 test_end=None,
                  n_trials=50):
         """
         Inicializa el pipeline de optimización completo.
+        
+        PERÍODOS DINÁMICOS Y REALISTAS (fechas calculadas automáticamente):
+        - Entrenamiento ML: 2 años atrás completo (datos históricos)
+        - Validación ML: 1 año atrás H1 (validación temporal)
+        - Optimización: 1 año atrás H2 (optimización parámetros)
+        - Test Final: últimos 3 meses (backtest final out-of-sample)
 
         Args:
             symbols: Lista de símbolos a procesar
             timeframe: Timeframe para los datos
-            train_start/end: Período de entrenamiento ML
-            val_start/end: Período de validación ML
-            opt_start/end: Período para optimización
+            train_start/end: Período de entrenamiento ML (si None, se calcula automáticamente)
+            val_start/end: Período de validación ML (si None, se calcula automáticamente)
+            opt_start/end: Período para optimización (si None, se calcula automáticamente)
+            test_start/end: Período para backtest final (si None, se calcula automáticamente)
             n_trials: Número de pruebas para Optuna
         """
+        from datetime import datetime, timedelta
+        
         self.symbols = symbols if symbols else ["SOL/USDT"]
         self.timeframe = timeframe
-        self.train_start = train_start
-        self.train_end = train_end
-        self.val_start = val_start
-        self.val_end = val_end
-        self.opt_start = opt_start
-        self.opt_end = opt_end
+        
+        # 🔧 PERÍODOS DINÁMICOS Y REALISTAS
+        current_date = datetime.now()
+        
+        if train_start is None or train_end is None:
+            # Entrenamiento ML: hace 3 años a hace 2 años
+            self.train_end = current_date - timedelta(days=730)  # Hace 2 años
+            self.train_start = self.train_end - timedelta(days=365)  # 1 año antes
+        else:
+            self.train_start = train_start
+            self.train_end = train_end
+            
+        if val_start is None or val_end is None:
+            # Validación ML: después del entrenamiento con separación de 7 días
+            self.val_start = self.train_end + timedelta(days=7)  # 1 semana después del entrenamiento
+            self.val_end = current_date - timedelta(days=545)  # Hace 18 meses
+        else:
+            self.val_start = val_start
+            self.val_end = val_end
+            
+        if opt_start is None or opt_end is None:
+            # Optimización: después de validación con separación de 7 días
+            self.opt_start = self.val_end + timedelta(days=7)  # 1 semana después de validación
+            self.opt_end = current_date - timedelta(days=180)  # Hace 6 meses
+        else:
+            self.opt_start = opt_start
+            self.opt_end = opt_end
+            
+        if test_start is None or test_end is None:
+            # Test final: después de optimización con separación de 7 días
+            self.test_start = self.opt_end + timedelta(days=7)  # 1 semana después de optimización
+            self.test_end = current_date - timedelta(days=30)  # Hace 1 mes
+        else:
+            self.test_start = test_start
+            self.test_end = test_end
+        
+        # Convertir a strings para compatibilidad
+        if isinstance(self.train_start, datetime):
+            self.train_start = self.train_start.strftime('%Y-%m-%d')
+        if isinstance(self.train_end, datetime):
+            self.train_end = self.train_end.strftime('%Y-%m-%d')
+        if isinstance(self.val_start, datetime):
+            self.val_start = self.val_start.strftime('%Y-%m-%d')
+        if isinstance(self.val_end, datetime):
+            self.val_end = self.val_end.strftime('%Y-%m-%d')
+        if isinstance(self.opt_start, datetime):
+            self.opt_start = self.opt_start.strftime('%Y-%m-%d')
+        if isinstance(self.opt_end, datetime):
+            self.opt_end = self.opt_end.strftime('%Y-%m-%d')
+        if isinstance(self.test_start, datetime):
+            self.test_start = self.test_start.strftime('%Y-%m-%d')
+        if isinstance(self.test_end, datetime):
+            self.test_end = self.test_end.strftime('%Y-%m-%d')
+            
         self.n_trials = n_trials
 
+        # Validación de períodos no solapados (CRÍTICO)
+        self._validate_period_separation()
+        
         # Cargar configuración
         self.config = load_config_from_yaml()
         logger.info(f"Pipeline inicializado para símbolos: {self.symbols}")
         logger.info(f"Timeframe: {timeframe}, Trials: {n_trials}")
+        logger.info(f"📊 Períodos separados - Train: {train_start} a {train_end}")
+        logger.info(f"📊 Val: {val_start} a {val_end}, Opt: {opt_start} a {opt_end}")
+        logger.info(f"📊 Test Final: {test_start} a {test_end}")
+
+    def _validate_period_separation(self):
+        """
+        Validar que los períodos estén completamente separados para evitar overfitting.
+        CRÍTICO: No debe haber solapamiento entre períodos.
+        """
+        from datetime import datetime
+        
+        periods = [
+            ("Train", self.train_start, self.train_end),
+            ("Validation", self.val_start, self.val_end),
+            ("Optimization", self.opt_start, self.opt_end),
+            ("Test", self.test_start, self.test_end)
+        ]
+        
+        # Convertir a datetime para comparación
+        period_dates = []
+        for name, start, end in periods:
+            start_dt = datetime.strptime(start, "%Y-%m-%d")
+            end_dt = datetime.strptime(end, "%Y-%m-%d")
+            period_dates.append((name, start_dt, end_dt))
+        
+        # Verificar separación temporal
+        for i, (name1, start1, end1) in enumerate(period_dates):
+            for j, (name2, start2, end2) in enumerate(period_dates):
+                if i != j:
+                    # Verificar que no haya solapamiento
+                    if not (end1 < start2 or end2 < start1):
+                        raise ValueError(f"🛑 CRÍTICO: Solapamiento entre períodos {name1} y {name2}. "
+                                       f"Esto causa overfitting severo. "
+                                       f"{name1}: {start1.date()} a {end1.date()}, "
+                                       f"{name2}: {start2.date()} a {end2.date()}")
+        
+        logger.info("✅ Validación de períodos: Todos los períodos están correctamente separados")
 
     async def run_complete_pipeline(self):
         """
@@ -192,12 +291,39 @@ class OptimizationPipeline:
 
         # Importación lazy de StrategyOptimizer2
         try:
-            from strategy_optimizer2 import StrategyOptimizer2
+            from optimizacion.strategy_optimizer2 import StrategyOptimizer2
             logger.info("StrategyOptimizer2 importado correctamente")
         except ImportError as e:
             logger.error(f"No se puede importar StrategyOptimizer2: {e}")
             # Fallback: devolver parámetros por defecto
             return self._get_default_parameters(symbol)
+
+        # Configurar targets específicos para optimización con trade-offs
+        optimization_targets = {
+            'primary_target': {
+                'metric': 'total_pnl',
+                'target_value': 5000.0,  # P&L objetivo en dólares - AUMENTADO A $5,000
+                'weight': 1.0
+            },
+            'acceptable_tradeoffs': {
+                'max_drawdown': {
+                    'min': 0.05,  # 5% mínimo aceptable
+                    'max': 0.15,  # 15% máximo aceptable
+                    'weight': 0.3
+                },
+                'win_rate': {
+                    'min': 0.55,  # 55% mínimo aceptable
+                    'max': 0.70,  # 70% máximo aceptable
+                    'weight': 0.2
+                }
+            },
+            'secondary_targets': ['profit_factor', 'sharpe_ratio'],
+            'constraints': {
+                'min_trades': 20,
+                'max_drawdown_limit': 0.20,  # Límite absoluto
+                'min_win_rate': 0.50
+            }
+        }
 
         # Crear optimizador
         optimizer = StrategyOptimizer2(
@@ -205,7 +331,8 @@ class OptimizationPipeline:
             timeframe=self.timeframe,
             start_date=self.opt_start,
             end_date=self.opt_end,
-            n_trials=n_trials
+            n_trials=n_trials,
+            optimization_targets=optimization_targets
         )
 
         # Ejecutar optimización
@@ -231,14 +358,23 @@ class OptimizationPipeline:
         """
         logger.info(f"Ejecutando backtest final para {symbol}")
 
-        # Extraer mejores parámetros del frente de Pareto
-        study, pareto_trials = opt_results
-        if pareto_trials:
-            best_trial = pareto_trials[0]  # Tomar el primer trial del frente de Pareto
-            best_params = best_trial.params
-            logger.info(f"Mejores parámetros encontrados: {best_params}")
+        # Extraer mejores parámetros - manejar tanto optimización exitosa como fallback
+        if isinstance(opt_results, tuple) and len(opt_results) == 2:
+            # Caso exitoso: (study, pareto_trials)
+            study, pareto_trials = opt_results
+            if pareto_trials:
+                best_trial = pareto_trials[0]  # Tomar el primer trial del frente de Pareto
+                best_params = best_trial.params
+                logger.info(f"Mejores parámetros encontrados: {best_params}")
+            else:
+                logger.warning("No se encontraron trials en el frente de Pareto, usando parámetros por defecto")
+                best_params = {}
+        elif isinstance(opt_results, dict) and 'best_params' in opt_results:
+            # Caso fallback: parámetros por defecto
+            best_params = opt_results['best_params']
+            logger.info(f"Usando parámetros por defecto: {best_params}")
         else:
-            logger.warning("No se encontraron trials en el frente de Pareto, usando parámetros por defecto")
+            logger.error(f"Formato de resultados de optimización inesperado: {type(opt_results)}")
             best_params = {}
 
         # Crear estrategia con parámetros optimizados
@@ -256,30 +392,44 @@ class OptimizationPipeline:
         # Aquí necesitaríamos cargar los datos - por ahora simulamos
         logger.info("Cargando datos para backtest final...")
 
-        # Simular datos para testing (en producción cargaríamos datos reales)
-        dates = pd.date_range(start=self.opt_start, end=self.opt_end, freq='4H')
-        np.random.seed(42)  # Para reproducibilidad
+        # 🔧 CARGAR DATOS REALES (no simulados)
+        try:
+            # Construir nombre del archivo CSV
+            symbol_clean = symbol.replace('/', '_')
+            filename = f"{symbol_clean}_{self.timeframe}.csv"
+            # Usar ruta absoluta basada en el directorio del script
+            script_dir = Path(__file__).parent.parent  # optimizacion/ -> descarga_datos/
+            csv_path = script_dir / 'data' / 'csv' / filename
 
-        # Crear datos OHLCV simulados pero realistas
-        n_bars = len(dates)
-        base_price = 50000 if 'BTC' in symbol else 200
+            if not csv_path.exists():
+                raise FileNotFoundError(f'Archivo CSV no encontrado: {csv_path}')
 
-        # Generar precios con tendencia y volatilidad realista
-        returns = np.random.normal(0.0001, 0.02, n_bars)  # Retornos diarios
-        prices = base_price * np.exp(np.cumsum(returns))
+            # Cargar datos del CSV
+            data = pd.read_csv(csv_path)
+            logger.info(f'Datos reales cargados desde {csv_path}: {len(data)} registros')
 
-        # Crear DataFrame OHLCV
-        data = pd.DataFrame({
-            'open': prices * (1 + np.random.normal(0, 0.005, n_bars)),
-            'high': prices * (1 + np.random.normal(0.005, 0.01, n_bars)),
-            'low': prices * (1 - np.random.normal(0.005, 0.01, n_bars)),
-            'close': prices,
-            'volume': np.random.lognormal(15, 1, n_bars)
-        }, index=dates)
+            # Convertir timestamp si existe
+            if 'timestamp' in data.columns:
+                data['timestamp'] = pd.to_datetime(data['timestamp'])
+                data = data.set_index('timestamp')
+                
+                # Filtrar por período de TEST FINAL (out-of-sample)
+                mask = (data.index >= self.test_start) & (data.index <= self.test_end)
+                data = data[mask]
+                logger.info(f'Datos filtrados para período de test final: {len(data)} registros')
+                logger.info(f'Período de test: {self.test_start} a {self.test_end}')
 
-        # Asegurar high >= max(open, close) y low <= min(open, close)
-        data['high'] = np.maximum(data[['open', 'close']].max(axis=1), data['high'])
-        data['low'] = np.minimum(data[['open', 'close']].min(axis=1), data['low'])
+            if len(data) == 0:
+                raise ValueError(f"No hay datos para el período de test final: {self.test_start} a {self.test_end}")
+
+        except Exception as e:
+            logger.error(f"Error cargando datos reales: {e}")
+            logger.error("No se pueden utilizar datos sintéticos - abortando proceso")
+            return {
+                "error": f"No hay datos reales disponibles para {symbol} en período {self.test_start} a {self.test_end}",
+                "status": "error",
+                "message": "El sistema requiere datos reales para operar. Por favor asegúrate de que hay datos disponibles en SQLite o CSV antes de ejecutar la optimización."
+            }
 
         # Ejecutar backtest
         try:

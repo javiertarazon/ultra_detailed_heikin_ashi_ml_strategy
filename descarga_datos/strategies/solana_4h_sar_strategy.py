@@ -22,101 +22,11 @@ PARÁMETROS OPTIMIZADOS XRP/USDT 1H (29/09/2025):
 """
 import numpy as np
 import pandas as pd
-import logging
-from utils.talib_wrapper import talib
+from utils.logger import get_logger
 
-class Solana4HSARStrategy:
-    def __init__(self,
-                 volume_threshold=None,        # Parámetros específicos por símbolo
-                 take_profit_percent=None,
-                 stop_loss_percent=None,
-                 volume_sma_period=None,
-                 sar_acceleration=None,
-                 sar_maximum=None,
-                 # NUEVOS PARÁMETROS PARA MEJORAR DD Y WIN RATE
-                 atr_period=None,              # Período ATR para filtro de volatilidad
-                 atr_volatility_threshold=None, # Umbral de volatilidad ATR
-                 ema_trend_period=None,        # Período EMA para filtro de tendencia
-                 max_consecutive_losses=None,  # Máximo de pérdidas consecutivas
-                 trailing_stop_atr_multiplier=None, # Multiplicador ATR para trailing stop
-                 symbol=None,
-                 timeframe=None,
-                 config=None):  # Nueva: objeto de configuración
-        # Parámetros optimizados por defecto (1 día)
-        self.default_params = {
-            'volume_threshold': 930,
-            'take_profit_percent': 2.349,
-            'stop_loss_percent': 1.287,
-            'volume_sma_period': 25,
-            'sar_acceleration': 0.064,
-            'sar_maximum': 0.207,
-            # NUEVOS PARÁMETROS PARA MEJORAR DD Y WIN RATE
-            'atr_period': 14,
-            'atr_volatility_threshold': 2.5,  # Umbral de volatilidad (ATR/Precio)
-            'ema_trend_period': 50,           # EMA para filtro de tendencia
-            'max_consecutive_losses': 3,      # Máximo de pérdidas consecutivas
-            'trailing_stop_atr_multiplier': 1.5  # Multiplicador ATR para trailing stop
-        }
+logger = get_logger("__name__)
 
-        # Cargar parámetros optimizados desde configuración si está disponible
-        self.optimized_params = {}
-        if config and hasattr(config, 'backtesting') and hasattr(config.backtesting, 'optimized_parameters'):
-            # Convertir estructura YAML a formato de tupla
-            for symbol_key, timeframes in config.backtesting.optimized_parameters.items():
-                if isinstance(timeframes, dict):
-                    for tf, params in timeframes.items():
-                        if params:  # Solo si hay parámetros definidos
-                            self.optimized_params[(symbol_key, tf)] = params
-
-        # Si no hay config, usar parámetros hardcodeados como fallback
-        if not self.optimized_params:
-            self.optimized_params = {
-                ('XRP/USDT', '1h'): {
-                    'volume_threshold': 482,
-                    'take_profit_percent': 1.056,
-                    'stop_loss_percent': 2.173,
-                    'volume_sma_period': 17,
-                    'sar_acceleration': 0.074,
-                    'sar_maximum': 0.199
-                }
-            }
-
-        # Determinar parámetros a usar
-        if symbol and timeframe and (symbol, timeframe) in self.optimized_params:
-            params = self.optimized_params[(symbol, timeframe)]
-            print(f"🎯 Usando parámetros optimizados para {symbol} {timeframe}")
-        else:
-            params = self.default_params
-            if symbol and timeframe:
-                print(f"⚠️  Usando parámetros por defecto para {symbol} {timeframe}")
-
-        # Asignar parámetros
-        self.volume_threshold = volume_threshold if volume_threshold is not None else params['volume_threshold']
-        self.take_profit_percent = take_profit_percent if take_profit_percent is not None else params['take_profit_percent']
-        self.stop_loss_percent = stop_loss_percent if stop_loss_percent is not None else params['stop_loss_percent']
-        self.volume_sma_period = volume_sma_period if volume_sma_period is not None else params['volume_sma_period']
-        self.sar_acceleration = sar_acceleration if sar_acceleration is not None else params['sar_acceleration']
-        self.sar_maximum = sar_maximum if sar_maximum is not None else params['sar_maximum']
-
-        # NUEVOS PARÁMETROS PARA MEJORAR DD Y WIN RATE
-        self.atr_period = atr_period if atr_period is not None else params['atr_period']
-        self.atr_volatility_threshold = atr_volatility_threshold if atr_volatility_threshold is not None else params['atr_volatility_threshold']
-        self.ema_trend_period = ema_trend_period if ema_trend_period is not None else params['ema_trend_period']
-        self.max_consecutive_losses = max_consecutive_losses if max_consecutive_losses is not None else params['max_consecutive_losses']
-        self.trailing_stop_atr_multiplier = trailing_stop_atr_multiplier if trailing_stop_atr_multiplier is not None else params['trailing_stop_atr_multiplier']
-
-        # VARIABLES DE ESTADO PARA MEJORAR DD Y WIN RATE
-        self.consecutive_losses = 0  # Contador de pérdidas consecutivas
-        self.trailing_stops = {}     # Trailing stops activos por trade
-
-        # Guardar símbolo y timeframe para logging
-        self.symbol = symbol
-        self.timeframe = timeframe
-        
-        # Inicializar logger
-        self.logger = logging.getLogger(__name__)
-
-    def calculate_heikin_ashi(self, df):
+    def calculate_heikin_ashi(self, df"):
         """Calcula velas Heiken Ashi"""
         try:
             # Reset index para trabajar con arrays numpy

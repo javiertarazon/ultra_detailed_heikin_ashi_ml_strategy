@@ -38,6 +38,7 @@ class BacktestingConfig:
     strategies: Dict[str, bool] = field(default_factory=dict)
     strategy_paths: Dict[str, List[str]] = field(default_factory=dict)
     optimized_parameters: Dict[str, Any] = field(default_factory=dict)  # Parámetros optimizados por símbolo/timeframe
+    symbol_selection: Dict[str, bool] = field(default_factory=dict)  # Selección de símbolos para backtesting
     # Nueva configuración de calidad de datos (opcional)
     data_quality: Any = None  # Se llenará con DataQualityConfig si existe en YAML
 
@@ -55,8 +56,12 @@ class DataQualityConfig:
 
 @dataclass
 class IndicatorsConfig:
-    volatility: Dict[str, Any] = field(default_factory=lambda: {'enabled': True, 'period': 14})
-    heiken_ashi: Dict[str, Any] = field(default_factory=lambda: {'enabled': True, 'trend_period': 3, 'size_comparison_threshold': 1.2})
+    """
+    Configuración centralizada de indicadores técnicos.
+    NOTA: Esta es la clase oficial y centralizada para configuración de indicadores.
+    """
+    volatility: Dict[str, Any] = field(default_factory=lambda: {'enabled': True, 'period': 14, 'method': 'standard_deviation'})
+    heikin_ashi: Dict[str, Any] = field(default_factory=lambda: {'enabled': True, 'trend_period': 3, 'size_comparison_threshold': 1.2})
     atr: Dict[str, Any] = field(default_factory=lambda: {'enabled': True, 'period': 14})
     ema: Dict[str, Any] = field(default_factory=lambda: {'enabled': True, 'periods': [10, 20, 200]})
     parabolic_sar: Dict[str, Any] = field(default_factory=lambda: {'enabled': True, 'acceleration': 0.02, 'maximum': 0.2})

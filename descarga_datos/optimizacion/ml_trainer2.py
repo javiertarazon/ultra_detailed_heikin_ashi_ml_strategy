@@ -68,7 +68,8 @@ class MLTrainer2:
         self.val_start = '2025-07-01'
         self.val_end = '2025-10-06'
             
-        self.models_dir = Path('models') / symbol.replace('/', '_')
+        # Usar la ruta centralizada en descarga_datos/models
+        self.models_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'models' / symbol.replace('/', '_')
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(f'MLTrainer inicializado para {symbol} {timeframe}')
@@ -273,7 +274,10 @@ class MLTrainer2:
         from pathlib import Path
         
         symbol_clean = self.symbol.replace('/', '_')
-        csv_path = Path('data/csv') / f'{symbol_clean}_{self.timeframe}.csv'
+        # Usar ruta absoluta basada en el directorio del script
+        script_dir = Path(__file__).parent.parent  # optimizacion/ -> descarga_datos/
+        csv_path = script_dir / 'data' / 'csv' / f'{symbol_clean}_{self.timeframe}.csv'
+        logger.info(f'Buscando archivo CSV en: {csv_path.absolute()}')
         
         if not csv_path.exists():
             logger.warning(f'No se encontró archivo CSV local: {csv_path}')

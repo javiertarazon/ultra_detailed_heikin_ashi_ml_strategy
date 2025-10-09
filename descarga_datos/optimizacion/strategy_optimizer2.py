@@ -7,7 +7,12 @@ Optimizador de estrategia UltraDetailedHeikinAshiML2 con Optuna v2
 
 Este script usa Optuna para optimizar los parámetros de la estrategia
 UltraDetailedHeikinAshiML2 con redes neuronales avanzadas, buscando maximizar
-el profit factor, minimizar el drawdown y maximizar el win rate.
+el p                "values": {
+                    "total_pnl": trial.values[0],      # Primer objetivo: total_pnl
+                    "win_rate": trial.values[1],       # Segundo objetivo: win_rate
+                    "profit_factor": trial.values[2],  # Tercer objetivo: profit_factor
+                    "max_drawdown": -trial.values[3],  # Cuarto objetivo: -max_drawdown (deshacer minimización)
+                },factor, minimizar el drawdown y maximizar el win rate.
 
 CARACTERÍSTICAS v2:
 - Optimizado para redes neuronales avanzadas
@@ -77,14 +82,30 @@ class StrategyOptimizer2:
         self.config = config if config is not None else load_config_from_yaml()
         self.data = None
         
-        # Targets de optimización configurables
+        # Targets de optimización configurables con lógica de trade-offs - MÁS AGRESIVOS
         self.optimization_targets = optimization_targets or {
-            'maximize': ['total_pnl', 'win_rate', 'profit_factor', 'sharpe_ratio'],
-            'minimize': ['max_drawdown'],
+            'primary_target': {
+                'metric': 'total_pnl',
+                'target_value': 8000.0,  # P&L objetivo aumentado a $8,000 - MÁS AGRESIVO
+                'weight': 1.0  # Peso principal
+            },
+            'acceptable_tradeoffs': {
+                'max_drawdown': {
+                    'min': 0.08,  # 8% mínimo aceptable - MÁS AGRESIVO
+                    'max': 0.25,  # 25% máximo aceptable - MÁS AGRESIVO
+                    'weight': 0.2  # Peso reducido para permitir más riesgo
+                },
+                'win_rate': {
+                    'min': 0.50,  # 50% mínimo aceptable - MÁS PERMISIVO
+                    'max': 0.75,  # 75% máximo aceptable - MÁS AGRESIVO
+                    'weight': 0.15  # Peso reducido
+                }
+            },
+            'secondary_targets': ['profit_factor', 'sharpe_ratio'],
             'constraints': {
-                'min_trades': 20,
-                'max_drawdown_limit': 0.15,
-                'min_win_rate': 0.55
+                'min_trades': 15,  # Reducido para permitir más estrategias agresivas
+                'max_drawdown_limit': 0.30,  # Límite absoluto aumentado - MÁS AGRESIVO
+                'min_win_rate': 0.45  # Mínimo reducido - MÁS AGRESIVO
             }
         }
         
@@ -95,6 +116,9 @@ class StrategyOptimizer2:
         logger.info(f"Inicializando optimización para {symbol} en {timeframe}")
         logger.info(f"Targets de optimización: {self.optimization_targets}")
         
+        # Cargar datos automáticamente en el constructor
+        self.download_data()
+        
     def download_data(self):
         """Carga los datos históricos para optimización desde archivos locales"""
         logger.info(f"Cargando datos locales para {self.symbol} desde {self.start_date} hasta {self.end_date}")
@@ -103,7 +127,9 @@ class StrategyOptimizer2:
             # Construir nombre del archivo CSV
             symbol_clean = self.symbol.replace('/', '_')
             filename = f"{symbol_clean}_{self.timeframe}.csv"
-            csv_path = Path('data/csv') / filename
+            # Usar ruta absoluta basada en el directorio del script
+            script_dir = Path(__file__).parent.parent  # optimizacion/ -> descarga_datos/
+            csv_path = script_dir / 'data' / 'csv' / filename
 
             if not csv_path.exists():
                 raise FileNotFoundError(f'Archivo CSV no encontrado: {csv_path}')
@@ -138,54 +164,26 @@ class StrategyOptimizer2:
         return self.data
     
     def prepare_indicators(self):
-        """Prepara los indicadores técnicos con implementación local"""
+        """
+        🎯 USAR MÉTODO CENTRALIZADO - Eliminar duplicación de código
+        """
         if self.data is None:
             self.download_data()
 
-        logger.info("Calculando indicadores técnicos localmente")
+        logger.info("🔧 Usando método centralizado de indicadores técnicos")
 
-        df = self.data.copy()
-
-        # Heikin Ashi
-        df['ha_close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
-        df['ha_open'] = (df['open'].shift(1) + df['close'].shift(1)) / 2
-        df['ha_open'] = df['ha_open'].fillna(df['open'])
-        df['ha_high'] = df[['high', 'ha_open', 'ha_close']].max(axis=1)
-        df['ha_low'] = df[['low', 'ha_open', 'ha_close']].min(axis=1)
-
-        # ATR
-        high_low = df['high'] - df['low']
-        high_close = (df['high'] - df['close'].shift(1)).abs()
-        low_close = (df['low'] - df['close'].shift(1)).abs()
-        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df['atr'] = tr.rolling(window=14).mean()
-
-        # EMA
-        df['ema_9'] = df['close'].ewm(span=9).mean()
-        df['ema_21'] = df['close'].ewm(span=21).mean()
-
-        # RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
-
-        # Stochastic
-        lowest_low = df['low'].rolling(window=14).min()
-        highest_high = df['high'].rolling(window=14).max()
-        df['stoch_k'] = 100 * (df['close'] - lowest_low) / (highest_high - lowest_low)
-        df['stoch_d'] = df['stoch_k'].rolling(window=3).mean()
-
-        # Volumen
-        df['volume_ma'] = df['volume'].rolling(window=20).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_ma']
-
+        # Importar método centralizado
+        from indicators.technical_indicators import TechnicalIndicators
+        
+        # Crear instancia y calcular todos los indicadores
+        indicators = TechnicalIndicators()
+        df = indicators.calculate_all_indicators_unified(self.data)
+        
         # Limpiar NaN
         df = df.dropna()
 
         self.data = df
-        logger.info(f"Indicadores calculados: {len(df)} filas válidas")
+        logger.info(f"✅ Indicadores calculados (centralizado): {len(df)} filas válidas")
 
         return self.data
     
@@ -196,29 +194,29 @@ class StrategyOptimizer2:
         - Max Drawdown (a minimizar)
         - Win Rate (a maximizar)
         """
-        # Definir espacio de parámetros OPTIMIZADO para Redes Neuronales v2
+        # Definir espacio de parámetros OPTIMIZADO para Redes Neuronales v2 - MÁS AGRESIVO
         params = {
-            # Parámetros ML - ENFASIS en redes neuronales
-            "ml_threshold": trial.suggest_float("ml_threshold", 0.5, 0.9, step=0.05),  # Umbral más alto para NN
+            # Parámetros ML - MÁS AGRESIVO para más señales
+            "ml_threshold": trial.suggest_float("ml_threshold", 0.3, 0.8, step=0.05),  # Umbral más bajo para MÁS SEÑALES
             
-            # Parámetros técnicos SIMPLIFICADOS
-            "stoch_overbought": trial.suggest_int("stoch_overbought", 75, 90, step=5),
-            "stoch_oversold": trial.suggest_int("stoch_oversold", 10, 25, step=5),
-            "volume_ratio_min": trial.suggest_float("volume_ratio_min", 0.8, 1.5, step=0.1),
+            # Parámetros técnicos MÁS PERMISIVOS
+            "stoch_overbought": trial.suggest_int("stoch_overbought", 70, 85, step=5),  # Más permisivo
+            "stoch_oversold": trial.suggest_int("stoch_oversold", 15, 30, step=5),    # Más permisivo
+            "volume_ratio_min": trial.suggest_float("volume_ratio_min", 0.3, 1.2, step=0.1),  # Más permisivo
             
-            # Parámetros SAR simplificados
-            "sar_acceleration": trial.suggest_float("sar_acceleration", 0.02, 0.15, step=0.01),
+            # Parámetros SAR más agresivos
+            "sar_acceleration": trial.suggest_float("sar_acceleration", 0.05, 0.20, step=0.01),  # Más agresivo
             
-            # Parámetros ATR optimizados
-            "atr_period": trial.suggest_int("atr_period", 10, 20, step=2),
-            "stop_loss_atr_multiplier": trial.suggest_float("stop_loss_atr_multiplier", 2.0, 3.5, step=0.25),
-            "take_profit_atr_multiplier": trial.suggest_float("take_profit_atr_multiplier", 2.5, 4.0, step=0.25),
+            # Parámetros ATR más agresivos
+            "atr_period": trial.suggest_int("atr_period", 8, 18, step=2),  # Más amplio
+            "stop_loss_atr_multiplier": trial.suggest_float("stop_loss_atr_multiplier", 1.5, 3.0, step=0.25),  # Más agresivo
+            "take_profit_atr_multiplier": trial.suggest_float("take_profit_atr_multiplier", 2.0, 3.5, step=0.25),  # Más agresivo
             
-            # Gestión de riesgo ENFASIS
-            "max_drawdown": trial.suggest_float("max_drawdown", 0.05, 0.12, step=0.01),  # Más conservador
-            "max_portfolio_heat": trial.suggest_float("max_portfolio_heat", 0.04, 0.07, step=0.01),
-            "max_concurrent_trades": trial.suggest_int("max_concurrent_trades", 2, 4),  # Reducido para estabilidad
-            "kelly_fraction": trial.suggest_float("kelly_fraction", 0.2, 0.5, step=0.05),  # Más conservador
+            # Gestión de riesgo MÁS AGRESIVA
+            "max_drawdown": trial.suggest_float("max_drawdown", 0.08, 0.20, step=0.02),  # Más agresivo
+            "max_portfolio_heat": trial.suggest_float("max_portfolio_heat", 0.06, 0.12, step=0.02),  # Más agresivo
+            "max_concurrent_trades": trial.suggest_int("max_concurrent_trades", 3, 6),  # Más agresivo
+            "kelly_fraction": trial.suggest_float("kelly_fraction", 0.3, 0.8, step=0.1),  # Más agresivo
         }
         
         # Crear instancia de la estrategia con los parámetros a optimizar
@@ -236,57 +234,134 @@ class StrategyOptimizer2:
         # Si no cumple constraints, penalizar fuertemente
         if results["total_trades"] < min_trades:
             logger.warning(f"Trial penalizado: solo {results['total_trades']} trades (mínimo {min_trades})")
-            return tuple([0.0] * 4)  # Devolver 4 valores para multi-objetivo
+            return tuple([-999999.0, -999999.0, -999999.0, -999999.0])  # Penalización extrema
         
-        # Extraer métricas
-        profit_factor = results["profit_factor"] if results["profit_factor"] != float("inf") else 10.0
-        max_drawdown = abs(results["max_drawdown"])
-        win_rate = results["winning_trades"] / results["total_trades"] if results["total_trades"] > 0 else 0.0
+        # Extraer métricas con validación robusta
+        total_trades = results.get("total_trades", 0)
+        winning_trades = results.get("winning_trades", 0)
+        losing_trades = results.get("losing_trades", 0)
+        
+        # Calcular win_rate de forma segura
+        if total_trades > 0:
+            win_rate = winning_trades / total_trades
+        else:
+            win_rate = 0.0
+            
+        # Validar y calcular profit_factor
+        gross_profit = results.get("gross_profit", 0.0)
+        gross_loss = results.get("gross_loss", 0.0)
+        
+        if gross_loss == 0 or gross_loss is None:
+            profit_factor = 10.0 if gross_profit > 0 else 0.0  # Profit factor alto si no hay pérdidas
+        else:
+            profit_factor = abs(gross_profit) / abs(gross_loss)
+            profit_factor = min(profit_factor, 10.0)  # Cap superior razonable
+            
+        # Validar max_drawdown
+        max_drawdown = abs(results.get("max_drawdown", 0.0))
+        if max_drawdown > 1.0:  # Si está en porcentaje, convertir
+            max_drawdown = max_drawdown / 100.0
+            
+        # Validar otras métricas
         total_pnl = results.get("total_pnl", 0.0)
         pnl_return = results.get("return_pct", 0.0)
         sharpe_ratio = results.get("sharpe_ratio", 0.0)
         
-        # Aplicar constraints configurables
-        penalty = 1.0
-        
-        if max_drawdown > max_dd_limit:
-            penalty *= 0.5
-            logger.warning(f"Trial penalizado: DD {max_drawdown:.2%} > límite {max_dd_limit:.2%}")
-        
-        if win_rate < min_wr:
-            penalty *= 0.7
-            logger.warning(f"Trial penalizado: WR {win_rate:.2%} < mínimo {min_wr:.2%}")
-        
-        # Construir retorno basado en targets configurados
-        maximize_targets = self.optimization_targets.get('maximize', ['total_pnl', 'win_rate'])
-        minimize_targets = self.optimization_targets.get('minimize', ['max_drawdown'])
-        
-        # Mapeo de métricas
-        metrics_map = {
-            'total_pnl': total_pnl * penalty,
-            'win_rate': win_rate * penalty,
-            'profit_factor': profit_factor * penalty,
-            'sharpe_ratio': sharpe_ratio * penalty,
-            'pnl_return': pnl_return * penalty
-        }
-        
-        minimize_map = {
-            'max_drawdown': -max_drawdown  # Negativo para minimizar
-        }
-        
-        # Construir tupla de retorno (máximo 4 objetivos para Optuna)
-        objectives = []
-        for target in maximize_targets[:3]:  # Máximo 3 para maximizar
-            objectives.append(metrics_map.get(target, 0.0))
-        
-        for target in minimize_targets[:1]:  # Máximo 1 para minimizar
-            objectives.append(minimize_map.get(target, 0.0))
-        
-        # Asegurar que siempre devolvemos 4 valores
-        while len(objectives) < 4:
-            objectives.append(0.0)
-        
-        return tuple(objectives[:4])
+        # Logging de métricas calculadas
+        logger.info(f"Métricas calculadas - Trades: {total_trades}, Win Rate: {win_rate:.1%}, "
+                   f"Profit Factor: {profit_factor:.2f}, Max DD: {max_drawdown:.1%}, P&L: ${total_pnl:.2f}")
+
+        # Verificar constraints mínimos - ser más flexible durante optimización
+        min_trades = self.optimization_targets.get('constraints', {}).get('min_trades', 5)
+        if total_trades < min_trades:
+            logger.warning(f"Trial descartado: solo {total_trades} trades (mínimo {min_trades})")
+            return tuple([-999999.0, -999999.0, -999999.0, -999999.0])  # Penalización extrema
+
+        # ===== NUEVA LÓGICA DE OPTIMIZACIÓN CON TARGETS ESPECÍFICOS =====
+
+        # Obtener configuración de targets
+        primary_target = self.optimization_targets.get('primary_target', {})
+        tradeoffs = self.optimization_targets.get('acceptable_tradeoffs', {})
+
+        # ===== EVALUACIÓN DE TRADE-OFFS =====
+
+        # 1. Evaluar proximidad al target de P&L
+        pnl_target = primary_target.get('target_value', 4000.0)
+        pnl_weight = primary_target.get('weight', 1.0)
+
+        if total_pnl >= pnl_target:
+            # BONUS: Alcanzó o superó el target
+            pnl_score = total_pnl * 2.0  # Bonus por lograr target
+            logger.info(f"🎯 TARGET ALCANZADO: P&L ${total_pnl:.2f} >= ${pnl_target:.2f}")
+        else:
+            # Puntaje basado en proximidad al target
+            proximity_ratio = total_pnl / pnl_target  # 0.0 a 1.0
+            pnl_score = total_pnl * (0.5 + proximity_ratio * 0.5)  # 50% base + hasta 50% bonus
+
+        # 2. Evaluar Drawdown (aceptable: 5%-15%)
+        dd_config = tradeoffs.get('max_drawdown', {})
+        dd_min = dd_config.get('min', 0.05)
+        dd_max = dd_config.get('max', 0.15)
+        dd_weight = dd_config.get('weight', 0.3)
+
+        if dd_min <= max_drawdown <= dd_max:
+            # Dentro del rango aceptable
+            dd_score = (1.0 - (max_drawdown - dd_min) / (dd_max - dd_min)) * dd_weight
+        elif max_drawdown < dd_min:
+            # Muy conservador - penalizar ligeramente
+            dd_score = 0.8 * dd_weight
+            logger.warning(f"DD muy bajo {max_drawdown:.2%} < {dd_min:.2%} (podría ser demasiado conservador)")
+        else:
+            # Excede límite máximo - penalizar fuertemente
+            excess_ratio = (max_drawdown - dd_max) / dd_max
+            dd_score = -excess_ratio * dd_weight * 2.0  # Penalización proporcional
+            logger.warning(f"DD excesivo {max_drawdown:.2%} > {dd_max:.2%}")
+
+        # 3. Evaluar Win Rate (aceptable: 55%-70%)
+        wr_config = tradeoffs.get('win_rate', {})
+        wr_min = wr_config.get('min', 0.55)
+        wr_max = wr_config.get('max', 0.70)
+        wr_weight = wr_config.get('weight', 0.2)
+
+        if wr_min <= win_rate <= wr_max:
+            # Dentro del rango aceptable
+            wr_score = win_rate * wr_weight
+        elif win_rate < wr_min:
+            # Win rate muy bajo - penalizar
+            deficit_ratio = (wr_min - win_rate) / wr_min
+            wr_score = win_rate * wr_weight * (1.0 - deficit_ratio)
+            logger.warning(f"Win rate bajo {win_rate:.2%} < {wr_min:.2%}")
+        else:
+            # Win rate muy alto - podría indicar overfitting, penalizar ligeramente
+            excess_ratio = (win_rate - wr_max) / (1.0 - wr_max)
+            wr_score = wr_max * wr_weight * (1.0 - excess_ratio * 0.5)
+            logger.info(f"Win rate alto {win_rate:.2%} > {wr_max:.2%} (posible overfitting)")
+
+        # 4. Bonus por otras métricas (profit factor, sharpe)
+        secondary_bonus = 0.0
+        if profit_factor > 1.5:
+            secondary_bonus += 0.1
+        if sharpe_ratio > 1.0:
+            secondary_bonus += 0.05
+
+        # ===== CONSTRUIR OBJETIVOS FINALES =====
+
+        # Objetivo principal: P&L score (a maximizar)
+        objective_1 = pnl_score * pnl_weight
+
+        # Objetivo secundario: Combinación de trade-offs (a maximizar)
+        objective_2 = (dd_score + wr_score + secondary_bonus) * 0.5
+
+        # Objetivo terciario: Profit factor (a maximizar)
+        objective_3 = profit_factor * 0.1
+
+        # Objetivo cuaternario: Sharpe ratio (a maximizar)
+        objective_4 = sharpe_ratio * 0.05
+
+        logger.info(f"Evaluación - P&L: ${total_pnl:.2f}, DD: {max_drawdown:.2%}, WR: {win_rate:.2%}, "
+                   f"Puntuaciones: {objective_1:.2f}, {objective_2:.2f}, {objective_3:.2f}, {objective_4:.2f}")
+
+        return tuple([objective_1, objective_2, objective_3, objective_4])
     
     def run_optimization(self):
         """Ejecuta el proceso de optimización"""
@@ -295,6 +370,7 @@ class StrategyOptimizer2:
             raise ImportError("Optuna es requerido para la optimización. Instale con: pip install optuna")
 
         logger.info("Preparando datos para optimización...")
+        self.download_data()
         self.prepare_indicators()
 
         logger.info(f"Iniciando optimización con {self.n_trials} pruebas")
@@ -334,14 +410,36 @@ class StrategyOptimizer2:
         # Guardar los trials de Pareto
         pareto_results = []
         for trial in pareto_trials:
+            # Ejecutar nuevamente la estrategia con los parámetros del trial para obtener métricas reales
+            strategy = UltraDetailedHeikinAshiML2Strategy(config=trial.params)
+            real_results = strategy.run(self.data, self.symbol, self.timeframe)
+
             pareto_results.append({
                 "trial_id": trial.number,
                 "params": trial.params,
-                "values": {
-                    "profit_factor": trial.values[0],
-                    "max_drawdown": -trial.values[1],  # Deshacer la negación
-                    "win_rate": trial.values[2],
-                    "total_pnl": trial.values[3]  # Nuevo: P&L total
+                "optimization_scores": {
+                    "pnl_score": trial.values[0],
+                    "tradeoff_score": trial.values[1],
+                    "profit_factor_score": trial.values[2],
+                    "sharpe_score": trial.values[3]
+                },
+                "real_metrics": {
+                    "total_pnl": real_results.get("total_pnl", 0.0),
+                    "max_drawdown": abs(real_results.get("max_drawdown", 0.0)),
+                    "win_rate": real_results["winning_trades"] / real_results["total_trades"] if real_results["total_trades"] > 0 else 0.0,
+                    "profit_factor": real_results.get("profit_factor", 0.0),
+                    "sharpe_ratio": real_results.get("sharpe_ratio", 0.0),
+                    "total_trades": real_results.get("total_trades", 0)
+                },
+                "target_analysis": {
+                    "pnl_target": self.optimization_targets['primary_target']['target_value'],
+                    "target_achieved": 1 if real_results.get("total_pnl", 0.0) >= self.optimization_targets['primary_target']['target_value'] else 0,
+                    "dd_in_range": 1 if (self.optimization_targets['acceptable_tradeoffs']['max_drawdown']['min'] <=
+                                  abs(real_results.get("max_drawdown", 0.0)) <=
+                                  self.optimization_targets['acceptable_tradeoffs']['max_drawdown']['max']) else 0,
+                    "wr_in_range": 1 if (self.optimization_targets['acceptable_tradeoffs']['win_rate']['min'] <=
+                                  (real_results["winning_trades"] / real_results["total_trades"] if real_results["total_trades"] > 0 else 0.0) <=
+                                  self.optimization_targets['acceptable_tradeoffs']['win_rate']['max']) else 0
                 }
             })
         
@@ -350,35 +448,95 @@ class StrategyOptimizer2:
             json.dump(pareto_results, f, indent=2)
             
         # Guardar informe resumen
-        with open(study_dir / "optimization_report.md", "w") as f:
-            f.write(f"# Reporte de Optimización para {self.symbol}\n\n")
+        with open(study_dir / "optimization_report.md", "w", encoding="utf-8") as f:
+            f.write(f"# Reporte de Optimización con Targets Específicos para {self.symbol}\n\n")
             f.write(f"- **Timeframe:** {self.timeframe}\n")
             f.write(f"- **Periodo:** {self.start_date} a {self.end_date}\n")
-            f.write(f"- **Pruebas realizadas:** {self.n_trials}\n\n")
-            
+            f.write(f"- **Pruebas realizadas:** {self.n_trials}\n")
+            f.write(f"- **Target P&L:** ${self.optimization_targets['primary_target']['target_value']:.2f}\n")
+            f.write(f"- **Rango DD aceptable:** {self.optimization_targets['acceptable_tradeoffs']['max_drawdown']['min']*100:.1f}% - {self.optimization_targets['acceptable_tradeoffs']['max_drawdown']['max']*100:.1f}%\n")
+            f.write(f"- **Rango Win Rate aceptable:** {self.optimization_targets['acceptable_tradeoffs']['win_rate']['min']*100:.1f}% - {self.optimization_targets['acceptable_tradeoffs']['win_rate']['max']*100:.1f}%\n\n")
+
             f.write("## Mejores Resultados (Frente Pareto)\n\n")
-            
+
             for i, res in enumerate(pareto_results):
-                f.write(f"### Solución {i+1}\n")
-                f.write(f"- Profit Factor: {res['values']['profit_factor']:.2f}\n")
-                f.write(f"- Max Drawdown: {res['values']['max_drawdown']*100:.2f}%\n")
-                f.write(f"- Win Rate: {res['values']['win_rate']*100:.2f}%\n")
-                f.write(f"- P&L Total: ${res['values']['total_pnl']:.2f}\n\n")
-                f.write("Parámetros:\n```\n")
+                metrics = res['real_metrics']
+                target_analysis = res['target_analysis']
+
+                f.write(f"### Solución {i+1}")
+                if target_analysis['target_achieved']:
+                    f.write(" 🎯 TARGET ALCANZADO")
+                f.write("\n")
+
+                f.write(f"- **P&L Total:** ${metrics['total_pnl']:.2f}")
+                if target_analysis['target_achieved']:
+                    f.write(" ✅")
+                f.write("\n")
+
+                f.write(f"- **Max Drawdown:** {metrics['max_drawdown']*100:.2f}%")
+                if target_analysis['dd_in_range']:
+                    f.write(" ✅ (dentro del rango aceptable)")
+                else:
+                    f.write(" ⚠️ (fuera del rango)")
+                f.write("\n")
+
+                f.write(f"- **Win Rate:** {metrics['win_rate']*100:.2f}%")
+                if target_analysis['wr_in_range']:
+                    f.write(" ✅ (dentro del rango aceptable)")
+                else:
+                    f.write(" ⚠️ (fuera del rango)")
+                f.write("\n")
+
+                f.write(f"- **Profit Factor:** {metrics['profit_factor']:.2f}\n")
+                f.write(f"- **Sharpe Ratio:** {metrics['sharpe_ratio']:.2f}\n")
+                f.write(f"- **Total Trades:** {metrics['total_trades']}\n\n")
+
+                f.write("**Parámetros optimizados:**\n```\n")
                 for param, value in res["params"].items():
                     f.write(f"{param}: {value}\n")
                 f.write("```\n\n")
                 
-        # Guardar mejores parámetros filtrados por objetivos REALISTAS
+        # Guardar mejores parámetros filtrados por objetivos y trade-offs aceptables
         filtered_results = []
         for res in pareto_results:
-            # Filtrar según objetivos realistas basados en datos disponibles: 
-            # PF > 0.15, DD 0.3%-2%, WR > 50%, P&L > 0.01%
-            if (res["values"]["profit_factor"] > 0.15 and 
-                res["values"]["max_drawdown"] >= 0.003 and res["values"]["max_drawdown"] <= 0.02 and 
-                res["values"]["win_rate"] > 0.5 and
-                res["values"]["total_pnl"] > 0.0001):
-                filtered_results.append(res)
+            metrics = res['real_metrics']
+            target_analysis = res['target_analysis']
+
+            # Filtrar por criterios de éxito:
+            # 1. Target de P&L alcanzado O muy cercano (al menos 80% del target)
+            pnl_target = self.optimization_targets['primary_target']['target_value']
+            pnl_achievement_ratio = metrics['total_pnl'] / pnl_target
+
+            # 2. Drawdown dentro del rango aceptable O no excesivamente alto
+            dd_acceptable = target_analysis['dd_in_range'] or metrics['max_drawdown'] <= 0.20
+
+            # 3. Win rate dentro del rango aceptable O al menos 50%
+            wr_acceptable = target_analysis['wr_in_range'] or metrics['win_rate'] >= 0.50
+
+            # 4. Profit factor decente
+            pf_acceptable = metrics['profit_factor'] > 1.1
+
+            # 5. Suficientes trades
+            trades_acceptable = metrics['total_trades'] >= 20
+
+            if (pnl_achievement_ratio >= 0.8 and  # Al menos 80% del target
+                dd_acceptable and
+                wr_acceptable and
+                pf_acceptable and
+                trades_acceptable):
+
+                # Agregar información de ranking
+                res_copy = res.copy()
+                res_copy['ranking_score'] = (
+                    pnl_achievement_ratio * 0.5 +  # 50% por proximidad al target
+                    (1.0 if target_analysis['target_achieved'] else 0.0) * 0.2 +  # 20% bonus por alcanzar target
+                    (1.0 if target_analysis['dd_in_range'] else 0.0) * 0.15 +  # 15% por DD en rango
+                    (1.0 if target_analysis['wr_in_range'] else 0.0) * 0.15   # 15% por WR en rango
+                )
+                filtered_results.append(res_copy)
+
+        # Ordenar por ranking score
+        filtered_results.sort(key=lambda x: x['ranking_score'], reverse=True)
                 
         # Si hay resultados filtrados, guardarlos
         if filtered_results:
@@ -386,21 +544,40 @@ class StrategyOptimizer2:
                 json.dump(filtered_results, f, indent=2)
                 
             # Guardar en informe separado
-            with open(study_dir / "filtered_report.md", "w") as f:
+            with open(study_dir / "filtered_report.md", "w", encoding="utf-8") as f:
                 f.write(f"# Configuraciones Óptimas Filtradas para {self.symbol}\n\n")
-                f.write("Criterios aplicados (ajustados a datos disponibles):\n")
-                f.write("- Profit Factor > 0.15\n")
-                f.write("- Max Drawdown entre 0.3% y 2%\n")
-                f.write("- Win Rate > 50%\n")
-                f.write("- P&L Total > 0.01%\n\n")
-                
+                f.write("## Criterios de Filtrado Aplicados:\n\n")
+                f.write(f"- **Target P&L:** Al menos 80% de ${self.optimization_targets['primary_target']['target_value']:.2f}\n")
+                f.write(f"- **Drawdown:** Máximo {self.optimization_targets['acceptable_tradeoffs']['max_drawdown']['max']*100:.1f}% (o ≤20% absoluto)\n")
+                f.write(f"- **Win Rate:** Mínimo {self.optimization_targets['acceptable_tradeoffs']['win_rate']['min']*100:.1f}% (o ≥50% absoluto)\n")
+                f.write("- **Profit Factor:** > 1.1\n")
+                f.write("- **Trades Mínimos:** ≥ 20\n\n")
+
+                f.write("## Resultados Ordenados por Ranking:\n\n")
+
                 for i, res in enumerate(filtered_results):
-                    f.write(f"## Configuración {i+1}\n")
-                    f.write(f"- Profit Factor: {res['values']['profit_factor']:.2f}\n")
-                    f.write(f"- Max Drawdown: {res['values']['max_drawdown']*100:.2f}%\n")
-                    f.write(f"- Win Rate: {res['values']['win_rate']*100:.2f}%\n")
-                    f.write(f"- P&L Total: ${res['values']['total_pnl']:.2f}\n\n")
-                    f.write("Parámetros:\n```\n")
+                    metrics = res['real_metrics']
+                    target_analysis = res['target_analysis']
+
+                    f.write(f"### Configuración {i+1} (Ranking: {res['ranking_score']:.3f})")
+                    if target_analysis['target_achieved']:
+                        f.write(" 🎯 TARGET ALCANZADO")
+                    f.write("\n\n")
+
+                    f.write(f"- **P&L Total:** ${metrics['total_pnl']:.2f} ({metrics['total_pnl']/self.optimization_targets['primary_target']['target_value']*100:.1f}% del target)\n")
+                    f.write(f"- **Max Drawdown:** {metrics['max_drawdown']*100:.2f}%")
+                    if target_analysis['dd_in_range']:
+                        f.write(" ✅")
+                    f.write("\n")
+                    f.write(f"- **Win Rate:** {metrics['win_rate']*100:.2f}%")
+                    if target_analysis['wr_in_range']:
+                        f.write(" ✅")
+                    f.write("\n")
+                    f.write(f"- **Profit Factor:** {metrics['profit_factor']:.2f}\n")
+                    f.write(f"- **Sharpe Ratio:** {metrics['sharpe_ratio']:.2f}\n")
+                    f.write(f"- **Total Trades:** {metrics['total_trades']}\n\n")
+
+                    f.write("**Parámetros optimizados:**\n```\n")
                     for param, value in res["params"].items():
                         f.write(f"{param}: {value}\n")
                     f.write("```\n\n")

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
+
 """
 Módulo de logging centralizado para el data downloader.
 Configura el logging basado en la configuración proporcionada.
 """
+
 import logging
 import os
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 import re
+import sys
+import time
+
+
 
 def sanitize_message(message: str) -> str:
     """
@@ -19,13 +25,13 @@ def sanitize_message(message: str) -> str:
         '🔍': '[SEARCH]',
         '📋': '[CLIPBOARD]',
         '✅': '[OK]',
-        '⚠️':  '[WARN]',
+        '⚠️': '[WARN]',
         '❌': '[ERROR]',
         '🚀': '[START]',
         '💰': '[MONEY]',
         '📊': '[CHART]',
         '🎯': '[TARGET]',
-        '⏹️':  '[STOP]',
+        '⏹️': '[STOP]',
         '🔄': '[SYNC]',
         '📥': '[DOWNLOAD]',
         '📈': '[UP]',
@@ -33,30 +39,15 @@ def sanitize_message(message: str) -> str:
         '🔢': '[NUMBERS]',
         '💡': '[IDEA]',
         '🧪': '[TEST]',
-        '🛠️':  '[TOOLS]',
+        '🛠️': '[TOOLS]',
         '📝': '[NOTE]',
         '🔧': '[CONFIG]',
-        '📊': '[STATS]',
-        '🗂️':  '[FOLDER]',
+        '️': '[FOLDER]',
         '📄': '[FILE]',
         '🔗': '[LINK]',
-        '⚙️':  '[SETTINGS]',
-        '🎛️':  '[CONTROL]',
-        '📊': '[DATA]',
-        '🔄': '[REFRESH]',
-        '📊': '[ANALYSIS]',
-        '🎯': '[AIM]',
-        '💾': '[SAVE]',
-        '📋': '[COPY]',
-        '🔍': '[FIND]',
-        '❌': '[FAIL]',
-        '✅': '[SUCCESS]',
-        '⚠️':  '[WARNING]',
-        '🚀': '[LAUNCH]',
-        '💰': '[BALANCE]',
-        '📊': '[GRAPH]',
-        '🎯': '[BULLSEYE]',
-        '⏹️':  '[END]'
+        '⚙️': '[SETTINGS]',
+        '🎛️': '[CONTROL]',
+        '💾': '[SAVE]'
     }
 
     result = message
@@ -93,6 +84,8 @@ class SafeFormatter(logging.Formatter):
 def setup_logging(log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> None:
     """
     Configura el sistema de logging con parámetros simples.
+    FUNCIÓN PRINCIPAL para inicializar el sistema de logging global.
+    Debe ser llamada al inicio de la aplicación en main.py.
 
     Args:
         log_level: Nivel de logging (DEBUG, INFO, WARNING, ERROR)
@@ -174,12 +167,56 @@ def setup_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_t
 
     return logger
 
-def get_logger(name: str) -> logging.Logger:
+def get_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> logging.Logger:
     """
     Obtiene un logger con el nombre especificado.
+    Esta función es un alias para setup_logger y debe usarse en todo el sistema.
+    
     Args:
         name: Nombre del logger, usualmente __name__ del módulo.
+        log_level: Nivel de logging (DEBUG, INFO, WARNING, ERROR)
+        log_file: Ruta del archivo de log
+        
     Returns:
         Instancia de Logger configurada.
     """
-    return logging.getLogger(name)
+    return setup_logger(name, log_level, log_file)
+
+
+def initialize_system_logging(config: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Inicializa el sistema de logging global según la configuración proporcionada.
+    Esta función debe ser llamada UNA SOLA VEZ al inicio de la aplicación.
+
+    Args:
+        config: Configuración de logging. Si es None, se usará la configuración por defecto.
+               Formato esperado: {'level': 'INFO', 'file': 'logs/bot_trader.log'}
+    """
+    if config is None:
+        config = {'level': 'INFO', 'file': 'logs/bot_trader.log'}
+    
+    log_level = config.get('level', 'INFO').upper()
+    log_file = config.get('file', 'logs/bot_trader.log')
+    
+    # Verificar si el directorio de logs existe, si no, crearlo
+    log_dir = os.path.dirname(log_file)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # Configurar el logging global
+    setup_logging(log_level, log_file)
+    
+    # Crear un logger principal para el sistema
+    logger = logging.getLogger('system')
+    logger.info(f"Sistema de logging inicializado: nivel={log_level}, archivo={log_file}")
+    logger.info(f"Fecha/hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Python: {sys.version}")
+    logger.info(f"Sistema operativo: {sys.platform}")
+    
+    # Registrar el tiempo de inicio para calcular duración de ejecución
+    global _start_time
+    _start_time = time.time()
+
+
+# Variable global para calcular duración de ejecución
+_start_time = None

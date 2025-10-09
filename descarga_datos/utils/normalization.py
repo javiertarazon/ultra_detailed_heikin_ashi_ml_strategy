@@ -6,10 +6,21 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
-import logging
-from config.config import NormalizationConfig
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+@dataclass
+class NormalizationConfig:
+    """
+    Configuration class for data normalization settings.
+    """
+    scaler_type: str = "standard"  # Options: "standard", "minmax", "robust"
+    feature_range: Tuple[int, int] = (0, 1)  # Used for MinMaxScaler
+    with_mean: bool = True  # Used for StandardScaler
+    with_std: bool = True  # Used for StandardScaler
+    quantile_range: Tuple[int, int] = (25, 75)  # Used for RobustScaler
+    features_to_normalize: List[str] = None  # If None, normalize all
 
 
 class DataNormalizer:

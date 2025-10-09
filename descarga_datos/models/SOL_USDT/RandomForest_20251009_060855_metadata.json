@@ -1,0 +1,28 @@
+{
+  "symbol": "SOL/USDT",
+  "timeframe": "4h",
+  "model_type": "RandomForest",
+  "features": [
+    "ha_close",
+    "ha_open",
+    "ha_high",
+    "ha_low",
+    "ema_10",
+    "ema_20",
+    "ema_200",
+    "adx",
+    "sar",
+    "atr",
+    "volatility",
+    "momentum_5",
+    "momentum_10",
+    "volume_ratio",
+    "price_position",
+    "trend_strength",
+    "returns",
+    "log_returns"
+  ],
+  "cv_mean": 0.5338746326048885,
+  "val_auc": 0.531529325540434,
+  "timestamp": "20251009_060855"
+}

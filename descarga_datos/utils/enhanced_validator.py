@@ -5,87 +5,9 @@ Detecta anomalías, inconsistencias y problemas comunes en datos OHLCV.
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Union, Any
-import logging
-from dataclasses import dataclass
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+from utils.logger import get_logger
 
-@dataclass
-class ValidationResult:
-    """Resultado de una validación de datos."""
-    valid: bool
-    errors: List[str] = None
-    warnings: List[str] = None
-    metrics: Dict[str, float] = None
-    anomalies: Dict[str, List[int]] = None
-    
-    def __post_init__(self):
-        self.errors = self.errors or []
-        self.warnings = self.warnings or []
-        self.metrics = self.metrics or {}
-        self.anomalies = self.anomalies or {}
-    
-    @property
-    def has_errors(self) -> bool:
-        return len(self.errors) > 0
-    
-    @property
-    def has_warnings(self) -> bool:
-        return len(self.warnings) > 0
-    
-    def add_error(self, error: str) -> None:
-        """Añade un error a la validación."""
-        self.errors.append(error)
-        self.valid = False
-    
-    def add_warning(self, warning: str) -> None:
-        """Añade una advertencia a la validación."""
-        self.warnings.append(warning)
-    
-    def add_anomaly(self, name: str, indices: List[int]) -> None:
-        """Añade una anomalía detectada."""
-        if not indices:
-            return
-            
-        if name not in self.anomalies:
-            self.anomalies[name] = []
-        
-        self.anomalies[name].extend(indices)
-        self.add_warning(f"Detectadas {len(indices)} anomalías de tipo {name}")
-    
-    def merge(self, other: 'ValidationResult') -> None:
-        """Combina dos resultados de validación."""
-        self.valid = self.valid and other.valid
-        self.errors.extend(other.errors)
-        self.warnings.extend(other.warnings)
-        self.metrics.update(other.metrics)
-        
-        for name, indices in other.anomalies.items():
-            if name not in self.anomalies:
-                self.anomalies[name] = []
-            self.anomalies[name].extend(indices)
-
-class EnhancedDataValidator:
-    """
-    Validador avanzado de datos financieros.
-    
-    Características:
-    - Detección de anomalías en precios y volumen
-    - Validación de consistencia OHLCV
-    - Detección de gaps y datos faltantes
-    - Detección de duplicados
-    - Análisis de calidad de indicadores técnicos
-    - Visualización de anomalías
-    """
-    
-    def __init__(self, config=None):
-        """
-        Inicializa el validador con configuración opcional.
-        
-        Args:
-            config: Configuración opcional con umbrales personalizados
-        """
-        self.logger = logging.getLogger(__name__)
+logger = get_logger("__name__")
         
         # Configuración por defecto
         self.config = config or {}

@@ -144,7 +144,7 @@ class OptimizationPipeline:
 
         # Importación lazy de MLTrainer para evitar KeyboardInterrupt en Python 3.13
         try:
-            from descarga_datos.optimizacion.ml_trainer import MLTrainer
+            from .ml_trainer import MLTrainer
             logger.info("MLTrainer importado correctamente")
         except KeyboardInterrupt:
             logger.error("KeyboardInterrupt durante importación de MLTrainer")
@@ -185,12 +185,12 @@ class OptimizationPipeline:
 
         # Importación lazy de StrategyOptimizer
         try:
-            from strategy_optimizer import StrategyOptimizer
+            from .strategy_optimizer import StrategyOptimizer
             logger.info("StrategyOptimizer importado correctamente")
         except ImportError as e:
             logger.error(f"No se puede importar StrategyOptimizer: {e}")
-            # Fallback: devolver parámetros por defecto
-            return self._get_default_parameters(symbol)
+            # Fallback: devolver parámetros por defecto en formato correcto (None, [])
+            return None, []
 
         # Crear optimizador
         optimizer = StrategyOptimizer(
@@ -208,8 +208,8 @@ class OptimizationPipeline:
             return opt_results
         except Exception as e:
             logger.error(f"Error durante optimización: {e}")
-            # Fallback: devolver parámetros por defecto
-            return self._get_default_parameters(symbol)
+            # Fallback: devolver parámetros por defecto en formato correcto
+            return None, []
 
     def _run_final_backtest(self, symbol, opt_results):
         """
@@ -217,16 +217,24 @@ class OptimizationPipeline:
 
         Args:
             symbol (str): Símbolo a testear
-            opt_results (dict): Resultados de optimización
+            opt_results (tuple): Tupla (study, pareto_trials) de optimización
 
         Returns:
             dict: Resultados del backtest
         """
         logger.info(f"Ejecutando backtest final para {symbol}")
 
+        # Verificar que opt_results sea válido
+        if opt_results is None or not isinstance(opt_results, tuple):
+            logger.error(f"opt_results inválido: {opt_results}")
+            return {
+                "error": "No se pudo realizar optimización - parámetros inválidos",
+                "symbol": symbol
+            }
+
         # Extraer mejores parámetros del frente de Pareto
         study, pareto_trials = opt_results
-        if pareto_trials:
+        if pareto_trials and len(pareto_trials) > 0:
             best_trial = pareto_trials[0]  # Tomar el primer trial del frente de Pareto
             best_params = best_trial.params
             logger.info(f"Mejores parámetros encontrados: {best_params}")
@@ -245,30 +253,34 @@ class OptimizationPipeline:
 
         strategy = UltraDetailedHeikinAshiMLStrategy(config=strategy_config)
 
-        # Cargar datos para backtest
-        # Aquí necesitaríamos cargar los datos - por ahora simulamos
-        logger.info("Cargando datos para backtest final...")
+        # ACTIVAR MODO OPTIMIZACIÓN para evitar re-entrenamiento ML durante backtest final
+        strategy._optimization_mode = True
 
-        # Simular datos para testing (en producción cargaríamos datos reales)
-        dates = pd.date_range(start=self.opt_start, end=self.opt_end, freq='4H')
-        np.random.seed(42)  # Para reproducibilidad
+        # Cargar datos para backtest desde SQLite (SOLO DATOS REALES)
+        logger.info("Cargando datos para backtest final desde base de datos...")
 
-        # Crear datos OHLCV simulados pero realistas
-        n_bars = len(dates)
-        base_price = 50000 if 'BTC' in symbol else 200
-
-        # Generar precios con tendencia y volatilidad realista
-        returns = np.random.normal(0.0001, 0.02, n_bars)  # Retornos diarios
-        prices = base_price * np.exp(np.cumsum(returns))
-
-        # Crear DataFrame OHLCV
-        data = pd.DataFrame({
-            'open': prices * (1 + np.random.normal(0, 0.005, n_bars)),
-            'high': prices * (1 + np.random.normal(0.005, 0.01, n_bars)),
-            'low': prices * (1 - np.random.normal(0.005, 0.01, n_bars)),
-            'close': prices,
-            'volume': np.random.lognormal(15, 1, n_bars)
-        }, index=dates)
+        # Importar StorageManager para acceder a datos reales
+        from utils.storage import DataStorage
+        
+        # Crear conexión a la base de datos
+        storage = DataStorage(db_path=f"{self.config.storage.path}/data.db")
+        
+        # Convertir fechas a timestamps
+        start_ts = int(pd.Timestamp(self.opt_start).timestamp()) if self.opt_start else None
+        end_ts = int(pd.Timestamp(self.opt_end).timestamp()) if self.opt_end else None
+        
+        # Tabla para el símbolo y timeframe
+        table_name = f"{symbol.replace('/', '_')}_{self.timeframe}"
+        
+        # Cargar datos reales desde SQLite
+        data = storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
+        
+        if data is None or data.empty:
+            logger.error(f"❌ No se encontraron datos reales para {symbol} en el período de optimización")
+            return {
+                "error": f"No hay datos disponibles para {symbol} en período {self.opt_start} a {self.opt_end}",
+                "status": "error"
+            }
 
         # Asegurar high >= max(open, close) y low <= min(open, close)
         data['high'] = np.maximum(data[['open', 'close']].max(axis=1), data['high'])
@@ -387,7 +399,7 @@ async def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='Pipeline de Optimización Completo')
-    parser.add_argument('--symbols', nargs='+', default=['BTC/USDT'],
+    parser.add_argument('--symbols', nargs='+', default=['SOL/USDT'],
                         help='Símbolos a optimizar')
     parser.add_argument('--timeframe', default='4h',
                         help='Timeframe para los datos')
@@ -398,10 +410,15 @@ async def main():
 
     args = parser.parse_args()
 
-    # Crear pipeline
     pipeline = OptimizationPipeline(
         symbols=args.symbols,
         timeframe=args.timeframe,
+        train_start="2025-01-01",
+        train_end="2025-06-30",
+        val_start="2025-07-01",
+        val_end="2025-08-31",
+        opt_start="2025-01-01",
+        opt_end="2025-08-31",
         n_trials=args.trials
     )
 

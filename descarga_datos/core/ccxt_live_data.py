@@ -8,55 +8,9 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import logging
-from typing import Dict, List, Optional, Union, Tuple
-import threading
-from pathlib import Path
-import os
-import asyncio
+from utils.logger import get_logger
 
-# Intentar importar CCXT
-try:
-    import ccxt
-    import ccxt.async_support as ccxt_async
-    CCXT_AVAILABLE = True
-except ImportError:
-    CCXT_AVAILABLE = False
-    logging.warning("CCXT no disponible - Se requiere para trading en vivo de cripto")
-
-class CCXTLiveDataProvider:
-    """
-    Proveedor de datos en tiempo real desde exchanges CCXT para trading en vivo de cripto.
-
-    Esta clase se encarga de:
-    1. Conectar con exchanges CCXT y mantener la conexión activa
-    2. Obtener datos OHLCV actualizados para múltiples símbolos y timeframes
-    3. Verificar el estado del mercado (cripto siempre abierto)
-    4. Proporcionar información en tiempo real sobre precios y volumen
-    """
-
-    def __init__(self, config=None, exchange_name='bybit', symbols=None, timeframes=None, history_bars=100):
-        """
-        Inicializa el proveedor de datos en vivo de CCXT.
-
-        Args:
-            config: Configuración desde config.yaml (sección exchanges)
-            exchange_name: Nombre del exchange a usar (bybit, binance, etc.)
-            symbols: Lista de símbolos a procesar (ej: ['BTC/USDT', 'ETH/USDT'])
-            timeframes: Lista de timeframes a procesar (ej: ['1h', '4h'])
-            history_bars: Número de barras históricas a descargar inicialmente
-        """
-        # Cargar configuración si no se proporciona
-        if config is None:
-            from config.config_loader import load_config
-            config = load_config().get('exchanges', {})
-
-        self.config = config
-        self.exchange_name = exchange_name
-        self.symbols = symbols or ['BTC/USDT']
-        self.timeframes = timeframes or ['4h']
-        self.history_bars = history_bars
-        self.logger = logging.getLogger(__name__)
+logger = get_logger("__name__)
         self.connected = False
         self.connection_lock = threading.Lock()
         self.data_cache = {}  # Cache de datos por símbolo y timeframe
@@ -71,7 +25,7 @@ class CCXTLiveDataProvider:
         self.async_exchange = None
 
         # Rutas para almacenamiento de datos en vivo
-        self.data_path = Path(os.path.dirname(os.path.abspath(__file__))) / ".." / "data" / "live_data"
+        self.data_path = Path(os.path.dirname(os.path.abspath(__file__))") / ".." / "data" / "live_data"
         self.data_path.mkdir(parents=True, exist_ok=True)
 
         # Inicializar conexión

@@ -8,55 +8,11 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import logging
-from typing import Dict, List, Optional, Union, Tuple
-import threading
-from pathlib import Path
-import os
+from utils.logger import get_logger
 
-# Intentar importar MT5
-try:
-    import MetaTrader5 as mt5
-    MT5_AVAILABLE = True
-except ImportError:
-    MT5_AVAILABLE = False
-    logging.warning("MetaTrader5 no disponible - Se requiere para trading en vivo")
-
-class MT5LiveDataProvider:
-    """
-    Proveedor de datos en tiempo real desde MetaTrader 5 para trading en vivo.
-    
-    Esta clase se encarga de:
-    1. Conectar con MT5 y mantener la conexión activa
-    2. Obtener datos OHLCV actualizados para múltiples símbolos y timeframes
-    3. Verificar el estado del mercado (abierto/cerrado)
-    4. Proporcionar información en tiempo real sobre el saldo de la cuenta
-    """
-    
-    def __init__(self, config=None, account_info=None, symbols=None, timeframes=None, history_bars=1000):
-        """
-        Inicializa el proveedor de datos en vivo de MT5.
-        
-        Args:
-            config: Configuración desde config.yaml (sección mt5)
-            account_info: Información adicional de la cuenta si es necesaria
-            symbols: Lista de símbolos a procesar (ej: ['EURUSD', 'USDJPY'])
-            timeframes: Lista de timeframes a procesar (ej: ['1h', '4h'])
-            history_bars: Número de barras históricas a descargar inicialmente
-        """
-        # Cargar configuración si no se proporciona
-        if config is None:
-            from config.config_loader import load_config
-            config = load_config().get('mt5', {})
-            
-        self.config = config
-        self.account_info = account_info or {}
-        self.symbols = symbols or []
-        self.timeframes = timeframes or []
-        self.history_bars = history_bars
-        self.logger = logging.getLogger(__name__)
+logger = get_logger("__name__)
         self.connected = False
-        self.connection_lock = threading.Lock()
+        self.connection_lock = threading.Lock(")
         self.data_cache = {}  # Cache de datos por símbolo y timeframe
         self.market_status = {}  # Estado del mercado por símbolo
         

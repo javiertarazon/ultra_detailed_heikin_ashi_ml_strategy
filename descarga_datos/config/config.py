@@ -19,12 +19,18 @@ class NormalizationConfig:
 
 @dataclass
 class IndicatorConfig:
+    """
+    OBSOLETO: Esta clase está obsoleta y será eliminada en una versión futura.
+    Usar IndicatorsConfig de config_loader.py en su lugar para mayor coherencia.
+    Se mantiene temporalmente por compatibilidad hacia atrás.
+    """
+    # Valores duplicados de IndicatorsConfig para compatibilidad
     volatility: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'period': 14,
         'method': 'standard_deviation'
     })
-    heiken_ashi: Dict[str, Any] = field(default_factory=lambda: {
+    heikin_ashi: Dict[str, Any] = field(default_factory=lambda: {
         'enabled': True,
         'trend_period': 3,
         'size_comparison_threshold': 1.2

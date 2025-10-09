@@ -11,12 +11,14 @@ Incluye:
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
-import logging
 from dataclasses import dataclass
 import os
 
+# Importar sistema de logging centralizado
+from utils.logger import get_logger
+
 # Intentar importar pandas-ta a través del wrapper
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 try:
     from utils.talib_wrapper import talib
     TALIB_AVAILABLE = True
@@ -55,18 +57,25 @@ class IndicatorConfig:
 
 
 class TechnicalIndicators:
-    """Clase principal para el cálculo de indicadores técnicos."""
+    """
+    Clase CENTRALIZADA para el cálculo de indicadores técnicos.
     
-    def __init__(self, config):
+    OBJETIVO: Eliminar duplicación de código entre strategy_optimizer2.py, 
+    ml_trainer2.py y ultra_detailed_heikin_ashi_ml2_strategy.py
+    
+    TODOS los cálculos de indicadores deben usar esta clase única.
+    """
+    
+    def __init__(self, config=None):
         self.config = config
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
         self.normalizer = DataNormalizer()
         
         # Extraer parámetros de configuración con valores por defecto seguros
         try:
             self.volatility_period = getattr(config.indicators.volatility, 'period', 14) if hasattr(config.indicators, 'volatility') else 14
-            self.ha_trend_period = getattr(config.indicators.heiken_ashi, 'trend_period', 3) if hasattr(config.indicators, 'heiken_ashi') else 3
-            self.ha_size_threshold = getattr(config.indicators.heiken_ashi, 'size_comparison_threshold', 1.2) if hasattr(config.indicators, 'heiken_ashi') else 1.2
+            self.ha_trend_period = getattr(config.indicators.heikin_ashi, 'trend_period', 3) if hasattr(config.indicators, 'heikin_ashi') else 3
+            self.ha_size_threshold = getattr(config.indicators.heikin_ashi, 'size_comparison_threshold', 1.2) if hasattr(config.indicators, 'heikin_ashi') else 1.2
             self.atr_period = getattr(config.indicators.atr, 'period', 14) if hasattr(config.indicators, 'atr') else 14
             self.adx_period = getattr(config.indicators.adx, 'period', 14) if hasattr(config.indicators, 'adx') else 14
             self.adx_threshold = getattr(config.indicators.adx, 'threshold', 25) if hasattr(config.indicators, 'adx') else 25
@@ -95,7 +104,7 @@ class TechnicalIndicators:
             self.logger.error(f"Error calculating volatility: {e}")
             return pd.Series([0] * len(df))
     
-    def calculate_heiken_ashi(self, df: pd.DataFrame) -> pd.DataFrame:
+    def calculate_heikin_ashi(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calcula las velas Heiken Ashi y su tendencia.
         
@@ -472,7 +481,7 @@ class TechnicalIndicators:
             result_df['volatility'] = self.calculate_volatility(df)
             
             # Heiken Ashi
-            ha_df = self.calculate_heiken_ashi(df)
+            ha_df = self.calculate_heikin_ashi(df)
             result_df['ha_close'] = ha_df['ha_close']
             result_df['ha_open'] = ha_df['ha_open']
             result_df['ha_high'] = ha_df['ha_high']
@@ -604,3 +613,86 @@ class TechnicalIndicators:
         except Exception as e:
             self.logger.error(f"Error saving normalized indicators to SQLite: {e}")
             return False
+
+    def calculate_all_indicators_unified(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        🎯 MÉTODO CENTRAL: Calcula TODOS los indicadores necesarios para ML/optimización.
+        
+        Este método debe ser usado por:
+        - strategy_optimizer2.py (reemplazar prepare_indicators)
+        - ml_trainer2.py (centralizando cálculos)  
+        - ultra_detailed_heikin_ashi_ml2_strategy.py (eliminando duplicación)
+        
+        Args:
+            data: DataFrame con columnas OHLCV
+            
+        Returns:
+            DataFrame con todos los indicadores calculados
+        """
+        df = data.copy()
+        
+        try:
+            # === HEIKIN ASHI ===
+            df['ha_close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
+            df['ha_open'] = (df['open'].shift(1) + df['close'].shift(1)) / 2
+            df['ha_open'] = df['ha_open'].fillna(df['open'])
+            df['ha_high'] = df[['high', 'ha_open', 'ha_close']].max(axis=1)
+            df['ha_low'] = df[['low', 'ha_open', 'ha_close']].min(axis=1)
+            
+            # Heikin Ashi cambio de color
+            df['ha_color_change'] = np.where(
+                (df['ha_close'] > df['ha_open']) & (df['ha_close'].shift(1) <= df['ha_open'].shift(1)), 1,
+                np.where((df['ha_close'] < df['ha_open']) & (df['ha_close'].shift(1) >= df['ha_open'].shift(1)), -1, 0)
+            )
+
+            # === ATR ===
+            high_low = df['high'] - df['low']
+            high_close = (df['high'] - df['close'].shift(1)).abs()
+            low_close = (df['low'] - df['close'].shift(1)).abs()
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            df['atr'] = tr.rolling(window=14).mean()
+
+            # === SAR (Parabolic SAR) ===
+            df['sar'] = self.calculate_sar(df)
+
+            # === EMAS ===
+            for period in [9, 10, 21, 20, 50, 200]:  # Agregado ema_10 y ema_20 para compatibilidad con estrategias
+                df[f'ema_{period}'] = df['close'].ewm(span=period).mean()
+
+            # === RSI ===
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['rsi'] = 100 - (100 / (1 + rs))
+
+            # === STOCHASTIC ===
+            low_14 = df['low'].rolling(window=14).min()
+            high_14 = df['high'].rolling(window=14).max()
+            df['stoch_k'] = 100 * (df['close'] - low_14) / (high_14 - low_14)
+            df['stoch_d'] = df['stoch_k'].rolling(window=3).mean()
+
+            # === CCI ===
+            tp = (df['high'] + df['low'] + df['close']) / 3
+            sma_tp = tp.rolling(window=20).mean()
+            # MAD calculation - more efficient approach
+            mad = (tp - tp.rolling(window=20).mean()).abs().rolling(window=20).mean()
+            df['cci'] = (tp - sma_tp) / (0.015 * mad)
+
+            # === MACD ===
+            ema_12 = df['close'].ewm(span=12).mean()
+            ema_26 = df['close'].ewm(span=26).mean()
+            df['macd'] = ema_12 - ema_26
+            df['macd_signal'] = df['macd'].ewm(span=9).mean()
+            df['macd_hist'] = df['macd'] - df['macd_signal']
+
+            # === VOLUMEN ===
+            df['volume_sma'] = df['volume'].rolling(window=20).mean()
+            df['volume_ratio'] = df['volume'] / df['volume_sma']
+
+            self.logger.info("✅ Todos los indicadores técnicos calculados correctamente (método centralizado)")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"🛑 Error calculando indicadores unificados: {e}")
+            raise

@@ -89,11 +89,32 @@ class StrategyOptimizer:
         logger.info(f"Targets de optimización: {self.optimization_targets}")
         
     def download_data(self):
-        """Carga los datos históricos para optimización desde archivos locales"""
-        logger.info(f"Cargando datos locales para {self.symbol} desde {self.start_date} hasta {self.end_date}")
+        """Carga los datos históricos para optimización desde SQLite o CSV"""
+        logger.info(f"Cargando datos para {self.symbol} desde {self.start_date} hasta {self.end_date}")
 
         try:
-            # Construir nombre del archivo CSV
+            # OPCIÓN 1: Intentar cargar desde SQLite primero
+            logger.info("🔍 Intentando cargar desde SQLite...")
+            from utils.storage import DataStorage
+            
+            storage = DataStorage(db_path="data/data.db")
+            table_name = f"{self.symbol.replace('/', '_')}_{self.timeframe}"
+            
+            # Convertir fechas a timestamps
+            start_ts = int(pd.Timestamp(self.start_date).timestamp())
+            end_ts = int(pd.Timestamp(self.end_date).timestamp())
+            
+            # Cargar datos desde SQLite
+            df = storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
+            
+            if df is not None and not df.empty:
+                logger.info(f'✅ Datos SQLite cargados: {len(df)} registros')
+                self.data = df
+                logger.info(f"Datos cargados exitosamente desde SQLite: {len(self.data)} registros")
+                return self.data
+            
+            # OPCIÓN 2: Si no hay datos en SQLite, intentar CSV
+            logger.info("⚠️ SQLite vacío, intentando CSV...")
             symbol_clean = self.symbol.replace('/', '_')
             filename = f"{symbol_clean}_{self.timeframe}.csv"
             csv_path = Path('data/csv') / filename
@@ -124,61 +145,29 @@ class StrategyOptimizer:
         except Exception as e:
             logger.error(f"Error cargando datos para {self.symbol}: {e}")
             raise
-            logger.error(f"No se pudieron descargar datos para {self.symbol}")
-            raise ValueError(f"No se pudieron descargar datos para {self.symbol}")
             
         logger.info(f"Descargados {len(self.data)} registros")
         return self.data
     
     def prepare_indicators(self):
-        """Prepara los indicadores técnicos con implementación local"""
+        """Prepara los indicadores técnicos utilizando la clase TechnicalIndicators centralizada"""
         if self.data is None:
             self.download_data()
 
-        logger.info("Calculando indicadores técnicos localmente")
-
-        df = self.data.copy()
-
-        # Heikin Ashi
-        df['ha_close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
-        df['ha_open'] = (df['open'].shift(1) + df['close'].shift(1)) / 2
-        df['ha_open'] = df['ha_open'].fillna(df['open'])
-        df['ha_high'] = df[['high', 'ha_open', 'ha_close']].max(axis=1)
-        df['ha_low'] = df[['low', 'ha_open', 'ha_close']].min(axis=1)
-
-        # ATR
-        high_low = df['high'] - df['low']
-        high_close = (df['high'] - df['close'].shift(1)).abs()
-        low_close = (df['low'] - df['close'].shift(1)).abs()
-        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df['atr'] = tr.rolling(window=14).mean()
-
-        # EMA
-        df['ema_9'] = df['close'].ewm(span=9).mean()
-        df['ema_21'] = df['close'].ewm(span=21).mean()
-
-        # RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
-
-        # Stochastic
-        lowest_low = df['low'].rolling(window=14).min()
-        highest_high = df['high'].rolling(window=14).max()
-        df['stoch_k'] = 100 * (df['close'] - lowest_low) / (highest_high - lowest_low)
-        df['stoch_d'] = df['stoch_k'].rolling(window=3).mean()
-
-        # Volumen
-        df['volume_ma'] = df['volume'].rolling(window=20).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_ma']
-
+        logger.info("🔧 Usando método centralizado de indicadores técnicos")
+        
+        # Importar método centralizado
+        from indicators.technical_indicators import TechnicalIndicators
+        
+        # Crear instancia y calcular todos los indicadores
+        indicators = TechnicalIndicators()
+        df = indicators.calculate_all_indicators_unified(self.data)
+        
         # Limpiar NaN
         df = df.dropna()
 
         self.data = df
-        logger.info(f"Indicadores calculados: {len(df)} filas válidas")
+        logger.info(f"✅ Indicadores calculados (centralizado): {len(df)} filas válidas")
 
         return self.data
     
@@ -189,39 +178,42 @@ class StrategyOptimizer:
         - Max Drawdown (a minimizar)
         - Win Rate (a maximizar)
         """
-        # Definir espacio de parámetros
+        # Definir espacio de parámetros CRYPTO-OPTIMIZED
         params = {
-            # Parámetros ML
-            "ml_threshold": trial.suggest_float("ml_threshold", 0.3, 0.8, step=0.05),
+            # Parámetros ML - ULTRA PERMISIVO para crypto volatilidad
+            "ml_threshold": trial.suggest_float("ml_threshold", 0.15, 0.45, step=0.05),  # 🔥 CRYPTO: 0.15-0.45 (más señales)
             
-            # Parámetros de indicadores
-            "stoch_overbought": trial.suggest_int("stoch_overbought", 70, 95, step=5),
-            "stoch_oversold": trial.suggest_int("stoch_oversold", 5, 30, step=5),
-            "cci_threshold": trial.suggest_int("cci_threshold", 20, 150, step=10),
-            "volume_ratio_min": trial.suggest_float("volume_ratio_min", 0.4, 1.8, step=0.1),
+            # Parámetros de indicadores - CRYPTO FLEXIBLES
+            "stoch_overbought": trial.suggest_int("stoch_overbought", 60, 85, step=5),  # 🔥 Más bajo para crypto
+            "stoch_oversold": trial.suggest_int("stoch_oversold", 15, 40, step=5),  # 🔥 Más alto para crypto
+            "cci_threshold": trial.suggest_int("cci_threshold", 50, 250, step=10),  # 🔥 Más amplitud
+            "volume_ratio_min": trial.suggest_float("volume_ratio_min", 0.2, 1.0, step=0.1),  # 🔥 Mínimo más bajo
             
-            # Parámetros SAR
-            "sar_acceleration": trial.suggest_float("sar_acceleration", 0.01, 0.2, step=0.01),
-            "sar_maximum": trial.suggest_float("sar_maximum", 0.1, 0.3, step=0.01),
+            # Parámetros SAR - CRYPTO ALTA SENSIBILIDAD
+            "sar_acceleration": trial.suggest_float("sar_acceleration", 0.02, 0.30, step=0.01),  # 🔥 Hasta 0.30
+            "sar_maximum": trial.suggest_float("sar_maximum", 0.10, 0.35, step=0.01),  # 🔥 Rango amplio
             
-            # Parámetros ATR
-            "atr_period": trial.suggest_int("atr_period", 7, 21, step=1),
-            "stop_loss_atr_multiplier": trial.suggest_float("stop_loss_atr_multiplier", 1.5, 4.0, step=0.25),
-            "take_profit_atr_multiplier": trial.suggest_float("take_profit_atr_multiplier", 2.0, 5.0, step=0.25),
+            # Parámetros ATR - CRYPTO AGRESIVO (volatilidad alta)
+            "atr_period": trial.suggest_int("atr_period", 7, 21, step=1),  # 🔥 Rango medio
+            "stop_loss_atr_multiplier": trial.suggest_float("stop_loss_atr_multiplier", 1.5, 4.5, step=0.25),  # 🔥 Stops amplios
+            "take_profit_atr_multiplier": trial.suggest_float("take_profit_atr_multiplier", 2.0, 7.0, step=0.25),  # 🔥 Targets altos
             
-            # Parámetros EMA
-            "ema_trend_period": trial.suggest_int("ema_trend_period", 20, 200, step=10),
+            # Parámetros EMA - CRYPTO TRENDS RÁPIDOS
+            "ema_trend_period": trial.suggest_int("ema_trend_period", 15, 120, step=5),  # 🔥 Trends más cortos
             
-            # Parámetros de gestión de riesgo
-            "max_drawdown": trial.suggest_float("max_drawdown", 0.03, 0.15, step=0.01),
-            "max_portfolio_heat": trial.suggest_float("max_portfolio_heat", 0.03, 0.08, step=0.01),
-            "max_concurrent_trades": trial.suggest_int("max_concurrent_trades", 1, 5),
-            "kelly_fraction": trial.suggest_float("kelly_fraction", 0.1, 0.6, step=0.05),
+            # Parámetros de gestión de riesgo - CRYPTO ULTRA AGRESIVO
+            "max_drawdown": trial.suggest_float("max_drawdown", 0.03, 0.12, step=0.01),  # 🔥 Hasta 12% DD
+            "max_portfolio_heat": trial.suggest_float("max_portfolio_heat", 0.08, 0.20, step=0.01),  # 🔥 Hasta 20% heat
+            "max_concurrent_trades": trial.suggest_int("max_concurrent_trades", 3, 10),  # 🔥 Hasta 10 trades simultáneos
+            "kelly_fraction": trial.suggest_float("kelly_fraction", 0.25, 0.80, step=0.05),  # 🔥 Kelly agresivo
         }
         
         # Crear instancia de la estrategia con los parámetros a optimizar
         strategy = UltraDetailedHeikinAshiMLStrategy(config=params)
-        
+
+        # ACTIVAR MODO OPTIMIZACIÓN para evitar re-entrenamiento ML en cada trial
+        strategy._optimization_mode = True
+
         # Ejecutar la estrategia
         results = strategy.run(self.data, self.symbol, self.timeframe)
         

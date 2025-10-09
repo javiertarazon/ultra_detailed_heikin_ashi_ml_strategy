@@ -6,7 +6,7 @@ y se adapta a distintos mercados (acciones, forex, cripto) mediante
 parámetros configurables."""
 import numpy as np
 import pandas as pd
-import logging
+from utils.logger import get_logger
 from utils.talib_wrapper import talib
 
 class HeikinAshiVolumenSarStrategyImproved:
@@ -38,7 +38,7 @@ class HeikinAshiVolumenSarStrategyImproved:
         self.initial_capital = float(initial_capital)
         self.max_position_value_ratio = max(0.0, float(max_position_value_ratio))
 
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
         self.logger.info(
             "Estrategia HeikinAshiVolumenSar MEJORADA inicializada con: "

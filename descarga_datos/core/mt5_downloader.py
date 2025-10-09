@@ -4,26 +4,25 @@ MT5 Data Downloader - Descarga datos de acciones desde MetaTrader 5
 """
 import pandas as pd
 import numpy as np
+import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
-import logging
-import time
-import asyncio
+from utils.logger import get_logger
 
-# Intentar importar MT5
+# Flag para verificar disponibilidad de MT5
+MT5_AVAILABLE = False
 try:
     import MetaTrader5 as mt5
     MT5_AVAILABLE = True
 except ImportError:
     MT5_AVAILABLE = False
-    logging.warning("MetaTrader5 no disponible - solo se usarán datos de CCXT")
 
 class MT5Downloader:
-    """Downloader para datos de acciones desde MT5"""
-
-    def __init__(self, config):
-        self.config = config
-        self.logger = logging.getLogger(__name__)
+    """Clase para descargar datos históricos de MetaTrader 5"""
+    
+    def __init__(self, config=None):
+        """Inicializa el downloader de MT5"""
+        self.logger = get_logger(__name__)
         self.connected = False
         self.max_retries = getattr(config, 'max_retries', 3) if hasattr(config, 'max_retries') else 3
         self.retry_delay = getattr(config, 'retry_delay', 5) if hasattr(config, 'retry_delay') else 5
@@ -92,7 +91,7 @@ class MT5Downloader:
         Descarga datos históricos de un símbolo desde MT5 con estrategia mejorada
 
         Args:
-            symbol: Símbolo (ej: "AAPL.US", "TSLA.US")
+            symbol: Símbolo (ej: "AAPL.US", "TSLA.US", "BTC/USD")
             timeframe: Timeframe (ej: "1h", "1d")
             start_date: Fecha inicio (YYYY-MM-DD)
             end_date: Fecha fin (YYYY-MM-DD)
@@ -105,6 +104,11 @@ class MT5Downloader:
             return None
 
         try:
+            # Convertir símbolo del formato config al formato MT5 si es necesario
+            original_config_symbol = symbol
+            symbol = self.convert_config_symbol_to_mt5(symbol)
+            self.logger.info(f"MT5: Convertido símbolo '{original_config_symbol}' → '{symbol}'")
+
             # Convertir timeframe a MT5
             mt5_timeframe = self._convert_timeframe(timeframe)
             if mt5_timeframe is None:
@@ -287,3 +291,50 @@ class MT5Downloader:
         except Exception as e:
             self.logger.error(f"Error obteniendo símbolos: {e}")
             return []
+
+    def convert_config_symbol_to_mt5(self, config_symbol: str) -> str:
+        """
+        Convierte un símbolo del formato config (con "/") al formato MT5
+
+        Args:
+            config_symbol: Símbolo en formato config (ej: "BTC/USD", "EUR/USD", "AAPL/US")
+
+        Returns:
+            Símbolo en formato MT5 (ej: "BTCUSD", "EURUSD", "AAPL.US")
+        """
+        if '/' not in config_symbol:
+            return config_symbol
+
+        base, quote = config_symbol.split('/', 1)
+
+        # Mapeos especiales para criptomonedas MT5
+        crypto_mappings = {
+            ('BTC', 'USD'): 'BTCUSD',
+            ('ETH', 'USD'): 'ETHUSD',
+            ('ADA', 'USD'): 'ADAUSD',
+            ('DOT', 'USD'): 'DOTUSD',
+            ('MATIC', 'USD'): 'MATICUSD',
+            ('AVAX', 'USD'): 'AVAXUSD',
+            ('LINK', 'USD'): 'LINKUSD',
+            ('UNI', 'USD'): 'UNIUSD',
+            ('SOL', 'USD'): 'SOLUSD',
+            ('LTC', 'USD'): 'LTCUSD',
+            ('XRP', 'USD'): 'XRPUSD',
+            ('DOGE', 'USD'): 'DOGEUSD'
+        }
+
+        # Forex directo
+        if quote.upper() in ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD']:
+            return f"{base}{quote}"
+
+        # Acciones (mantener formato .US)
+        if quote.upper() == 'US':
+            return f"{base}.US"
+
+        # Buscar en mapeos de cripto
+        key = (base.upper(), quote.upper())
+        if key in crypto_mappings:
+            return crypto_mappings[key]
+
+        # Fallback: intentar formato directo
+        return f"{base}{quote}"

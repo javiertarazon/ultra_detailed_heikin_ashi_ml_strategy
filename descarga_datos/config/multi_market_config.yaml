@@ -1,0 +1,279 @@
+# Configuración Multi-Mercado para UltraDetailedHeikinAshiML Strategy
+# Ejemplos de configuración para diferentes tipos de mercado
+
+active_exchange: binance  # Para crypto y algunos commodities
+forex_exchange: oanda     # Para forex (requiere API separada)
+stocks_exchange: alpaca   # Para acciones (requiere API separada)
+
+backtesting:
+  commission: 0.1
+  end_date: '2024-12-31'
+  initial_capital: 10000
+  start_date: '2022-01-01'
+  timeframe: 4h
+  optimized_parameters: null
+  optimization:
+    enabled: true
+    n_trials: 150
+    opt_end: '2025-01-01'
+    opt_start: '2023-06-01'
+    study_name: multi_market_ml_optimization
+    targets:
+      constraints:
+        max_drawdown_limit: 0.12
+        min_trades: 50
+        min_win_rate: 0.45
+      maximize:
+      - total_pnl
+      - profit_factor
+      - total_trades
+      minimize:
+      - max_drawdown
+      4h:
+        # Configuración base para crypto
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
+
+# === CONFIGURACIONES POR MERCADO ===
+
+# 🔄 FOREX - Adaptado para pares de divisas
+EUR/USD:
+  market_type: forex
+  1h:  # Forex funciona mejor en timeframes más cortos
+    atr_period: 14
+    atr_volatility_threshold: 1.5
+    ema_trend_period: 50
+    max_consecutive_losses: 5
+    min_trend_strength: 0.3
+    sar_acceleration: 0.02
+    sar_maximum: 0.2
+    stop_loss_atr_multiplier: 2.5
+    take_profit_atr_multiplier: 4.0
+    trailing_stop_atr_multiplier: 1.2
+    volatility_filter_threshold: 0.005
+    volume_sma_period: 20
+    volume_threshold: 100
+    ml_threshold: 0.55
+    max_drawdown: 0.03
+    max_portfolio_heat: 0.04
+    max_concurrent_trades: 5
+    kelly_fraction: 0.2
+
+GBP/JPY:
+  market_type: forex
+  1h:
+    atr_period: 16
+    atr_volatility_threshold: 1.8
+    ema_trend_period: 60
+    max_consecutive_losses: 4
+    min_trend_strength: 0.4
+    sar_acceleration: 0.025
+    sar_maximum: 0.18
+    stop_loss_atr_multiplier: 2.8
+    take_profit_atr_multiplier: 4.5
+    trailing_stop_atr_multiplier: 1.3
+    volatility_filter_threshold: 0.008
+    volume_sma_period: 25
+    volume_threshold: 150
+    ml_threshold: 0.58
+    max_drawdown: 0.035
+    max_portfolio_heat: 0.045
+    max_concurrent_trades: 4
+    kelly_fraction: 0.22
+
+# 🛢️ COMMODITIES - Adaptado para materias primas
+XAU/USD:  # Oro
+  market_type: commodities
+  4h:
+    atr_period: 20
+    atr_volatility_threshold: 2.5
+    ema_trend_period: 100
+    max_consecutive_losses: 3
+    min_trend_strength: 0.7
+    sar_acceleration: 0.05
+    sar_maximum: 0.15
+    stop_loss_atr_multiplier: 3.0
+    take_profit_atr_multiplier: 6.0
+    trailing_stop_atr_multiplier: 1.8
+    volatility_filter_threshold: 0.02
+    volume_sma_period: 30
+    volume_threshold: 5000
+    ml_threshold: 0.60
+    max_drawdown: 0.05
+    max_portfolio_heat: 0.06
+    max_concurrent_trades: 3
+    kelly_fraction: 0.3
+
+WTI:  # Petróleo
+  market_type: commodities
+  4h:
+    atr_period: 18
+    atr_volatility_threshold: 3.0
+    ema_trend_period: 80
+    max_consecutive_losses: 4
+    min_trend_strength: 0.6
+    sar_acceleration: 0.04
+    sar_maximum: 0.12
+    stop_loss_atr_multiplier: 2.8
+    take_profit_atr_multiplier: 5.5
+    trailing_stop_atr_multiplier: 1.6
+    volatility_filter_threshold: 0.025
+    volume_sma_period: 25
+    volume_threshold: 3000
+    ml_threshold: 0.62
+    max_drawdown: 0.055
+    max_portfolio_heat: 0.065
+    max_concurrent_trades: 3
+    kelly_fraction: 0.28
+
+# 📈 STOCKS - Adaptado para acciones individuales
+AAPL:  # Apple Inc.
+  market_type: stocks
+  1d:  # Acciones funcionan mejor en timeframe diario
+    atr_period: 20
+    atr_volatility_threshold: 2.0
+    ema_trend_period: 100
+    max_consecutive_losses: 2
+    min_trend_strength: 0.6
+    sar_acceleration: 0.03
+    sar_maximum: 0.18
+    stop_loss_atr_multiplier: 2.8
+    take_profit_atr_multiplier: 5.0
+    trailing_stop_atr_multiplier: 1.5
+    volatility_filter_threshold: 0.015
+    volume_sma_period: 50
+    volume_threshold: 10000
+    ml_threshold: 0.65
+    max_drawdown: 0.04
+    max_portfolio_heat: 0.05
+    max_concurrent_trades: 2
+    kelly_fraction: 0.25
+
+TSLA:  # Tesla Inc.
+  market_type: stocks
+  1d:
+    atr_period: 22
+    atr_volatility_threshold: 2.5
+    ema_trend_period: 120
+    max_consecutive_losses: 3
+    min_trend_strength: 0.55
+    sar_acceleration: 0.035
+    sar_maximum: 0.16
+    stop_loss_atr_multiplier: 3.2
+    take_profit_atr_multiplier: 5.8
+    trailing_stop_atr_multiplier: 1.7
+    volatility_filter_threshold: 0.02
+    volume_sma_period: 60
+    volume_threshold: 15000
+    ml_threshold: 0.63
+    max_drawdown: 0.045
+    max_portfolio_heat: 0.055
+    max_concurrent_trades: 2
+    kelly_fraction: 0.27
+
+# 🎯 SYNTHETIC - Adaptado para símbolos sintéticos similares a crypto
+VOLATILITY_INDEX:  # Índice de volatilidad sintético
+  market_type: synthetic
+  4h:
+    atr_period: 16
+    atr_volatility_threshold: 2.2
+    ema_trend_period: 60
+    max_consecutive_losses: 4
+    min_trend_strength: 0.5
+    sar_acceleration: 0.04
+    sar_maximum: 0.12
+    stop_loss_atr_multiplier: 3.0
+    take_profit_atr_multiplier: 5.2
+    trailing_stop_atr_multiplier: 1.4
+    volatility_filter_threshold: 0.025
+    volume_sma_period: 25
+    volume_threshold: 2000
+    ml_threshold: 0.52
+    max_drawdown: 0.08
+    max_portfolio_heat: 0.10
+    max_concurrent_trades: 4
+    kelly_fraction: 0.35
+
+SYNTH_BTC_INDEX:  # Índice sintético BTC
+  market_type: synthetic
+  4h:
+    atr_period: 15
+    atr_volatility_threshold: 2.3
+    ema_trend_period: 55
+    max_consecutive_losses: 3
+    min_trend_strength: 0.52
+    sar_acceleration: 0.045
+    sar_maximum: 0.13
+    stop_loss_atr_multiplier: 3.1
+    take_profit_atr_multiplier: 5.3
+    trailing_stop_atr_multiplier: 1.45
+    volatility_filter_threshold: 0.028
+    volume_sma_period: 22
+    volume_threshold: 1800
+    ml_threshold: 0.51
+    max_drawdown: 0.085
+    max_portfolio_heat: 0.105
+    max_concurrent_trades: 4
+    kelly_fraction: 0.33
+
+# === CONFIGURACIÓN PARA OPTIMIZACIÓN ML ===
+
+ml_training:
+  safe_mode: false
+  models:
+    - random_forest
+    - gradient_boosting
+  hyperparameters:
+    random_forest:
+      n_estimators: 100
+      max_depth: 15
+      min_samples_split: 10
+      min_samples_leaf: 5
+    gradient_boosting:
+      n_estimators: 100
+      learning_rate: 0.1
+      max_depth: 6
+      min_samples_split: 10
+
+# === CONFIGURACIÓN PARA DASHBOARD ===
+
+dashboard:
+  port: 8520
+  theme: dark
+  auto_refresh: true
+  show_trades: true
+  show_metrics: true
+  export_results: true
+
+# === INSTRUCCIONES DE USO ===
+
+# Para usar esta configuración multi-mercado:
+#
+# 1. FOREX: Cambiar active_exchange a tu broker forex y configurar API
+#    python main.py --symbol EUR/USD --timeframe 1h
+#
+# 2. COMMODITIES: Usar binance o similar para XAU/USD, WTI, etc.
+#    python main.py --symbol XAU/USD --timeframe 4h
+#
+# 3. STOCKS: Cambiar active_exchange a tu broker de acciones
+#    python main.py --symbol AAPL --timeframe 1d
+#
+# 4. SYNTHETIC: Para índices sintéticos o CFDs similares a crypto
+#    python main.py --symbol VOLATILITY_INDEX --timeframe 4h
+#
+# 5. CRYPTO: Configuración original (default)
+#    python main.py --symbol XRP/USDT --timeframe 4h
+#
+# La estrategia detecta automáticamente el tipo de mercado y aplica
+# los parámetros optimizados correspondientes.

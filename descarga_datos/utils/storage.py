@@ -4,16 +4,15 @@ Módulo de almacenamiento de datos con manejo consistente de timestamps.
 import sqlite3
 import os
 import json
-import logging
 import pandas as pd
 import numpy as np
-from typing import Union, List, Dict, Any, Optional
-from pathlib import Path
+from typing import Any, Dict, List, Optional, Union, Tuple
 from core.base_data_handler import BaseDataHandler, DataValidationResult
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-def _get_sqlite_type(dtype: np.dtype) -> str:
+def _get_sqlite_type(dtype) -> str:
     """Maps pandas dtype to SQLite data type."""
     if pd.api.types.is_integer_dtype(dtype):
         return "INTEGER"
@@ -432,3 +431,307 @@ def save_to_csv(data: Union[pd.DataFrame, List[Dict[str, Any]]],
 
 
 # Additional functions for specific data types can be added here
+
+# Métodos adicionales para compatibilidad con código centralizado
+def get_data_without_validation(self, symbol: str, timeframe: str, start_date: str = None, end_date: str = None):
+    """
+    Método para obtener datos SIN validación de autenticidad.
+    Este método está diseñado para ser utilizado SOLO por validadores de datos.
+    
+    Args:
+        symbol: Símbolo a obtener
+        timeframe: Timeframe a obtener
+        start_date: Fecha inicial opcional en formato 'YYYY-MM-DD'
+        end_date: Fecha final opcional en formato 'YYYY-MM-DD'
+        
+    Returns:
+        pd.DataFrame o None si no hay datos
+    """
+    try:
+        # Generar nombre de tabla estándar
+        table_name = f"{symbol.replace('/', '_')}_{timeframe}"
+        
+        # Convertir fechas a timestamps si se proporcionan
+        start_ts = None
+        end_ts = None
+        
+        if start_date:
+            from datetime import datetime
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            start_ts = int(start_dt.timestamp())
+        
+        if end_date:
+            from datetime import datetime
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            end_ts = int(end_dt.timestamp())
+        
+        # Usar query_data existente
+        data = self.query_data(table_name, start_ts, end_ts)
+        
+        if data.empty:
+            return None
+        
+        return data
+        
+    except Exception as e:
+        logger.error(f"Error en get_data_without_validation: {e}")
+        return None
+
+def get_data_method(self, symbol: str, timeframe: str, start_date: str = None, end_date: str = None):
+    """
+    Método de compatibilidad para obtener datos con la interfaz esperada por main.py.
+    Incluye validación opcional de autenticidad de datos.
+    
+    Args:
+        symbol: Símbolo a obtener
+        timeframe: Timeframe a obtener
+        start_date: Fecha inicial opcional en formato 'YYYY-MM-DD'
+        end_date: Fecha final opcional en formato 'YYYY-MM-DD'
+        
+    Returns:
+        pd.DataFrame o None si no hay datos
+    """
+    try:
+        # Obtener datos sin validación
+        data = self.get_data_without_validation(symbol, timeframe, start_date, end_date)
+        
+        if data is None or data.empty:
+            return None
+            
+        # Verificar si se requiere validación de autenticidad
+        try:
+            import os
+            validate_auth = os.environ.get('BT_VALIDATE_AUTH', '').lower() == 'true'
+            
+            if validate_auth and len(data) >= 100:
+                # Importar validador solo si es necesario
+                from utils.audit_real_data import validate_data_authenticity
+                
+                # Validar autenticidad
+                validation = validate_data_authenticity(data, symbol, timeframe)
+                
+                # Registrar advertencia si los datos son sospechosos
+                if not validation['is_authentic'] and validation['confidence'] < 50:
+                    logger.warning(f"⚠️ ADVERTENCIA: Datos de {symbol} ({timeframe}) son sospechosos - {validation['reason']}")
+                    # No bloqueamos el acceso, solo advertimos
+        except ImportError:
+            # Si no se puede importar el validador, continuamos sin validación
+            pass
+        except Exception as e:
+            logger.error(f"Error en validación de datos para {symbol}: {e}")
+        
+        return data
+        
+    except Exception as e:
+        logger.error(f"Error en get_data: {e}")
+        return None
+
+def save_data_method(self, data: pd.DataFrame, symbol: str, timeframe: str):
+    """
+    Método de compatibilidad para guardar datos con la interfaz esperada por main.py
+    """
+    try:
+        # Generar nombre de tabla estándar
+        table_name = f"{symbol.replace('/', '_')}_{timeframe}"
+        
+        # Usar save_data existente
+        return self.save_data(table_name, data)
+        
+    except Exception as e:
+        logger.error(f"Error en save_data: {e}")
+        return False
+
+# Asignar método de conveniencia para acceso directo
+DataStorage.get_data_without_validation = get_data_without_validation
+
+# Agregar métodos a la clase DataStorage
+DataStorage.get_data = get_data_method
+DataStorage.get_data_without_validation = get_data_without_validation
+DataStorage.save_data_compat = save_data_method
+
+# Sobreescribir save_data para manejar ambas interfaces
+original_save_data = DataStorage.save_data
+def save_data_unified(self, table_name_or_data, data_or_symbol=None, timeframe=None):
+    """Método unificado que maneja ambas interfaces de save_data"""
+    if isinstance(table_name_or_data, pd.DataFrame) and data_or_symbol and timeframe:
+        # Nueva interfaz: save_data(dataframe, symbol, timeframe)
+        return save_data_method(self, table_name_or_data, data_or_symbol, timeframe)
+    else:
+        # Interfaz original: save_data(table_name, dataframe)
+        return original_save_data(self, table_name_or_data, data_or_symbol)
+
+DataStorage.save_data = save_data_unified
+
+# Alias para compatibilidad con código centralizado
+StorageManager = DataStorage
+
+async def ensure_data_availability(symbol: str, timeframe: str = '4h', 
+                                 start_date: str = None, end_date: str = None,
+                                 config: dict = None) -> pd.DataFrame:
+    """
+    Función centralizada para asegurar disponibilidad de datos históricos.
+    
+    FLUJO CENTRALIZADO:
+    1. Verificar SQLite (prioridad #1)
+    2. Si no existe en SQLite, verificar CSV (fallback)
+    3. Si no existe en ninguno, descargar automáticamente
+    4. Retornar datos disponibles
+    
+    Args:
+        symbol: Símbolo a verificar (ej: 'BTC/USDT', 'TSLA/US')
+        timeframe: Timeframe deseado (ej: '4h', '1d')
+        start_date: Fecha inicio (YYYY-MM-DD)
+        end_date: Fecha fin (YYYY-MM-DD)
+        config: Configuración del sistema
+        
+    Returns:
+        DataFrame con datos históricos
+    """
+    logger.info(f"🔍 Verificando disponibilidad de datos para {symbol} en {timeframe}")
+    
+    # Cargar configuración si no se proporciona
+    if config is None:
+        try:
+            from config.config_loader import load_config_from_yaml
+            config = load_config_from_yaml()
+        except Exception as e:
+            logger.error(f"Error cargando configuración: {e}")
+            raise
+    
+    # Determinar fechas si no se especifican
+    if start_date is None or end_date is None:
+        # Usar fechas por defecto del config o valores razonables
+        try:
+            if hasattr(config, 'backtesting'):
+                if start_date is None:
+                    start_date = getattr(config.backtesting, 'start_date', '2023-01-01')
+                if end_date is None:
+                    end_date = getattr(config.backtesting, 'end_date', pd.Timestamp.now().strftime('%Y-%m-%d'))
+            else:
+                if start_date is None:
+                    start_date = '2023-01-01'
+                if end_date is None:
+                    end_date = pd.Timestamp.now().strftime('%Y-%m-%d')
+        except Exception as e:
+            logger.warning(f"Error obteniendo fechas de config, usando valores por defecto: {e}")
+            if start_date is None:
+                start_date = '2023-01-01'
+            if end_date is None:
+                end_date = pd.Timestamp.now().strftime('%Y-%m-%d')
+    
+    # 1. PRIMERO: Verificar SQLite (prioridad máxima)
+    storage = DataStorage()
+    table_name = f"{symbol.replace('/', '_')}_{timeframe}"
+    
+    try:
+        sqlite_data = storage.get_data_without_validation(symbol, timeframe, start_date, end_date)
+        if sqlite_data is not None and not sqlite_data.empty:
+            # Verificar que los datos cubren el período solicitado
+            if _data_covers_period(sqlite_data, start_date, end_date):
+                logger.info(f"✅ Datos encontrados en SQLite para {symbol}: {len(sqlite_data)} filas")
+                return sqlite_data
+            else:
+                logger.warning(f"⚠️ Datos en SQLite incompletos para {symbol}, descargando datos adicionales")
+    except Exception as e:
+        logger.warning(f"Error verificando SQLite para {symbol}: {e}")
+    
+    # 2. SEGUNDO: Verificar CSV (fallback)
+    try:
+        csv_data = _load_csv_data(symbol, timeframe)
+        if csv_data is not None and not csv_data.empty:
+            # Verificar que los datos cubren el período solicitado
+            if _data_covers_period(csv_data, start_date, end_date):
+                logger.info(f"✅ Datos encontrados en CSV para {symbol}: {len(csv_data)} filas")
+                # Guardar en SQLite para futuras consultas
+                try:
+                    storage.save_data(csv_data, symbol, timeframe)
+                    logger.info(f"💾 Datos CSV guardados en SQLite para {symbol}")
+                except Exception as e:
+                    logger.warning(f"No se pudo guardar CSV en SQLite: {e}")
+                return csv_data
+            else:
+                logger.warning(f"⚠️ Datos en CSV incompletos para {symbol}, descargando datos adicionales")
+    except Exception as e:
+        logger.warning(f"Error verificando CSV para {symbol}: {e}")
+    
+    # 3. TERCERO: Descargar automáticamente si no existen datos
+    logger.info(f"🔄 Descargando datos automáticamente para {symbol} ({start_date} → {end_date})")
+    
+    try:
+        downloaded_data = await _download_symbol_data(symbol, timeframe, start_date, end_date, config)
+        if downloaded_data is not None and not downloaded_data.empty:
+            logger.info(f"✅ Datos descargados exitosamente para {symbol}: {len(downloaded_data)} filas")
+            return downloaded_data
+        else:
+            raise Exception(f"No se pudieron descargar datos para {symbol}")
+    except Exception as e:
+        logger.error(f"❌ Error descargando datos para {symbol}: {e}")
+        raise Exception(f"No se pudieron obtener datos para {symbol}: {e}")
+
+def _data_covers_period(data: pd.DataFrame, start_date: str, end_date: str) -> bool:
+    """Verifica si los datos cubren el período solicitado"""
+    try:
+        if data.empty or 'timestamp' not in data.columns:
+            return False
+        
+        data_start = pd.to_datetime(data['timestamp'].min()).strftime('%Y-%m-%d')
+        data_end = pd.to_datetime(data['timestamp'].max()).strftime('%Y-%m-%d')
+        
+        return data_start <= start_date and data_end >= end_date
+    except Exception:
+        return False
+
+def _load_csv_data(symbol: str, timeframe: str) -> Optional[pd.DataFrame]:
+    """Carga datos desde archivo CSV"""
+    try:
+        import os
+        from pathlib import Path
+        
+        csv_filename = f"{symbol.replace('/', '_')}_{timeframe}.csv"
+        csv_path = Path(__file__).parent.parent / 'data' / 'csv' / csv_filename
+        
+        if csv_path.exists():
+            df = pd.read_csv(csv_path)
+            if not df.empty and 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df.set_index('timestamp', inplace=True)
+                return df
+        
+        return None
+    except Exception as e:
+        logger.warning(f"Error cargando CSV para {symbol}: {e}")
+        return None
+
+async def _download_symbol_data(symbol: str, timeframe: str, start_date: str, 
+                              end_date: str, config: dict) -> Optional[pd.DataFrame]:
+    """Descarga datos para un símbolo específico"""
+    try:
+        from core.downloader import AdvancedDataDownloader
+        
+        downloader = AdvancedDataDownloader(config)
+        # Inicializar el downloader (necesario para configurar exchanges)
+        await downloader.initialize()
+        
+        # Determinar el tipo de descarga basado en el símbolo
+        if symbol in ['SOL/USDT', 'ETH/USDT', 'BTC/USDT', 'ADA/USD', 'DOT/USD', 
+                     'MATIC/USD', 'XRP/USDT', 'LTC/USD', 'DOGE/USDT']:
+            # Descarga CCXT para criptomonedas
+            downloaded_data = await downloader.download_multiple_symbols([symbol], timeframe, start_date, end_date)
+            data = downloaded_data.get(symbol) if downloaded_data else None
+        else:
+            # Descarga MT5 para acciones y forex
+            downloaded_data = await downloader.download_multiple_symbols([symbol], timeframe, start_date, end_date)
+            data = downloaded_data.get(symbol) if downloaded_data else None
+        
+        if data is not None and not data.empty:
+            # Guardar automáticamente en SQLite
+            storage = DataStorage()
+            storage.save_data(data, symbol, timeframe)
+            logger.info(f"💾 Datos descargados guardados en SQLite para {symbol}")
+            
+            return data
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error en descarga automática para {symbol}: {e}")
+        return None

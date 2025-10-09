@@ -289,7 +289,7 @@ class DataAuditor:
         return recommendations
 
 def run_data_audit(config=None, symbols: List[str] = None, timeframe: str = '1d',
-                  skip_download: bool = False) -> Dict[str, Any]:
+                  skip_download: bool = False, auto_fetch_missing: bool = True) -> Dict[str, Any]:
     """
     Ejecutar auditoría completa de datos
 
@@ -298,6 +298,7 @@ def run_data_audit(config=None, symbols: List[str] = None, timeframe: str = '1d'
         symbols: Lista de símbolos a auditar (None = usar config)
         timeframe: Timeframe a auditar
         skip_download: Si True, no intentar correcciones automáticas
+        auto_fetch_missing: Si True, descargar automáticamente datos faltantes
 
     Returns:
         Dict con reporte completo de auditoría
@@ -325,6 +326,33 @@ def run_data_audit(config=None, symbols: List[str] = None, timeframe: str = '1d'
 
     for symbol in symbols:
         try:
+            # VERIFICACIÓN AUTOMÁTICA DE DATOS - SISTEMA CENTRALIZADO
+            if auto_fetch_missing and not skip_download:
+                logger.info(f"🔍 Verificando disponibilidad automática de datos para {symbol}")
+                try:
+                    from utils.storage import ensure_data_availability
+                    import asyncio
+                    
+                    # Ejecutar verificación y descarga automática
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    data = loop.run_until_complete(ensure_data_availability(
+                        symbol, timeframe, 
+                        start_date=getattr(config.backtesting, 'start_date', '2023-01-01') if hasattr(config, 'backtesting') else '2023-01-01',
+                        end_date=getattr(config.backtesting, 'end_date', pd.Timestamp.now().strftime('%Y-%m-%d')) if hasattr(config, 'backtesting') else pd.Timestamp.now().strftime('%Y-%m-%d'),
+                        config=config
+                    ))
+                    loop.close()
+                    
+                    if data is not None and not data.empty:
+                        logger.info(f"✅ Datos asegurados automáticamente para {symbol}: {len(data)} filas")
+                    else:
+                        logger.warning(f"⚠️ No se pudieron asegurar datos para {symbol}")
+                        
+                except Exception as e:
+                    logger.error(f"Error en verificación automática de datos para {symbol}: {e}")
+                    # Continuar con la auditoría aunque falle la descarga automática
+            
             result = auditor.audit_symbol_data(symbol, timeframe)
             results[symbol] = result
             total_score += result['quality_score']

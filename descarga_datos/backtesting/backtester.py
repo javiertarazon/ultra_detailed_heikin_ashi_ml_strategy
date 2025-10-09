@@ -5,74 +5,56 @@ Backtester avanzado para estrategias de trading
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
-import logging
+from datetime import datetime
+from utils.logger import get_logger
+from risk_management.risk_management import AdvancedRiskManager
 
-# Importar sistema de compensación
-from risk_management.risk_management import AdvancedRiskManager, Position
+logger = get_logger(__name__)
 
 @dataclass
 class Trade:
-    """Representa una operación de trading"""
-    entry_time: pd.Timestamp
-    exit_time: pd.Timestamp
+    """Clase para representar una operación de trading"""
+    entry_time: Union[str, datetime]
+    exit_time: Union[str, datetime]
     entry_price: float
     exit_price: float
-    quantity: float
-    side: str  # 'buy' or 'sell'
+    position_size: float
     pnl: float
-    pnl_percent: float
+    type: str  # 'long' o 'short'
+    symbol: str
+    exit_reason: str = ""
+    trade_id: Optional[int] = None
+    commission: float = 0.0
+    slippage: float = 0.0
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
 
-@dataclass
-class BacktestResult:
-    """Resultados del backtesting"""
-    total_trades: int
-    winning_trades: int
-    losing_trades: int
-    win_rate: float
-    total_pnl: float
-    total_pnl_percent: float
-    max_drawdown: float
-    max_drawdown_percent: float
-    sharpe_ratio: float
-    sortino_ratio: float
-    calmar_ratio: float
-    profit_factor: float
-    avg_trade_pnl: float
-    avg_win_pnl: float
-    avg_loss_pnl: float
-    largest_win: float
-    largest_loss: float
-    avg_holding_period: float
-    trades: List[Trade]
-    equity_curve: pd.Series
-
-    # === MÉTRICAS DE COMPENSACIÓN ===
-    compensated_trades: int = 0  # Operaciones perdedoras que fueron compensadas
-    compensation_success_rate: float = 0.0  # Tasa de éxito de compensaciones
-    total_compensation_pnl: float = 0.0  # P&L total de compensaciones
-    avg_compensation_pnl: float = 0.0  # P&L promedio de compensaciones
-    compensation_ratio: float = 0.0  # Ratio de compensación (compensadas/total_perdedoras)
-    net_compensation_impact: float = 0.0  # Impacto neto de compensaciones en P&L total
-    compensation_trades: List[Trade] = None  # Lista de operaciones de compensación
-
-    def __post_init__(self):
-        if self.compensation_trades is None:
-            self.compensation_trades = []
-
-class AdvancedBacktester:
-    """Backtester avanzado con métricas completas"""
+class Backtester:
+    """Clase principal del backtester"""
     
-    def __init__(self, initial_capital: float = 10000.0, commission: float = 0.1, slippage: float = 0.05):
-        self.initial_capital = initial_capital
-        self.commission = commission / 100  # Convertir a decimal
-        self.slippage = slippage / 100  # Slippage como porcentaje
-        self.logger = logging.getLogger(__name__)
-
+    def __init__(self):
+        """Inicializa el backtester"""
         # Sistema de compensación integrado
         self.risk_manager = AdvancedRiskManager()
         self.compensation_enabled = True
+        
+class AdvancedBacktester(Backtester):
+    """Versión avanzada del backtester con características adicionales"""
+    
+    def __init__(self):
+        """Inicializa el backtester avanzado"""
+        super().__init__()
+        self.logger = get_logger(__name__ + ".AdvancedBacktester")
+        self.metrics_enabled = True
+        
+        # Parámetros de capital inicial
+        self.initial_capital = 10000.0  # Capital inicial por defecto
+        
+        # Parámetros de comisión y slippage (inicializados con valores por defecto)
+        self.commission = 0.0005  # 0.05% por defecto para crypto
+        self.slippage = 0.0002   # 0.02% por defecto
 
     def run(self, strategy, data: pd.DataFrame, symbol: str, timeframe: str = '1d') -> Dict:
         """
@@ -303,15 +285,21 @@ class AdvancedBacktester:
         recovery_factor = total_pnl / max_drawdown if max_drawdown > 0 else float('inf')
         # Avg Trade Net Profit %
         avg_trade_pct = (sum(t.get('pnl_percent',0) for t in trades) / total_trades) if total_trades > 0 else 0
-        # Risk of Ruin (approximation)
-        p = win_rate / 100
+        # Risk of Ruin (probabilidad de perder 50% del capital)
+        p = win_rate  # win_rate ya está en decimal (0-1)
         avg_win = gross_profit / winning_trades if winning_trades > 0 else 0
         avg_loss = gross_loss / losing_trades if losing_trades > 0 else 0
         expectancy = p * avg_win - (1 - p) * avg_loss
-        if expectancy <= 0 or avg_loss == 0:
-            risk_of_ruin = 1.0
+
+        # Calcular riesgo de perder 50% del capital (más práctico que perder 100%)
+        capital_to_lose = self.initial_capital * 0.5  # 50% del capital
+        if avg_loss > 0:
+            consecutive_losses_needed = capital_to_lose / avg_loss
+            # Probabilidad de 'consecutive_losses_needed' losses consecutivos
+            q = 1 - p  # probabilidad de perder
+            risk_of_ruin = q ** consecutive_losses_needed
         else:
-            risk_of_ruin = ((1 - p) / (1 + expectancy / avg_loss)) ** (self.initial_capital / avg_loss)
+            risk_of_ruin = 0.0
         # Compilar resultados finales
         result = {
             'symbol': symbol,
@@ -516,8 +504,19 @@ class AdvancedBacktester:
             # Calcular tamaño de compensación (50% del trade original)
             compensation_size = abs(trade.get('pnl', 0)) * 0.5
 
-            # Simular resultado de compensación (70% de éxito aproximado)
-            compensation_success = np.random.random() > 0.3  # 70% éxito
+            # Determinar resultado de compensación basado en datos reales del mercado
+            # La tendencia del mercado determina el éxito de la compensación
+            # Si el mercado sigue en la dirección favorable, hay mayor probabilidad de éxito
+            
+            # Usar el período posterior al trade para determinar probabilidad de éxito
+            trade_exit_index = trade.get('exit_time', 0)
+            direction = trade.get('direction', 'long')
+            
+            if trade_exit_index + 5 < len(data):  # Verificar que hay datos después del trade
+                future_price_move = data['close'].iloc[trade_exit_index + 5] - data['close'].iloc[trade_exit_index]
+                # Si el mercado se mueve favorable a la dirección original del trade
+                favorable_move = (direction == 'long' and future_price_move > 0) or (direction == 'short' and future_price_move < 0)
+                compensation_success = favorable_move  # Basado en datos reales, no en random
 
             if compensation_success:
                 # Compensación exitosa recupera parte de la pérdida

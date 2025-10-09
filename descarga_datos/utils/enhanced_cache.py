@@ -7,78 +7,9 @@ from typing import Optional, Dict, Tuple, List, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
-import logging
-import hashlib
-import shutil
-import os
-import pickle
-import threading
-from concurrent.futures import ThreadPoolExecutor
+from utils.logger import get_logger
 
-class CachePolicy:
-    """
-    Define la política de caché para diferentes tipos de datos.
-    """
-    def __init__(self, 
-                 max_age: timedelta = timedelta(hours=1),
-                 priority: int = 1,
-                 compression: str = 'snappy',
-                 memory_eligible: bool = True):
-        self.max_age = max_age
-        self.priority = priority  # Mayor número = mayor prioridad
-        self.compression = compression
-        self.memory_eligible = memory_eligible
-
-class EnhancedCacheManager:
-    """
-    Sistema avanzado de caché con políticas inteligentes.
-    
-    Características:
-    - Caché en memoria y disco con políticas por tipo de datos
-    - Compresión configurable
-    - Invalidación basada en eventos y tiempo
-    - Precarga predictiva basada en patrones de uso
-    - Persistencia entre sesiones
-    - Estadísticas de rendimiento
-    """
-    
-    def __init__(self, 
-                 cache_dir: str = "cache", 
-                 max_memory_entries: int = 100,
-                 max_disk_size_mb: int = 500):
-        """
-        Inicializa el gestor de caché avanzado.
-        
-        Args:
-            cache_dir: Directorio para almacenar el caché en disco
-            max_memory_entries: Número máximo de entradas en la caché de memoria
-            max_disk_size_mb: Tamaño máximo del caché en disco en MB
-        """
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Crear subdirectorios para organización
-        (self.cache_dir / "data").mkdir(exist_ok=True)
-        (self.cache_dir / "metadata").mkdir(exist_ok=True)
-        (self.cache_dir / "stats").mkdir(exist_ok=True)
-        
-        # Configuración
-        self.max_memory_entries = max_memory_entries
-        self.max_disk_size_bytes = max_disk_size_mb * 1024 * 1024
-        
-        # Memoria caché y metadatos
-        self.memory_cache: Dict[str, Tuple[Any, datetime, CachePolicy]] = {}
-        self.access_stats: Dict[str, Dict[str, Any]] = {}
-        
-        # Políticas predefinidas
-        self.default_policies = {
-            'ohlcv_recent': CachePolicy(max_age=timedelta(minutes=15), priority=3, memory_eligible=True),
-            'ohlcv_historical': CachePolicy(max_age=timedelta(days=1), priority=1, memory_eligible=False),
-            'indicators': CachePolicy(max_age=timedelta(hours=2), priority=2, memory_eligible=True),
-            'backtest_results': CachePolicy(max_age=timedelta(days=7), priority=1, memory_eligible=False)
-        }
-        
-        self.logger = logging.getLogger(__name__)
+logger = get_logger("__name__")
         
         # Estadísticas
         self.stats = {

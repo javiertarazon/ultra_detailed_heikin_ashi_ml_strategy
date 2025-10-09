@@ -719,8 +719,9 @@ class UltraDetailedHeikinAshiStrategy:
         max_concurrent_trades = self.max_concurrent_trades
 
         # CONTADORES para análisis
-        import logging
-        logger = logging.getLogger('ultra_detailed_strategy')
+        from utils.logger import get_logger
+
+        logger = get_logger("ultra_detailed_strategy")
         signals_nonzero = signals[signals != 0]
         logger.info(f"DEBUG: {len(signals_nonzero)} señales no-cero detectadas en serie signals")
 

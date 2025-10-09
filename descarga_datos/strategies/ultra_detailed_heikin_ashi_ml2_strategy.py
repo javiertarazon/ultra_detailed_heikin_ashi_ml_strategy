@@ -39,49 +39,44 @@ import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
+from models.model_manager import ModelManager
+
 class MLModelManager:
     """
     Gestor de modelos de machine learning para predicción de señales Heikin Ashi
+    
+    Esta clase ahora utiliza el ModelManager centralizado para mantener
+    la compatibilidad con el código existente.
     """
 
-    def __init__(self, model_dir: str = "models"):
-        self.model_dir = model_dir
+    def __init__(self, model_dir: str = None):
+        # Usar el ModelManager centralizado
+        self.model_manager = ModelManager(model_dir)
+        # Mantener compatibilidad con código existente
+        self.model_dir = self.model_manager.model_dir
         self.models = {}
         self.scalers = {}
-        self.ensure_model_dir()
 
     def ensure_model_dir(self):
         """Crear directorio de modelos si no existe"""
-        if not os.path.exists(self.model_dir):
-            os.makedirs(self.model_dir)
+        self.model_manager.ensure_model_dir()
 
     def get_model_path(self, symbol: str, model_name: str) -> str:
         """Obtener ruta del modelo"""
-        # Para DOGE/USDT, buscar en models/DOGE/USDT_gradient_boosting.pkl
-        if '/' in symbol:
-            base, quote = symbol.split('/')
-            return os.path.join(self.model_dir, base, f"{quote}_{model_name}.pkl")
-        else:
-            return os.path.join(self.model_dir, f"{symbol}_{model_name}.pkl")
+        return self.model_manager.get_model_path(symbol, model_name)
 
     def get_scaler_path(self, symbol: str, model_name: str) -> str:
         """Obtener ruta del scaler"""
-        # Para DOGE/USDT, buscar en models/DOGE/USDT_gradient_boosting_scaler.pkl
-        if '/' in symbol:
-            base, quote = symbol.split('/')
-            return os.path.join(self.model_dir, base, f"{quote}_{model_name}_scaler.pkl")
-        else:
-            return os.path.join(self.model_dir, f"{symbol}_{model_name}_scaler.pkl")
+        return self.model_manager.get_scaler_path(symbol, model_name)
 
     def prepare_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Preparar features para el modelo ML
         """
-        # Calcular Heikin Ashi primero
-        data = self._calculate_heikin_ashi(data)
-
-        # Calcular indicadores técnicos
-        data = self._calculate_technical_indicators(data)
+        # 🎯 USAR MÉTODO CENTRALIZADO - Eliminar duplicación
+        from indicators.technical_indicators import TechnicalIndicators
+        indicators = TechnicalIndicators()
+        data = indicators.calculate_all_indicators_unified(data)
 
         features = pd.DataFrame(index=data.index)
 
@@ -159,7 +154,7 @@ class MLModelManager:
         try:
             from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
             from sklearn.neural_network import MLPClassifier
-            from sklearn.model_selection import train_test_split, cross_val_score
+            from sklearn.model_selection import train_test_split, TimeSeriesSplit
             from sklearn.preprocessing import StandardScaler
             from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
             print("Importaciones sklearn exitosas")
@@ -240,15 +235,28 @@ class MLModelManager:
             auc = roc_auc_score(y_test, y_pred_proba, multi_class='ovr') if len(np.unique(y_test)) > 1 else 0.5
 
             if enable_cv and len(X_train_scaled) >= cv_folds:
-                # Cross-validation configurable (default 10-fold)
-                cv_scores = cross_val_score(
-                    model,
-                    X_train_scaled,
-                    y_train,
-                    cv=cv_folds,
-                    scoring='accuracy',
-                    n_jobs=cv_jobs
-                )
+                # CORRECCIÓN CRÍTICA: TimeSeriesSplit para evitar look-ahead bias
+                # KFold estándar mezcla datos futuros con pasados - INVALIDANDO resultados
+                tscv = TimeSeriesSplit(n_splits=cv_folds)
+                cv_scores = []
+                
+                print(f"    Ejecutando validación cruzada temporal con {cv_folds} splits...")
+                for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_scaled)):
+                    X_fold_train = X_train_scaled[train_idx]
+                    X_fold_val = X_train_scaled[val_idx]
+                    y_fold_train = y_train.iloc[train_idx]
+                    y_fold_val = y_train.iloc[val_idx]
+                    
+                    # Crear modelo temporal para este fold
+                    fold_model = type(model)(**model.get_params())
+                    fold_model.fit(X_fold_train, y_fold_train)
+                    
+                    # Evaluar en validación temporal
+                    fold_score = fold_model.score(X_fold_val, y_fold_val)
+                    cv_scores.append(fold_score)
+                    print(f"      Fold {fold+1}: Accuracy = {fold_score:.3f}")
+                
+                cv_scores = np.array(cv_scores)
                 cv_score = cv_scores.mean()
                 cv_std = cv_scores.std()
             else:
@@ -276,29 +284,22 @@ class MLModelManager:
         return results
 
     def save_model(self, symbol: str, model_name: str, model, scaler):
-        """Guardar modelo entrenado"""
-        model_path = self.get_model_path(symbol, model_name)
-        scaler_path = self.get_scaler_path(symbol, model_name)
-
-        # Crear directorio si no existe
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-
-        joblib.dump(model, model_path)
-        joblib.dump(scaler, scaler_path)
-
-        print(f"    Modelo guardado: {model_path}")
+        """Guardar modelo entrenado usando el ModelManager centralizado"""
+        # Usar el ModelManager centralizado
+        success_model = self.model_manager.save_model(model, symbol, model_name)
+        success_scaler = self.model_manager.save_scaler(scaler, symbol, model_name)
+        
+        if success_model and success_scaler:
+            print(f"    Modelo guardado: {self.model_manager.get_model_path(symbol, model_name)}")
+        else:
+            print(f"    Error al guardar modelo para {symbol}")
 
     def load_model(self, symbol: str, model_name: str):
-        """Cargar modelo entrenado"""
-        model_path = self.get_model_path(symbol, model_name)
-        scaler_path = self.get_scaler_path(symbol, model_name)
-
-        if os.path.exists(model_path) and os.path.exists(scaler_path):
-            model = joblib.load(model_path)
-            scaler = joblib.load(scaler_path)
-            return model, scaler
-        else:
-            return None, None
+        """Cargar modelo entrenado usando el ModelManager centralizado"""
+        # Usar el ModelManager centralizado
+        model = self.model_manager.load_model(symbol, model_name)
+        scaler = self.model_manager.load_scaler(symbol, model_name)
+        return model, scaler
 
     def predict_signal(self, data: pd.DataFrame, symbol: str, model_name: str = 'gradient_boosting') -> pd.Series:
         """
@@ -356,43 +357,9 @@ class MLModelManager:
 
         return data
 
-    def _calculate_technical_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calcular indicadores técnicos necesarios para ML"""
-        try:
-            # ATR
-            data['atr'] = talib.ATR(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # Stochastic Oscillator
-            data['stoch_k'], data['stoch_d'] = talib.STOCH(data['high'], data['low'], data['close'],
-                                                          fastk_period=14, slowk_period=3, slowd_period=3)
-
-            # CCI (Commodity Channel Index)
-            data['cci'] = talib.CCI(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # RSI
-            data['rsi'] = talib.RSI(data['close'], timeperiod=14)
-
-            # MACD
-            data['macd'], data['macd_signal'], data['macd_hist'] = talib.MACD(data['close'],
-                                                                             fastperiod=12, slowperiod=26, signalperiod=9)
-
-            # Volume Ratio (comparación con promedio móvil)
-            data['volume_ratio'] = data['volume'] / data['volume'].rolling(window=20).mean()
-
-            # ROC (Rate of Change)
-            data['roc'] = talib.ROC(data['close'], timeperiod=10)
-
-            # Williams %R
-            data['willr'] = talib.WILLR(data['high'], data['low'], data['close'], timeperiod=14)
-
-            # Llenar NaN
-            data = data.fillna(0)
-
-            return data
-
-        except Exception as e:
-            print(f"Error calculando indicadores técnicos: {e}")
-            return data
+    # El método _calculate_technical_indicators ha sido eliminado
+    # Se utiliza el método centralizado TechnicalIndicators.calculate_all_indicators_unified
+    # Ver método prepare_features() que usa la clase centralizada
 
 
 class UltraDetailedHeikinAshiML2Strategy:
@@ -673,36 +640,41 @@ class UltraDetailedHeikinAshiML2Strategy:
             ha_change_long = data['ha_color_change'].iloc[i] == 1
             ha_change_short = data['ha_color_change'].iloc[i] == -1
 
-            # RSI: Rango amplio
+            # RSI: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
             rsi = data['rsi'].iloc[i]
-            rsi_ok = 20 < rsi < 80  # AÚN MÁS AMPLIO
+            rsi_ok_long = 10 < rsi < 90  # MUY PERMISIVO PARA LONG - BALANCE
+            rsi_ok_short = 25 < rsi < 75  # MANTENER PARA SHORT
 
-            # Stochastic: Solo evitar extremos absolutos
+            # Stochastic: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
             stoch_k = data['stoch_k'].iloc[i]
-            stoch_ok = 10 < stoch_k < 90  # AÚN MENOS RESTRICTIVO
+            stoch_ok_long = 2 < stoch_k < 98  # EXTREMADAMENTE PERMISIVO PARA LONG
+            stoch_ok_short = 15 < stoch_k < 85  # MANTENER PARA SHORT
 
-            # Volumen: Mínimo requerimiento
-            volume_ok = data['volume_ratio'].iloc[i] > 0.8  # REDUCIDO AÚN MÁS
+            # Volumen: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
+            volume_ok_long = data['volume_ratio'].iloc[i] > 0.2  # MUY PERMISIVO PARA LONG
+            volume_ok_short = data['volume_ratio'].iloc[i] > 0.6  # MENOS ESTRICTO PARA SHORT
 
-            # ATR: Rango amplio
+            # ATR: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
             atr = data['atr'].iloc[i]
             atr_pct = atr / data['close'].iloc[i]
-            volatility_ok = atr_pct > 0.001  # SOLO EVITAR VOLATILIDAD MUY BAJA
+            volatility_ok_long = atr_pct > 0.0002  # MUY PERMISIVO PARA LONG
+            volatility_ok_short = atr_pct > 0.0008  # MENOS ESTRICTO PARA SHORT
 
-            # DEBUG: Contar condiciones cumplidas
-            conditions_met = sum([ha_change_long or ha_change_short, rsi_ok, stoch_ok, volume_ok, volatility_ok])
+            # DEBUG: Contar condiciones cumplidas (DIFERENTE PARA LONG/SHORT)
+            conditions_met_long = sum([ha_change_long, rsi_ok_long, stoch_ok_long, volume_ok_long, volatility_ok_long])
+            conditions_met_short = sum([ha_change_short, rsi_ok_short, stoch_ok_short, volume_ok_short, volatility_ok_short])
 
-            # SEÑAL LONG: ML + HA + al menos 3 condiciones técnicas
-            if ha_change_long and conditions_met >= 3:
+            # SEÑAL LONG: ML + HA + al menos 1 condición técnica (MUY PERMISIVO PARA BALANCE)
+            if ha_change_long and conditions_met_long >= 1:
                 signals.iloc[i] = 1  # Long
                 long_signals += 1
 
-            # SEÑAL SHORT: ML + HA + al menos 3 condiciones técnicas
-            elif ha_change_short and conditions_met >= 3:
+            # SEÑAL SHORT: ML + HA + al menos 2 condiciones técnicas (MENOS ESTRICTO)
+            elif ha_change_short and conditions_met_short >= 2:
                 signals.iloc[i] = -1  # Short
                 short_signals += 1
 
-        print(f"Señales ML de ALTA PROBABILIDAD: {long_signals} LONG, {short_signals} SHORT")
+        print(f"Señales ML de ALTA PROBABILIDAD (LONG muy permisivo para balance): {long_signals} LONG, {short_signals} SHORT")
         print(f"Confianza ML promedio en señales: {ml_confidence[signals != 0].mean():.3f}")
 
         return signals
@@ -744,8 +716,8 @@ class UltraDetailedHeikinAshiML2Strategy:
         max_concurrent_trades = self.max_concurrent_trades
 
         # CONTADORES para análisis
-        import logging
-        logger = logging.getLogger('ultra_detailed_strategy')
+        from utils.logger import get_logger
+        logger = get_logger('ultra_detailed_strategy')
         signals_nonzero = signals[signals != 0]
         logger.info(f"DEBUG: {len(signals_nonzero)} señales no-cero detectadas en serie signals")
 
@@ -761,7 +733,14 @@ class UltraDetailedHeikinAshiML2Strategy:
                 continue
 
             # GESTIÓN DE RIESGO REAL: Calcular position size basado en ATR
-            if position == 0 and signals.iloc[i] != 0:
+            if signals.iloc[i] != 0:
+                # Verificar límite de posiciones concurrentes
+                active_trades_count = len([t for t in self.active_trades if t['status'] == 'open'])
+                if active_trades_count >= max_concurrent_trades:
+                    if i < 50:  # Solo log primeras 50 para no saturar
+                        logger.debug(f"[DEBUG] Saltando i={i} - Max concurrent trades alcanzado: {active_trades_count} >= {max_concurrent_trades}")
+                    continue
+
                 # DEBUG: Primera señal válida
                 if len(trades) == 0:
                     logger.info(f"[SIGNAL] Primera señal válida en i={i}: signal={signals.iloc[i]}, price={current_price}, atr={atr}")
@@ -828,98 +807,98 @@ class UltraDetailedHeikinAshiML2Strategy:
                 print(f"[TRADE] Trade abierto en i={i}: {direction} {position_size:.4f} @ {entry_price:.2f}")
 
             # Gestionar posiciones abiertas con TRAILING STOP 50%
-            elif position != 0:
+            # Procesar cada trade activo individualmente
+            current_drawdown = (peak_value - capital) / peak_value if peak_value > 0 else 0
+
+            for trade_idx, trade in enumerate(self.active_trades):
+                if trade['status'] != 'open':
+                    continue
+
+                trade_entry_price = trade['entry_price']
+                trade_stop_loss = trade['stop_loss']
+                trade_take_profit = trade['take_profit']
+                trade_position = 1 if trade['direction'] == 'long' else -1  # Normalizar posición
+                trade_entry_index = None  # TODO: Agregar tracking de índice de entrada por trade
+
                 # TRAILING STOP DEL 50% - Stop loss se mueve al 50% del profit alcanzado
-                unrealized_pnl = (current_price - entry_price) * position
+                unrealized_pnl = (current_price - trade_entry_price) * trade_position
                 if unrealized_pnl > 0:  # En ganancia
                     # Calcular profit actual en términos de precio
-                    profit_amount = abs(current_price - entry_price)  # Profit en precio
+                    profit_amount = abs(current_price - trade_entry_price)  # Profit en precio
                     new_stop_distance = profit_amount * 0.5  # 50% del profit
 
-                    if position > 0:  # Posición larga
-                        new_stop = entry_price + new_stop_distance
+                    if trade_position > 0:  # Posición larga
+                        new_stop = trade_entry_price + new_stop_distance
                         # Solo mover stop loss si es mejor que el actual (más alto)
-                        if new_stop > stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                        if new_stop > trade_stop_loss:
+                            trade['stop_loss'] = new_stop
+                            print(f"Trailing stop 50% ajustado: {new_stop:.6f} (profit: {profit_amount:.6f})")
                     else:  # Posición corta
-                        new_stop = entry_price - new_stop_distance
+                        new_stop = trade_entry_price - new_stop_distance
                         # Solo mover stop loss si es mejor que el actual (más bajo)
-                        if new_stop < stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                        if new_stop < trade_stop_loss:
+                            trade['stop_loss'] = new_stop
+                            print(f"Trailing stop 50% ajustado: {new_stop:.6f} (profit: {profit_amount:.6f})")
 
-                    if position > 0:  # Posición larga
-                        new_stop = entry_price + new_stop_distance
-                        # Solo mover stop loss si es mejor que el actual (más alto)
-                        if new_stop > stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
-                    else:  # Posición corta
-                        new_stop = entry_price - new_stop_distance
-                        # Solo mover stop loss si es mejor que el actual (más bajo)
-                        if new_stop < stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
-
-                # Check condiciones de salida REALES
+                # Check condiciones de salida REALES para este trade
                 exit_reason = None
+                exit_price = None
 
                 # 1. SEÑAL CONTRARIA (reversión de Heikin Ashi)
-                if signals.iloc[i] == -position:
+                if signals.iloc[i] == -trade_position:
                     exit_price = current_price
                     exit_reason = 'signal_reversal'
 
                 # 2. TAKE PROFIT alcanzado
-                elif (position > 0 and current_price >= take_profit_price) or (position < 0 and current_price <= take_profit_price):
-                    exit_price = take_profit_price
+                elif (trade_position > 0 and current_price >= trade_take_profit) or (trade_position < 0 and current_price <= trade_take_profit):
+                    exit_price = trade_take_profit
                     exit_reason = 'take_profit'
 
                 # 3. STOP LOSS alcanzado
-                elif (position > 0 and current_price <= stop_loss_price) or (position < 0 and current_price >= stop_loss_price):
-                    exit_price = stop_loss_price
+                elif (trade_position > 0 and current_price <= trade['stop_loss']) or (trade_position < 0 and current_price >= trade['stop_loss']):
+                    exit_price = trade['stop_loss']
                     exit_reason = 'stop_loss'
 
                 # 4. TIME EXIT: Máximo 80 velas (4h * 80 = ~13 días) en posición (evitar stagnation)
-                elif entry_index is not None and (i - entry_index) > 80:
-                    exit_price = current_price
-                    exit_reason = 'time_exit'
+                # TODO: Implementar time exit por trade individual
+                # elif trade_entry_index is not None and (i - trade_entry_index) > 80:
+                #     exit_price = current_price
+                #     exit_reason = 'time_exit'
 
-                else:
-                    continue  # Mantener posición abierta
+                if exit_reason:
+                    # EJECUTAR SALIDA para este trade
+                    pnl = (exit_price - trade_entry_price) * (trade['position_size'] * trade_position)
 
-                # EJECUTAR SALIDA
-                pnl = (exit_price - entry_price) * position                # DEBUG: Primer trade cerrado
-                if len([t for t in self.active_trades if t['status'] == 'closed']) == 0:
-                    print(f"Primer trade cerrado:")
-                    print(f"   Entry: {entry_price:.6f} @ {entry_time}")
-                    print(f"   Exit: {exit_price:.6f} @ {current_time}")
-                    print(f"   Position: {position:.2f}")
-                    print(f"   P&L: ${pnl:.2f} ({exit_reason})")
+                    # DEBUG: Primer trade cerrado
+                    closed_trades = [t for t in self.active_trades if t['status'] == 'closed']
+                    if len(closed_trades) == 0:
+                        print(f"Primer trade cerrado:")
+                        print(f"   Entry: {trade_entry_price:.6f} @ {trade['entry_time']}")
+                        print(f"   Exit: {exit_price:.6f} @ {current_time}")
+                        print(f"   Position: {trade['position_size'] * trade_position:.2f}")
+                        print(f"   P&L: ${pnl:.2f} ({exit_reason})")
 
-                # Actualizar trade
-                for trade in self.active_trades:
-                    if trade['status'] == 'open':
-                        trade.update({
-                            'exit_time': current_time,
-                            'exit_price': exit_price,
-                            'pnl': pnl,
-                            'status': 'closed',
-                            'exit_reason': exit_reason
-                        })
-                        # Agregar trade cerrado a la lista de resultados
-                        trades.append(trade.copy())
-                        break
+                    # Actualizar trade con información de salida
+                    trade.update({
+                        'exit_time': current_time,
+                        'exit_price': exit_price,
+                        'pnl': pnl,
+                        'exit_reason': exit_reason,
+                        'status': 'closed'
+                    })
 
-                # Actualizar capital
-                capital += pnl
-                position = 0
-                entry_price = 0
+                    # Agregar a lista de trades completados
+                    trades.append(trade.copy())
 
-                # Actualizar drawdown
-                peak_value = max(peak_value, capital)
-                current_drawdown = (peak_value - capital) / peak_value
-                max_drawdown = max(max_drawdown, current_drawdown)
+                    # Actualizar capital
+                    capital += pnl
+
+                    # Actualizar drawdown
+                    if capital > peak_value:
+                        peak_value = capital
+                    current_drawdown = (peak_value - capital) / peak_value
+                    if current_drawdown > max_drawdown:
+                        max_drawdown = current_drawdown
 
                 # Check max drawdown
                 if current_drawdown > self.max_drawdown:

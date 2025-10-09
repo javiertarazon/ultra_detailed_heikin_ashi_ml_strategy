@@ -12,7 +12,7 @@ Date: Septiembre 2025
 """
 
 import time
-import logging
+from utils.logger import get_logger
 import pandas as pd
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime

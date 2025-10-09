@@ -78,35 +78,9 @@ class BaseDataHandler(ABC):
         if logger is not None:
             self.logger = logger
         else:
-            import logging
-            # Logger nombrado por clase
-            self.logger = logging.getLogger(self.__class__.__name__)
+            from utils.logger import get_logger
 
-    @abstractmethod
-    def validate_data(self, data: Any) -> DataValidationResult:
-        """
-        Valida los datos proporcionados.
-
-        Args:
-            data: Datos a validar
-
-        Returns:
-            DataValidationResult con el resultado de la validación
-        """
-        pass
-
-    def setup_logging(self, logger=None):
-        """
-        Configura el logging para el manejador.
-
-        Args:
-            logger: Logger personalizado (opcional)
-        """
-        if logger:
-            self.logger = logger
-        elif not self.logger:
-            import logging
-            self.logger = logging.getLogger(self.__class__.__name__)
+            self.logger = get_logger(self.__class__.__name__)
 
     def log_info(self, message: str):
         """Registra un mensaje informativo."""

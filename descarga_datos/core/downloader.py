@@ -11,11 +11,12 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
-import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import os
+
+from utils.logger import get_logger
 
 from .mt5_downloader import MT5Downloader
 from utils.storage import DataStorage, save_to_csv
@@ -31,7 +32,7 @@ class AdvancedDataDownloader:
 
     def __init__(self, config):
         self.config = config
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
         # Componentes
         self.ccxt_exchanges = {}
@@ -438,27 +439,184 @@ class AdvancedDataDownloader:
 
     async def _download_symbol_with_retry(self, symbol: str, timeframe: str,
                                         start_date: str, end_date: str) -> Optional[pd.DataFrame]:
-        """Descarga un símbolo con manejo de errores y reintentos"""
+        """
+        Descarga un símbolo con manejo de errores, reintentos y FALLBACK automático MT5 ↔ CCXT
+        
+        ESTRATEGIA v2.8:
+          1. Detectar fuente primaria (crypto → CCXT, stocks/forex → MT5)
+          2. Intentar descarga desde fuente primaria con reintentos
+          3. Si falla, hacer FALLBACK automático a fuente secundaria
+          4. Registrar fuente exitosa
+        """
+        
+        # Detectar fuente primaria
+        is_crypto = self._is_crypto_symbol(symbol)
+        primary_source = 'ccxt' if is_crypto else 'mt5'
+        fallback_source = 'mt5' if primary_source == 'ccxt' else 'ccxt'
+        
+        self.logger.info(f"📥 {symbol}: Primario={primary_source}, Fallback={fallback_source}")
+        
+        # ========== INTENTO PRIMARIO CON REINTENTOS ==========
         for attempt in range(self.max_retries):
             try:
-                # Determinar si es cripto o acción
-                if self._is_crypto_symbol(symbol):
-                    return await self._download_crypto_symbol(symbol, timeframe, start_date, end_date)
+                if primary_source == 'ccxt':
+                    df = await self._download_crypto_symbol(symbol, timeframe, start_date, end_date)
                 else:
-                    return self._download_stock_symbol(symbol, timeframe, start_date, end_date)
-
-            except Exception as e:
+                    df = self._download_stock_symbol(symbol, timeframe, start_date, end_date)
+                
+                if df is not None and len(df) > 0:
+                    self.logger.info(f"✅ {symbol}: {len(df)} velas desde {primary_source}")
+                    return df
+                
+                self.logger.warning(f"⚠️ {symbol}: Intento {attempt+1}/{self.max_retries} en {primary_source} retornó vacío")
+                
                 if attempt < self.max_retries - 1:
-                    self.logger.warning(f"Intento {attempt + 1} para {symbol} falló: {e}. Reintentando...")
-                    await asyncio.sleep(self.retry_delay)
-                else:
-                    self.logger.error(f"Todos los intentos fallaron para {symbol}: {e}")
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))  # Backoff exponencial
+            
+            except Exception as e:
+                error_msg = str(e)
+                self.logger.warning(f"⚠️ {symbol}: Error intento {attempt+1}/{self.max_retries} en {primary_source}: {error_msg}")
+                
+                # Si es crypto y no hay exchanges configurados, no reintentar ni hacer fallback
+                if is_crypto and "No hay exchanges CCXT configurados" in error_msg:
+                    self.logger.error(f"❌ {symbol}: CCXT no configurado, abortando descarga")
                     return None
+                
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                else:
+                    self.logger.warning(f"⚠️ {symbol}: Todos los intentos en {primary_source} fallaron")
+        
+        # ========== FALLBACK AUTOMÁTICO ==========
+        self.logger.info(f"🔄 {symbol}: Intentando fallback a {fallback_source}")
+        
+        try:
+            if fallback_source == 'ccxt':
+                # Convertir símbolo de MT5 a CCXT si es necesario
+                ccxt_symbol = self._convert_to_ccxt_format(symbol)
+                self.logger.info(f"🔄 Convertido para CCXT: {symbol} → {ccxt_symbol}")
+                df = await self._download_crypto_symbol(ccxt_symbol, timeframe, start_date, end_date)
+            else:
+                # Convertir símbolo de CCXT a MT5 si es necesario  
+                mt5_symbol = self._convert_to_mt5_format(symbol)
+                self.logger.info(f"🔄 Convertido para MT5: {symbol} → {mt5_symbol}")
+                df = self._download_stock_symbol(mt5_symbol, timeframe, start_date, end_date)
+            
+            if df is not None and len(df) > 0:
+                self.logger.info(f"✅ {symbol}: Fallback exitoso desde {fallback_source} ({len(df)} velas)")
+                return df
+            else:
+                self.logger.warning(f"⚠️ {symbol}: Fallback retornó vacío")
+        
+        except Exception as e:
+            self.logger.error(f"❌ {symbol}: Fallback falló: {e}")
+        
+        # ========== FALLO TOTAL ==========
+        self.logger.error(f"❌ {symbol}: Todas las fuentes fallaron (primario={primary_source}, fallback={fallback_source})")
+        return None
+    
+    def _convert_to_ccxt_format(self, symbol: str) -> str:
+        """
+        Convierte símbolo de MT5 a formato CCXT
+        
+        Ejemplos:
+          TSLA.US → TSLA/USD (no existe en CCXT, pero intenta)
+          BTCUSD → BTC/USD
+          EUR_USD → EUR/USD
+          EURUSD → EUR/USD
+        """
+        if '/' in symbol:
+            return symbol  # Ya está en formato CCXT
+        
+        # Manejar acciones (AAPL.US → AAPL/USD)
+        if '.' in symbol:
+            parts = symbol.split('.')
+            if len(parts) == 2 and parts[1].upper() in ['US', 'UK']:
+                return f"{parts[0]}/USD"
+        
+        # Manejar símbolos con '_' (EUR_USD → EUR/USD)
+        if '_' in symbol:
+            return symbol.replace('_', '/')
+        
+        # Intentar split automático para crypto/forex comunes
+        common_quotes = ['USD', 'EUR', 'GBP', 'JPY', 'USDT', 'BTC', 'ETH', 'BUSD']
+        for quote in common_quotes:
+            if symbol.upper().endswith(quote) and len(symbol) > len(quote):
+                base = symbol[:-len(quote)]
+                return f"{base}/{quote}"
+        
+        return symbol
+    
+    def _convert_to_mt5_format(self, symbol: str) -> str:
+        """
+        Convierte símbolo de CCXT a formato MT5
+        
+        Ejemplos:
+          BTC/USD → BTCUSD
+          DOGE/USDT → No existe en MT5 (devuelve DOGEUSDT)
+          EUR/USD → EURUSD
+        """
+        if '/' not in symbol:
+            return symbol  # Ya está sin separador
+        
+        # Remover '/' para formato MT5 estándar
+        return symbol.replace('/', '')
 
     def _is_crypto_symbol(self, symbol: str) -> bool:
-        """Determina si un símbolo es de criptomoneda"""
-        # Criptos tienen formato BASE/QUOTE (ej: BTC/USDT)
-        return '/' in symbol
+        """
+        Determina si un símbolo es de criptomoneda (debe usar CCXT)
+        
+        REGLA PRINCIPAL: Si la BASE es crypto, SIEMPRE usar CCXT
+        CORRECCIÓN v2.8: crypto/USD ahora va a CCXT (no a MT5)
+        """
+        if '/' not in symbol:
+            return False
+
+        base, quote = symbol.split('/', 1)
+
+        # ✅ Lista completa de criptomonedas (bases)
+        CRYPTO_BASES = {
+            'BTC', 'ETH', 'DOGE', 'SHIB', 'ADA', 'DOT', 'MATIC', 'AVAX',
+            'LINK', 'UNI', 'AAVE', 'SOL', 'LUNA', 'ATOM', 'ALGO', 'VET',
+            'TRX', 'EOS', 'XLM', 'XTZ', 'DASH', 'ZEC', 'XMR', 'LTC', 'XRP',
+            'BNB', 'FTT', 'CRO', 'LEO', 'HT', 'OKB', 'MKR', 'COMP', 'SNX',
+            'SUSHI', 'CAKE', 'NEAR', 'FTM', 'SAND', 'MANA', 'AXS', 'THETA'
+        }
+        
+        # ✅ Lista de cotizaciones crypto/stablecoins
+        CRYPTO_QUOTES = {'USDT', 'BUSD', 'USDC', 'DAI', 'TUSD', 'UST', 'BTC', 'ETH', 'BNB'}
+        
+        # ✅ CORRECCIÓN CRÍTICA: Si la base es crypto, USAR CCXT
+        # Esto incluye BTC/USD, DOGE/USD, ETH/USD, etc.
+        if base.upper() in CRYPTO_BASES:
+            self.logger.debug(f"🔍 {symbol}: Base '{base}' es crypto → CCXT")
+            return True
+        
+        # ✅ Si la cotización es stablecoin/crypto, usar CCXT
+        if quote.upper() in CRYPTO_QUOTES:
+            self.logger.debug(f"🔍 {symbol}: Quote '{quote}' es crypto → CCXT")
+            return True
+        
+        # ✅ Excepción: Si cotización es 'US', es acción (MT5)
+        if quote.upper() == 'US':
+            self.logger.debug(f"🔍 {symbol}: Quote 'US' → MT5 (stock)")
+            return False
+        
+        # ✅ Divisas forex estándar → MT5
+        FOREX_CURRENCIES = {
+            'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD', 
+            'CNY', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'TRY', 
+            'ZAR', 'MXN', 'BRL', 'ARS', 'CLP', 'COP', 'PEN'
+        }
+        
+        if base.upper() in FOREX_CURRENCIES and quote.upper() in FOREX_CURRENCIES:
+            self.logger.debug(f"🔍 {symbol}: Forex pair → MT5")
+            return False
+        
+        # Por defecto: si no es claramente forex/stock, asumir crypto
+        self.logger.debug(f"🔍 {symbol}: Default → CCXT (crypto)")
+        return True
+
 
     async def _download_crypto_symbol(self, symbol: str, timeframe: str,
                                     start_date: str, end_date: str) -> Optional[pd.DataFrame]:
@@ -532,10 +690,10 @@ class AdvancedDataDownloader:
                 if df is None or df.empty:
                     continue
 
-                # Calcular indicadores técnicos
+                # Calcular indicadores técnicos (solo para procesamiento, NO para guardar en DB)
                 df_with_indicators = self._calculate_technical_indicators(df)
 
-                # Normalizar y escalar
+                # Normalizar y escalar (para procesamiento interno)
                 df_normalized = self._normalize_and_scale(df_with_indicators)
 
                 # Añadir volumen escalado (median rolling 50) antes de guardado
@@ -547,9 +705,13 @@ class AdvancedDataDownloader:
                     ratio = ratio.replace([np.inf, -np.inf], np.nan).fillna(0).clip(0, 10)
                     df_with_indicators['volume_scaled'] = ratio
 
-                # Guardar en SQLite (para uso del sistema)
+                # 🔧 FIX: Guardar SOLO datos OHLCV básicos en SQLite (sin indicadores)
+                # Los indicadores se calculan en tiempo real cuando se necesitan
+                df_for_sqlite = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].copy()
+                
+                # Guardar en SQLite (SOLO datos crudos OHLCV)
                 table_name = f"{symbol.replace('/', '_').replace('.', '_')}_{timeframe}"
-                success_sql = self.storage.save_to_sqlite(df_normalized, table_name)
+                success_sql = self.storage.save_to_sqlite(df_for_sqlite, table_name)
 
                 # Metadata básica (coverage session-aware)
                 try:
@@ -595,59 +757,19 @@ class AdvancedDataDownloader:
             return False
 
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calcula indicadores técnicos completos"""
+        """Calcula indicadores técnicos completos usando la clase centralizada TechnicalIndicators"""
         try:
-            # Copia del DataFrame
-            result_df = df.copy()
-
-            # ATR (Average True Range)
-            high_low = result_df['high'] - result_df['low']
-            high_close = np.abs(result_df['high'] - result_df['close'].shift(1))
-            low_close = np.abs(result_df['low'] - result_df['close'].shift(1))
-            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            result_df['atr'] = tr.ewm(span=14, adjust=False).mean()
-
-            # ADX (Average Directional Index)
-            high_diff = result_df['high'].diff()
-            low_diff = result_df['low'].diff()
-            plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
-            minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
-            atr_val = result_df['atr']
-            plus_di = 100 * (pd.Series(plus_dm).ewm(span=14, adjust=False).mean() / atr_val)
-            minus_di = 100 * (pd.Series(minus_dm).ewm(span=14, adjust=False).mean() / atr_val)
-            dx = 100 * np.abs((plus_di - minus_di) / ((plus_di + minus_di) + 1e-9))
-            result_df['adx'] = dx.ewm(span=14, adjust=False).mean()
-
-            # SAR (Parabolic SAR) - Implementación simplificada
-            result_df['sar'] = self._calculate_sar(result_df)
-
-            # RSI
-            delta = result_df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            result_df['rsi'] = 100 - (100 / (1 + rs))
-
-            # MACD
-            ema_12 = result_df['close'].ewm(span=12, adjust=False).mean()
-            ema_26 = result_df['close'].ewm(span=26, adjust=False).mean()
-            result_df['macd'] = ema_12 - ema_26
-            result_df['macd_signal'] = result_df['macd'].ewm(span=9, adjust=False).mean()
-
-            # EMAs necesarias para las estrategias UT Bot
-            result_df['ema_10'] = result_df['close'].ewm(span=10, adjust=False).mean()
-            result_df['ema_20'] = result_df['close'].ewm(span=20, adjust=False).mean()
-            result_df['ema_200'] = result_df['close'].ewm(span=200, adjust=False).mean()
-
-            # Bollinger Bands
-            sma_20 = result_df['close'].rolling(window=20).mean()
-            std_20 = result_df['close'].rolling(window=20).std()
-            result_df['bb_upper'] = sma_20 + (std_20 * 2)
-            result_df['bb_lower'] = sma_20 - (std_20 * 2)
-
+            # Importar método centralizado
+            from indicators.technical_indicators import TechnicalIndicators
+            
+            # Crear instancia y calcular todos los indicadores
+            indicators = TechnicalIndicators()
+            result_df = indicators.calculate_all_indicators_unified(df)
+            
             # Llenar NaN con 0
             result_df = result_df.fillna(0)
-
+            
+            self.logger.info(f"✅ Indicadores calculados (centralizado) para {len(result_df)} filas")
             return result_df
 
         except Exception as e:
@@ -655,58 +777,15 @@ class AdvancedDataDownloader:
             return df
 
     def _calculate_sar(self, df: pd.DataFrame) -> pd.Series:
-        """Calcula Parabolic SAR simplificado"""
-        try:
-            length = len(df)
-            sar = np.zeros(length)
-            high = df['high'].values
-            low = df['low'].values
-
-            if length > 0:
-                sar[0] = low[0]  # Comenzar con el primer low
-
-            # Parámetros SAR
-            acceleration = 0.02
-            max_acceleration = 0.2
-
-            # Variables de estado
-            trend = 1  # 1 = uptrend, -1 = downtrend
-            extreme_point = high[0] if trend == 1 else low[0]
-            acceleration_factor = acceleration
-
-            for i in range(1, length):
-                # Calcular nuevo SAR
-                sar[i] = sar[i-1] + acceleration_factor * (extreme_point - sar[i-1])
-
-                # Determinar cambio de tendencia
-                if trend == 1:  # Uptrend
-                    if low[i] <= sar[i]:
-                        trend = -1
-                        sar[i] = extreme_point
-                        extreme_point = low[i]
-                        acceleration_factor = acceleration
-                    else:
-                        if high[i] > extreme_point:
-                            extreme_point = high[i]
-                            acceleration_factor = min(acceleration_factor + acceleration, max_acceleration)
-                        sar[i] = min(sar[i], low[i-1], low[i])
-                else:  # Downtrend
-                    if high[i] >= sar[i]:
-                        trend = 1
-                        sar[i] = extreme_point
-                        extreme_point = high[i]
-                        acceleration_factor = acceleration
-                    else:
-                        if low[i] < extreme_point:
-                            extreme_point = low[i]
-                            acceleration_factor = min(acceleration_factor + acceleration, max_acceleration)
-                        sar[i] = max(sar[i], high[i-1], high[i])
-
-            return pd.Series(sar, index=df.index)
-
-        except Exception as e:
-            self.logger.error(f"Error calculando SAR: {e}")
-            return pd.Series([0.0] * len(df), index=df.index)
+        """
+        ⚠️ MÉTODO OBSOLETO: Use TechnicalIndicators.calculate_sar en su lugar
+        
+        Este método se mantiene solo para compatibilidad con código existente.
+        Será eliminado en futuras versiones.
+        """
+        from indicators.technical_indicators import TechnicalIndicators
+        indicators = TechnicalIndicators()
+        return indicators.calculate_sar(df)
 
     def _normalize_and_scale(self, df: pd.DataFrame) -> pd.DataFrame:
         """Normaliza y escala los datos"""

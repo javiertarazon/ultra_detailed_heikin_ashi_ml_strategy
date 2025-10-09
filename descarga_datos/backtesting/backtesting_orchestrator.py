@@ -20,10 +20,25 @@ print('[ORCHESTRATOR] Downloader importado')
 #from strategies.ut_bot_psar_conservative import UTBotPSARConservativeStrategy  # Eliminado módulo faltante
 # NOTA: Evitamos imports ansiosos de estrategias para reducir tiempo/bloqueos en validación inicial.
 # Las estrategias se importan dinámicamente en load_strategies_from_config() usando __import__.
-from backtester import AdvancedBacktester
+from backtesting.backtester import AdvancedBacktester
 print('[ORCHESTRATOR] AdvancedBacktester importado')
 from utils.logger import setup_logging, get_logger
 print('[ORCHESTRATOR] Logger utilities importadas')
+
+# Variable global para las estrategias disponibles
+STRATEGY_CLASSES = {
+    'Estrategia_Basica': ('strategies.ut_bot_psar', 'UTBotPSARStrategy'),
+    'Estrategia_Compensacion': ('strategies.ut_bot_psar_compensation', 'UTBotPSARCompensationStrategy'),
+    'Solana4H': ('strategies.solana_4h_sar_strategy', 'Solana4HSARStrategy'),
+    'DeepAnalysis': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
+    'HeikinAshiVolumenSar': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
+    'HeikinAshiVolumenSarImproved': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
+    'Solana4HSAR': ('strategies.solana_4h_sar_strategy', 'Solana4HSARStrategy'),
+    'UltraDetailedHeikinAshi': ('strategies.ultra_detailed_heikin_ashi_strategy_backup_20251006', 'UltraDetailedHeikinAshiStrategy'),
+    'OptimizedStrategy': ('strategies.ultra_detailed_heikin_ashi_strategy_backup_20251006', 'UltraDetailedHeikinAshiStrategy'),
+    'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
+    'UltraDetailedHeikinAshiML2': ('strategies.ultra_detailed_heikin_ashi_ml2_strategy', 'UltraDetailedHeikinAshiML2Strategy'),
+}
 
 def load_strategies_from_config(config):
     """
@@ -57,6 +72,10 @@ def load_strategies_from_config(config):
         'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
         'UltraDetailedHeikinAshiML2': ('strategies.ultra_detailed_heikin_ashi_ml2_strategy', 'UltraDetailedHeikinAshiML2Strategy'),
     }
+    
+    # Exportamos como variable global para las pruebas
+    global STRATEGY_CLASSES
+    STRATEGY_CLASSES = strategy_classes
 
     # Estrategias que requieren estado continuo (procesamiento completo)
     stateful_strategies = {
@@ -262,11 +281,15 @@ async def run_full_backtesting_with_batches():
 
                     try:
                         # Crear backtester independiente para cada estrategia
-                        strategy_backtester = AdvancedBacktester(
-                            initial_capital=config.backtesting.initial_capital,
-                            commission=config.backtesting.commission,
-                            slippage=config.backtesting.slippage
-                        )
+                        strategy_backtester = AdvancedBacktester()
+                        
+                        # Configurar parámetros desde config (si el backtester los soporta)
+                        if hasattr(strategy_backtester, 'configure'):
+                            strategy_backtester.configure({
+                                'initial_capital': config.backtesting.initial_capital,
+                                'commission': config.backtesting.commission,
+                                'slippage': config.backtesting.slippage
+                            })
 
                         # Verificar si requiere estado continuo
                         requires_state = hasattr(strategy, '_requires_continuous_state') and strategy._requires_continuous_state
@@ -377,12 +400,12 @@ async def run_full_backtesting_with_batches():
                         except Exception:
                             pass
                 out_dir.mkdir(parents=True, exist_ok=True)
-                # Guardar por símbolo
+                # Guardar por símbolo - MEJORADO: Guardar TODAS las métricas
                 for symbol, strategies in backtest_results.items():
                     # Reemplazar "/" por "_" para nombres de archivo válidos
                     safe_symbol = symbol.replace("/", "_")
                     file_path = out_dir / f"{safe_symbol}_results.json"
-                    
+
                     # Convertir int64/float64 a tipos nativos de Python para JSON
                     def convert_to_native(obj):
                         import numpy as np
@@ -396,9 +419,16 @@ async def run_full_backtesting_with_batches():
                             return float(obj)
                         else:
                             return obj
-                    
+
                     strategies_native = convert_to_native(strategies)
-                    
+
+                    # DEBUG: Verificar qué se está guardando
+                    print(f"[BACKTEST] 💾 Guardando resultados para {symbol}: {len(strategies_native)} estrategias")
+                    for strat_name, strat_data in strategies_native.items():
+                        if isinstance(strat_data, dict):
+                            trades_count = len(strat_data.get('trades', []))
+                            print(f"[BACKTEST] 💾   {strat_name}: {strat_data.get('total_trades', 0)} trades, {trades_count} trades en lista")
+
                     with open(file_path, 'w', encoding='utf-8') as f:
                         json.dump({'symbol': symbol, 'strategies': strategies_native}, f, indent=2, ensure_ascii=False)
                 # Resumen global

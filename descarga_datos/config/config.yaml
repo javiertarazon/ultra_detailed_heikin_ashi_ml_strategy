@@ -1,85 +1,58 @@
-active_exchange: binance
+active_exchange: binance  # 🔥 Binance para mejor conectividad con XRP/USDT
 backtesting:
   commission: 0.1
-  end_date: '2025-10-06'
-  initial_capital: 10000
-  strategies:
-    Estrategia_Basica: false
-    Estrategia_Compensacion: false
-    DeepAnalysis: false
-    HeikinAshiVolumenSar: false
-    HeikinAshiVolumenSarImproved: false
-    Solana4H: false
-    Solana4HSAR: false
-    UltraDetailedHeikinAshi: false  # Desactivada - archivo no existe
-    OptimizedStrategy: false
-    UltraDetailedHeikinAshiML: true  # Activada - estrategia principal con ML
-    UltraDetailedHeikinAshiML2: true  # Activada - estrategia avanzada con NN
-  optimized_parameters:
-    SOL/USDT:
+  end_date: '2024-12-31'  # 🔥 Período histórico completo para XRP/USDT
+  initial_capital: 500
+  start_date: '2022-01-01'  # 🔥 Inicio temprano para datos históricos
+  timeframe: 4h
+  optimized_parameters: null
+  optimization:
+    enabled: true
+    n_trials: 150
+    opt_end: '2025-01-01'
+    opt_start: '2023-06-01'
+    study_name: crypto_ml_optimization  # 🔥 Genérico - se adapta al símbolo activo
+    targets:
+      constraints:
+        max_drawdown_limit: 0.12
+        min_trades: 50
+        min_win_rate: 0.45
+      maximize:
+      - total_pnl
+      - profit_factor
+      - total_trades
+      minimize:
+      - max_drawdown
       4h:
-        ml_threshold: 0.3  # MUY PERMISIVO - más señales (antes 0.8)
-        stoch_overbought: 85  # Más permisivo
-        stoch_oversold: 15  # Más permisivo
-        cci_threshold: 80  # Más bajo para más señales
-        volume_ratio_min: 0.3  # ULTRA PERMISIVO - más entradas (antes 1.2)
-        sar_acceleration: 0.02  # Conservador
-        sar_maximum: 0.2  # Conservador
-        atr_period: 14  # Estándar
-        stop_loss_atr_multiplier: 2.0  # Conservador
-        take_profit_atr_multiplier: 3.0  # Conservador
-        ema_trend_period: 50  # Estándar
-        max_drawdown: 0.08  # Más tolerante (antes 0.05)
-        max_portfolio_heat: 0.06  # Más agresivo (antes 0.04)
-        max_concurrent_trades: 5  # Más oportunidades (antes 2)
-        kelly_fraction: 0.5  # Más agresivo (antes 0.3)
-        liquidity_score_min: 5  # MUY PERMISIVO (antes 10)
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
     DOGE/USDT:
       4h:
-        atr_period: 14
+        atr_period: 19
         atr_volatility_threshold: 2.0
-        ema_trend_period: 50
+        ema_trend_period: 15
         max_consecutive_losses: 3
         min_trend_strength: 0.5
-        sar_acceleration: 0.02
-        sar_maximum: 0.15
-        stop_loss_atr_multiplier: 2.0
-        take_profit_percent: 3.0
+        sar_acceleration: 0.06
+        sar_maximum: 0.11
+        stop_loss_atr_multiplier: 3.25
+        take_profit_atr_multiplier: 5.5
         trailing_stop_atr_multiplier: 1.5
         volatility_filter_threshold: 0.03
         volume_sma_period: 20
         volume_threshold: 1000
     SOL/USDT:
-      4h:
-        atr_period: 14
-        atr_volatility_threshold: 2.0
-        ema_trend_period: 50
-        max_consecutive_losses: 3
-        min_trend_strength: 0.5
-        sar_acceleration: 0.02
-        sar_maximum: 0.15
-        stop_loss_atr_multiplier: 2.0
-        take_profit_percent: 3.0
-        trailing_stop_atr_multiplier: 1.5
-        volatility_filter_threshold: 0.03
-        volume_sma_period: 20
-        volume_threshold: 1000
-    XRP/USDT:
-      4h:
-        atr_period: 14
-        atr_volatility_threshold: 2.0
-        ema_trend_period: 50
-        max_consecutive_losses: 3
-        min_trend_strength: 0.5
-        sar_acceleration: 0.02
-        sar_maximum: 0.15
-        stop_loss_atr_multiplier: 2.0
-        take_profit_percent: 3.0
-        trailing_stop_atr_multiplier: 1.5
-        volatility_filter_threshold: 0.03
-        volume_sma_period: 20
-        volume_threshold: 1000
-    AVAX/USDT:
       4h:
         atr_period: 14
         atr_volatility_threshold: 2.0
@@ -109,23 +82,42 @@ backtesting:
         volatility_filter_threshold: 0.03
         volume_sma_period: 20
         volume_threshold: 1000
+    XRP/USDT:
+      4h:
+        atr_period: 14
+        atr_volatility_threshold: 2.0
+        ema_trend_period: 50
+        max_consecutive_losses: 3
+        min_trend_strength: 0.5
+        sar_acceleration: 0.02
+        sar_maximum: 0.15
+        stop_loss_atr_multiplier: 2.0
+        take_profit_percent: 3.0
+        trailing_stop_atr_multiplier: 1.5
+        volatility_filter_threshold: 0.03
+        volume_sma_period: 20
+        volume_threshold: 1000
   slippage: 0.05
-  start_date: '2025-01-01'
   strategies:
+    DeepAnalysis: false
     Estrategia_Basica: false
     Estrategia_Compensacion: false
-    DeepAnalysis: false
     HeikinAshiVolumenSar: false
     HeikinAshiVolumenSarImproved: false
+    OptimizedStrategy: false
     Solana4H: false
     Solana4HSAR: false
-    UltraDetailedHeikinAshi: false  # Desactivada - archivo no existe
-    OptimizedStrategy: false
-    UltraDetailedHeikinAshiML: true  # Activada - estrategia principal con ML
-    UltraDetailedHeikinAshiML2: true  # Activada - estrategia avanzada con NN
+    UltraDetailedHeikinAshi: false
+    UltraDetailedHeikinAshiML: true
+    UltraDetailedHeikinAshiML2: false
   symbols:
-  - SOL/USDT
-  timeframe: 4h
+  # === SÍMBOLO ACTIVO - CAMBIAR AQUÍ PARA CAMBIAR DE SÍMBOLO ===
+  # Para cambiar entre símbolos, solo modificar esta línea y los parámetros abajo
+  # - DOGE/USDT  # ❌ Deshabilitado - cambiar aquí para usar DOGE
+  # - SOL/USDT   # ❌ Deshabilitado - cambiar aquí para usar SOL
+  - XRP/USDT    # 🔥 XRP como símbolo principal para ML completo
+
+  # === TODOS LOS DEMÁS SÍMBOLOS DESHABILITADOS ===
 compensation_strategy:
   compensation_max_loss: 0.3
   emergency_stop_buffer: 0.98
@@ -161,7 +153,7 @@ indicators:
     - 10
     - 20
     - 200
-  heiken_ashi:
+  heikin_ashi:
     enabled: true
     size_comparison_threshold: 1.2
     trend_period: 3
@@ -172,6 +164,51 @@ indicators:
   volatility:
     enabled: true
     period: 14
+ml_training:
+  enabled_models:
+    gradient_boosting: false
+    neural_network: false
+    random_forest: true
+  safe_mode: false
+  models:
+    gradient_boosting:
+      learning_rate: 0.1
+      max_depth: 3
+      n_estimators: 100
+      random_state: 42
+    neural_network:
+      eval_metric: logloss
+      learning_rate: 0.1
+      max_depth: 4
+      n_estimators: 100
+    random_forest:
+      max_depth: 10
+      n_estimators: 100
+      n_jobs: 1
+      random_state: 42
+  optimization:
+    enabled: true
+    n_trials: 100
+    opt_end: '2025-01-01'
+    opt_start: '2023-06-01'
+    study_name: xrp_usdt_ml_optimization
+    targets:
+      constraints:
+        max_drawdown_limit: 0.3
+        min_trades: 10
+        min_win_rate: 0.5
+      maximize:
+      - total_pnl
+      - profit_factor
+      - win_rate
+      minimize:
+      - max_drawdown
+  training:
+    min_samples: 500
+    train_end: '2023-12-31'
+    train_start: '2022-01-01'
+    val_end: '2024-12-31'
+    val_start: '2023-01-01'
 mt5:
   enabled: true
   login: 61406481
@@ -189,68 +226,24 @@ storage:
   csv_enabled: true
   path: data
   sqlite_enabled: true
+strategies:
+  Estrategia_Basica: false
+  UltraDetailedHeikinAshiML2: true
+strategy_params:
+  UltraDetailedHeikinAshiML2:
+    kelly_fraction: 0.5
+    max_concurrent_trades: 3
+    max_drawdown: 0.07
+    max_portfolio_heat: 0.06
+    ml_threshold: 0.5
+    stoch_overbought: 85
+    stoch_oversold: 15
+    symbol: XRP/USDT
+    timeframe: 4h
+    volume_ratio_min: 1.4
 system:
   auto_launch_dashboard: true
   log_file: logs/bot_trader.log
   log_level: INFO
   name: Bot Trader Copilot
   version: 2.6.0
-
-# Configuración de Machine Learning
-ml_training:
-  # Modo agresivo para maximizar P&L con drawdown 5-10%
-  safe_mode: false  # DESACTIVADO para re-entrenamiento completo
-
-  # Modelos ML activados para optimización
-  enabled_models:
-    random_forest: true          # Activado para optimización
-    gradient_boosting: false     # Mantenido desactivado por estabilidad
-    neural_network: false        # Mantenido desactivado por estabilidad
-
-  # Parámetros de entrenamiento
-  training:
-    train_start: '2023-01-01'    # ✅ CORREGIDO: Usar datos disponibles (2023)
-    train_end: '2023-12-31'      # ✅ Entrenamiento: todo 2023
-    val_start: '2024-01-01'      # ✅ Validación: 2024
-    val_end: '2024-06-30'        # ✅ Primera mitad 2024
-    min_samples: 500             # ✅ Reducido para período más corto
-
-  # Configuración de optimización con Optuna
-  optimization:
-    enabled: true                # ✅ ACTIVADO - Ejecutar optimización
-    n_trials: 100                # Número de pruebas Optuna
-    opt_start: '2023-01-01'      # ✅ CORREGIDO: Inicio período optimización
-    opt_end: '2024-06-30'        # ✅ CORREGIDO: Fin período optimización
-    study_name: 'estrategia_gaadors_optimization'
-    
-    # Objetivos de optimización (targets específicos)
-    targets:
-      maximize:
-        - total_pnl              # Maximizar ganancia total
-        - win_rate               # Maximizar tasa de aciertos
-        - profit_factor          # Maximizar factor de ganancia
-        - sharpe_ratio           # Maximizar Sharpe ratio
-      minimize:
-        - max_drawdown           # Minimizar drawdown máximo
-      constraints:
-        min_trades: 20           # Mínimo de trades para validar
-        max_drawdown_limit: 0.15 # Máximo drawdown permitido (15%)
-        min_win_rate: 0.55       # Mínimo win rate aceptable (55%)
-
-  # Parámetros de modelos
-  models:
-    random_forest:
-      n_estimators: 100
-      max_depth: 10
-      n_jobs: 1  # Importante para Python 3.13 - evitar problemas de paralelismo
-      random_state: 42
-    gradient_boosting:
-      n_estimators: 100
-      max_depth: 3
-      learning_rate: 0.1
-      random_state: 42
-    neural_network:  # XGBoost
-      n_estimators: 100
-      max_depth: 4
-      learning_rate: 0.1
-      eval_metric: 'logloss'

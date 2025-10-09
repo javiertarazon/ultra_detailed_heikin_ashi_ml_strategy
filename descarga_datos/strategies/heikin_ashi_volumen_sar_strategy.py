@@ -5,26 +5,9 @@ Adecuada para acciones, forex y criptomonedas mediante ajuste de parámetros.
 """
 import numpy as np
 import pandas as pd
-import logging
-from utils.talib_wrapper import talib
+from utils.logger import get_logger
 
-class HeikinAshiVolumenSarStrategy:
-    def __init__(self,
-                 volume_threshold=1000,
-                 take_profit_percent=5.0,
-                 stop_loss_percent=3.0,
-                 trailing_stop_percent=2.0,
-                 volume_sma_period=20,
-                 sar_acceleration=0.015,
-                 sar_maximum=0.15):
-        self.volume_threshold = volume_threshold
-        self.take_profit_percent = take_profit_percent
-        self.stop_loss_percent = stop_loss_percent
-        self.trailing_stop_percent = trailing_stop_percent
-        self.volume_sma_period = volume_sma_period
-        self.sar_acceleration = sar_acceleration
-        self.sar_maximum = sar_maximum
-        self.logger = logging.getLogger(__name__)
+logger = get_logger("__name__")
         
         self.logger.info(f"Estrategia HeikinAshiVolumenSar inicializada con: TP={take_profit_percent}%, " +
                         f"SL={stop_loss_percent}%, TrailStop={trailing_stop_percent}%, VolThreshold={volume_threshold}")

@@ -59,7 +59,8 @@ class MLTrainer:
             self.val_start = '2024-01-01'
             self.val_end = '2025-10-06'
             
-        self.models_dir = Path('models') / symbol.replace('/', '_')
+        # Usar la ruta centralizada en descarga_datos/models
+        self.models_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'models' / symbol.replace('/', '_')
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(f'MLTrainer inicializado para {symbol} {timeframe}')
@@ -124,20 +125,47 @@ class MLTrainer:
         downloader = AdvancedDataDownloader(temp_config)
         await downloader.initialize()
         try:
-            # CRÍTICO: Usar fechas correctas para descargar
-            logger.info(f'📥 Solicitando descarga: {self.train_start} → {self.val_end}')
-            
-            data = await downloader.download_multiple_symbols(
-                [self.symbol], 
-                self.timeframe, 
-                start_date=self.train_start,  # DEBE usar train_start
-                end_date=self.val_end          # DEBE usar val_end
-            )
-            
-            if self.symbol not in data or data[self.symbol].empty:
-                raise ValueError(f'No se descargaron datos para {self.symbol}')
-            
-            df = data[self.symbol]
+            # PRIMERO: Intentar usar datos de SQLite directamente (prioridad #1 según arquitectura)
+            logger.info(f'📥 Intentando usar datos SQLite para: {self.train_start} → {self.val_end}')
+
+            try:
+                # Intentar obtener datos directamente de SQLite usando StorageManager
+                from utils.storage import StorageManager
+                storage = StorageManager()
+
+                table_name = f"{self.symbol.replace('/', '_').replace('.', '_')}_{self.timeframe}"
+                if storage.table_exists(table_name):
+                    # Obtener todos los datos disponibles en SQLite
+                    all_data = storage.query_data(table_name)
+
+                    if all_data is not None and not all_data.empty and len(all_data) >= 100:
+                        logger.info(f'✅ Usando datos SQLite disponibles: {len(all_data)} registros para {self.symbol}')
+
+                        # Si tenemos suficientes datos, usarlos (incluso si no cubren exactamente el período requerido)
+                        # El modelo se entrenará con los datos disponibles
+                        return all_data
+                    else:
+                        logger.warning(f'⚠️ Datos SQLite insuficientes: {len(all_data) if all_data is not None else 0} registros')
+                else:
+                    logger.warning(f'⚠️ Tabla {table_name} no existe en SQLite')
+
+                raise ValueError(f'Datos SQLite insuficientes o no disponibles para {self.symbol}')
+
+            except Exception as sqlite_error:
+                logger.warning(f'⚠️ SQLite no disponible ({sqlite_error}), intentando descarga...')
+                # FALLBACK: Usar descarga como último recurso
+                data = await downloader.download_multiple_symbols(
+                    [self.symbol],
+                    self.timeframe,
+                    start_date=self.train_start,
+                    end_date=self.val_end
+                )
+
+                if self.symbol not in data or data[self.symbol].empty:
+                    raise ValueError(f'No se pudieron obtener datos para {self.symbol} ni de SQLite ni descarga')
+
+                df = data[self.symbol]
+                logger.info(f'📥 Datos descargados: {len(df)} registros para {self.symbol}')
             
             # CRÍTICO: Asegurar que timestamp esté como índice
             if 'timestamp' in df.columns:
@@ -329,8 +357,30 @@ class MLTrainer:
         df = self.prepare_features(df)
         labels = self.create_labels(df)
         feature_cols = [col for col in self.select_features() if col in df.columns]
-        train_mask = (df.index >= self.train_start) & (df.index <= self.train_end)
-        val_mask = (df.index >= self.val_start) & (df.index <= self.val_end)
+        # Convertir fechas string a timestamps enteros para comparación
+        train_start_ts = int(pd.Timestamp(self.train_start).timestamp())
+        train_end_ts = int(pd.Timestamp(self.train_end).timestamp())
+        val_start_ts = int(pd.Timestamp(self.val_start).timestamp())
+        val_end_ts = int(pd.Timestamp(self.val_end).timestamp())
+
+        # Convertir índice a timestamps enteros para comparación uniforme
+        if isinstance(df.index, pd.DatetimeIndex):
+            index_ts = (df.index.astype('int64') // 10**9).values  # Convertir a array de numpy
+        else:
+            index_ts = df.index.values
+
+        # Crear máscaras usando comparación con arrays
+        train_mask = (index_ts >= train_start_ts) & (index_ts <= train_end_ts)
+        val_mask = (index_ts >= val_start_ts) & (index_ts <= val_end_ts)
+
+        # Si no hay datos suficientes en el período requerido, usar todos los datos disponibles
+        if train_mask.sum() < 50:  # Menos de 50 muestras para entrenamiento
+            logger.warning(f'Período requerido tiene pocos datos ({train_mask.sum()}), usando todos los datos disponibles')
+            # Usar los primeros 70% para entrenamiento, últimos 30% para validación
+            n_total = len(df)
+            n_train = int(n_total * 0.7)
+            train_mask = pd.Series([True] * n_train + [False] * (n_total - n_train), index=df.index)
+            val_mask = pd.Series([False] * n_train + [True] * (n_total - n_train), index=df.index)
         X_train = df.loc[train_mask, feature_cols].fillna(0)
         y_train = labels.loc[train_mask].dropna()
         X_val = df.loc[val_mask, feature_cols].fillna(0)
