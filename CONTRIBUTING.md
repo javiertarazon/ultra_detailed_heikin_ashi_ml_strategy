@@ -210,7 +210,137 @@ def complex_function(param1: int, param2: str) -> bool:
     pass
 ```
 
-## 🔄 Proceso de Pull Request
+## � **RESTRICCIONES CRÍTICAS - ARCHIVOS PROTEGIDOS**
+
+### **⚠️ ADVERTENCIA IMPORTANTE**
+
+Este proyecto utiliza una **arquitectura centralizada probada y funcionando**. **NO MODIFICAR** los archivos núcleo bajo ninguna circunstancia. Los cambios en estos archivos pueden romper el sistema completo.
+
+### **🛡️ ARCHIVOS NÚCLEO PROTEGIDOS (NO MODIFICAR)**
+
+#### **🎮 Punto de Entrada Único**
+```bash
+✅ main.py                              # ÚNICO punto de entrada autorizado
+❌ CUALQUIER OTRO ARCHIVO               # PROHIBIDO usar como entrada
+```
+
+#### **📈 Motor Backtesting Protegido**
+```bash
+✅ backtesting/backtester.py            # Motor backtesting (configurado dinámicamente)
+✅ backtesting/backtesting_orchestrator.py  # Orquestador centralizado
+❌ NO MODIFICAR NINGUNO                 # Arquitectura probada y funcionando
+```
+
+#### **🗄️ Gestión de Datos Centralizada**
+```bash
+✅ utils/storage.py                     # StorageManager centralizado
+✅ core/downloader.py                   # AdvancedDataDownloader
+❌ NO MODIFICAR                         # Manejo SQLite-First probado
+```
+
+#### **🧠 ML Corregido y Protegido**
+```bash
+✅ indicators/technical_indicators.py  # TechnicalIndicators centralizada
+✅ optimizacion/ml_trainer.py          # ML con TimeSeriesSplit corregido
+✅ utils/logger.py                      # Logger centralizado
+❌ NO MODIFICAR                         # Correcciones críticas aplicadas
+```
+
+#### **📊 Dashboard y Resultados**
+```bash
+✅ utils/dashboard.py                   # Dashboard con capital dinámico
+❌ NO MODIFICAR                         # Funcionalidad crítica probada
+```
+
+### **🎯 ÚNICA FORMA PERMITIDA DE EXTENDER EL SISTEMA**
+
+#### **✅ Agregar Estrategias (3 pasos simples)**
+```python
+# Paso 1: Crear strategies/mi_estrategia.py
+from indicators.technical_indicators import TechnicalIndicators
+
+class MiEstrategia:
+    def __init__(self):
+        self.indicators = TechnicalIndicators()  # ✅ USAR CENTRALIZADA
+        
+    def run(self, data, symbol):
+        rsi = self.indicators.calculate_rsi(data)  # ✅ CORRECTO
+        return {...}
+
+# Paso 2: Registrar en backtesting_orchestrator.py (1 línea)
+'MiEstrategia': ('strategies.mi_estrategia', 'MiEstrategia'),
+
+# Paso 3: Activar en config.yaml
+strategies:
+  MiEstrategia: true
+```
+
+#### **✅ Modificar Configuración**
+```yaml
+# Solo editar config/config.yaml
+backtesting:
+  strategies:
+    MiEstrategia: true   # ✅ ACTIVAR NUEVA ESTRATEGIA
+    OtraEstrategia: false # ✅ DESACTIVAR EXISTENTE
+```
+
+### **❌ ERRORES CRÍTICOS QUE NO DEBES REPETIR**
+
+#### **1. Features Mismatch en ML Prediction**
+```python
+# ❌ INCORRECTO: Hardcoded features
+expected_features = 21  # HARDCODED - CAUSA ERROR
+
+# ✅ CORRECTO: Dinámico
+expected_features = len(features.columns)  # DINÁMICO - FUNCIONA
+```
+
+#### **2. Scaler Not Fitted**
+```python
+# ❌ INCORRECTO: Sin validación
+scaler.transform(data)  # CRASHEA SI NO ESTÁ FITTED
+
+# ✅ CORRECTO: Validar antes
+if hasattr(scaler, 'mean_'):  # O scaler.is_fitted_
+    scaler.transform(data)
+```
+
+#### **3. ML Re-training con Labels Continuos**
+```python
+# ❌ INCORRECTO: Re-entrenar en producción
+model.fit(features_scaled, pd.Series([0.5]))  # CRASHEA
+
+# ✅ CORRECTO: Solo fallback neutral
+confidence = 0.5  # VALOR NEUTRAL SEGURO
+```
+
+#### **4. Labels NaN en Training**
+```python
+# ❌ INCORRECTO: Labels con NaN
+labels = create_labels()  # PUEDE CONTENER NaN
+model.fit(X, labels)      # ERROR
+
+# ✅ CORRECTO: Filtrar NaN
+labels = create_labels().dropna()  # LIMPIO
+model.fit(X, labels)
+```
+
+### **🔧 REGLAS DE ORO PARA CONTRIBUIDORES**
+
+1. **🚫 NUNCA modificar archivos núcleo protegidos**
+2. **🎯 Solo agregar estrategias siguiendo los 3 pasos**
+3. **⚙️ Solo editar `config/config.yaml` para configuración**
+4. **🧪 Siempre validar con `validate_modular_system.py`**
+5. **📊 Verificar dashboard después de cambios**
+6. **🔄 Usar solo `main.py` como punto de entrada**
+7. **🗄️ SQLite es fuente primaria, CSV fallback**
+8. **🧠 ML usa TimeSeriesSplit, nunca train_test_split estático**
+9. **📝 Documentar cualquier cambio siguiendo las convenciones**
+10. **✅ Ejecutar tests antes de hacer commit**
+
+---
+
+## �🔄 Proceso de Pull Request
 
 ### **Plantilla de PR**
 ```

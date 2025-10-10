@@ -108,36 +108,85 @@ class MiEstrategia:
 
 ### 🛡️ RESTRICCIONES CRÍTICAS Y CONVENCIONES v2.8
 
-#### ❌ **ARCHIVOS PROTEGIDOS - NO MODIFICAR**:
+#### **🚨 ARCHIVOS PROTEGIDOS - NO MODIFICAR BAJO NINGUNA CIRCUNSTANCIA**
+
+> **⚠️ ADVERTENCIA CRÍTICA**: Estos archivos contienen la arquitectura centralizada probada y funcionando. **Cualquier modificación puede romper el sistema completo**.
+
+##### **🎮 PUNTO DE ENTRADA ÚNICO**
 ```bash
-# NÚCLEO PROTEGIDO (No tocar)
-main.py                             # ✅ Punto de entrada único
-backtesting/backtesting_orchestrator.py  # ✅ Orquestador protegido
-backtesting/backtester.py           # ✅ Motor backtesting
-utils/storage.py                    # ✅ StorageManager centralizado
-utils/logger.py                     # ✅ Logger centralizado
-core/downloader.py                  # ✅ AdvancedDataDownloader
-indicators/technical_indicators.py  # ✅ TechnicalIndicators centralizada
-optimizacion/ml_trainer.py          # ✅ ML con TimeSeriesSplit
+✅ main.py                              # ÚNICO punto de entrada autorizado
+❌ CUALQUIER OTRO ARCHIVO               # PROHIBIDO usar como entrada
+❌ python backtesting_orchestrator.py   # ❌ INCORRECTO
+❌ python run_optimization_pipeline2.py # ❌ INCORRECTO
 ```
 
-#### ✅ **PERMITIDO MODIFICAR**:
-- **Estrategias**: Crear nuevas en `strategies/` usando TechnicalIndicators centralizada
-- **Configuración**: Solo `config/config.yaml` para activar/desactivar funciones
-- **Risk Management**: `risk_management/risk_management.py`
-- **Nuevos módulos**: Independientes que no alteren arquitectura central
+##### **📈 MOTOR BACKTESTING PROTEGIDO**
+```bash
+✅ backtesting/backtester.py            # Motor backtesting (configurado dinámicamente)
+✅ backtesting/backtesting_orchestrator.py  # Orquestador centralizado
+❌ NO MODIFICAR NINGUNO                 # Arquitectura probada y funcionando
+```
 
-#### 🎯 **REGLAS METODOLÓGICAS CRÍTICAS**:
-- **Datos Reales**: Solo datos reales normalizados. Prohibido sintéticos o simulaciones
-- **Backtesting Fiel**: Métricas exactas sin alteraciones. No favorecer estrategias artificialmente  
-- **Dashboard Exacto**: Reflejar métricas del backtest sin modificaciones adicionales
-- **ML Sin Sesgos**: Solo TimeSeriesSplit, prohibida validación con train_test_split estático
-- **Indicadores Únicos**: Solo usar `self.indicators = TechnicalIndicators()` - prohibida duplicación
-- **SQLite-First**: Siempre verificar SQLite primero, CSV como fallback automático
-- **Async Obligatorio**: Funciones críticas deben ser async para centralización
-- **Testing Real**: No crear archivos test temporales, solucionar problemas directamente
-- **Logging Centralizado**: Solo `utils/logger.py` y `logs/bot_trader.log`
-- **Validación Obligatoria**: `validate_modular_system.py` tras cada cambio relevante
+##### **🗄️ GESTIÓN DE DATOS CENTRALIZADA**
+```bash
+✅ utils/storage.py                     # StorageManager centralizado
+✅ core/downloader.py                   # AdvancedDataDownloader
+❌ NO MODIFICAR                         # Manejo SQLite-First probado
+```
+
+##### **🧠 ML CORREGIDO Y PROTEGIDO**
+```bash
+✅ indicators/technical_indicators.py  # TechnicalIndicators centralizada
+✅ optimizacion/ml_trainer.py          # ML con TimeSeriesSplit corregido
+✅ utils/logger.py                      # Logger centralizado
+❌ NO MODIFICAR                         # Correcciones críticas aplicadas
+```
+
+##### **📊 DASHBOARD Y RESULTADOS**
+```bash
+✅ utils/dashboard.py                   # Dashboard con capital dinámico
+❌ NO MODIFICAR                         # Funcionalidad crítica probada
+```
+
+#### **🎯 ÚNICA FORMA PERMITIDA DE EXTENDER EL SISTEMA**
+
+##### **✅ PERMITIDO: Agregar Estrategias (3 pasos simples)**
+```python
+# Paso 1: Crear strategies/mi_estrategia.py
+from indicators.technical_indicators import TechnicalIndicators
+
+class MiEstrategia:
+    def __init__(self):
+        self.indicators = TechnicalIndicators()  # ✅ USAR CENTRALIZADA
+        
+    def run(self, data, symbol):
+        rsi = self.indicators.calculate_rsi(data)  # ✅ CORRECTO
+        return {...}
+
+# Paso 2: Registrar en backtesting_orchestrator.py (1 línea)
+'MiEstrategia': ('strategies.mi_estrategia', 'MiEstrategia'),
+
+# Paso 3: Activar en config.yaml
+strategies:
+  MiEstrategia: true
+```
+
+##### **✅ PERMITIDO: Modificar Configuración**
+```yaml
+# Solo editar config/config.yaml
+backtesting:
+  strategies:
+    MiEstrategia: true   # ✅ ACTIVAR NUEVA ESTRATEGIA
+    OtraEstrategia: false # ✅ DESACTIVAR EXISTENTE
+```
+
+#### **🎯 CONVENCIONES OBLIGATORIAS**
+
+- **🗄️ SQLite-First**: Siempre verificar SQLite primero, CSV como fallback automático
+- **🔄 Async Obligatorio**: Funciones críticas deben ser async para centralización
+- **🧪 Testing Real**: No crear archivos test temporales, solucionar problemas directamente
+- **📝 Logging Centralizado**: Solo `utils/logger.py` y `logs/bot_trader.log`
+- **✅ Validación Obligatoria**: `validate_modular_system.py` tras cada cambio relevante
 
 ### Ejemplo de Estrategia
 ```python
