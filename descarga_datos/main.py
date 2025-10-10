@@ -345,6 +345,58 @@ def run_live_ccxt():
         print(f" ❌ Error en trading en vivo: {e}")
         return False
 
+def run_binance_sandbox_test():
+    """
+    Ejecuta test completo de live trading con Binance Sandbox.
+
+    Este test verifica todas las funcionalidades del sistema de trading en vivo:
+    - Conexión y autenticación con Binance Testnet
+    - Recopilación de datos en tiempo real
+    - Cálculo de indicadores técnicos
+    - Ejecución de órdenes de compra/venta
+    - Gestión de stop loss y take profit
+    - Cierre de posiciones
+    - Reporte de resultados
+
+    Returns:
+        bool: True si el test se completa exitosamente
+    """
+    try:
+        print(" 🚀 Iniciando test de Binance Sandbox...")
+
+        # Verificar que el archivo de test existe
+        test_file = Path("tests/test_binance_sandbox_live.py")
+        if not test_file.exists():
+            print(f" ❌ Archivo de test no encontrado: {test_file}")
+            return False
+
+        # Ejecutar el test usando subprocess
+        import subprocess
+        result = subprocess.run([
+            sys.executable, "-m", "unittest", str(test_file), "-v"
+        ], cwd=current_dir, capture_output=True, text=True)
+
+        # Mostrar output del test
+        if result.stdout:
+            print(" 📋 Output del test:")
+            print(result.stdout)
+
+        if result.stderr:
+            print(" ⚠️  Errores del test:")
+            print(result.stderr)
+
+        # Verificar resultado
+        if result.returncode == 0:
+            print(" ✅ Test de Binance Sandbox completado exitosamente")
+            return True
+        else:
+            print(f" ❌ Test de Binance Sandbox falló (código: {result.returncode})")
+            return False
+
+    except Exception as e:
+        print(f" ❌ Error ejecutando test de Binance Sandbox: {e}")
+        return False
+
 async def run_backtest():
     """
     BACKTESTING CENTRALIZADO
@@ -932,6 +984,7 @@ def main():
     parser.add_argument("--live-ccxt", action="store_true", help="Ejecutar live trading con CCXT")
     parser.add_argument("--test-live-mt5", action="store_true", help="Probar live trading MT5 (modo seguro, 30s)")
     parser.add_argument("--test-live-ccxt", action="store_true", help="Probar live trading CCXT (modo seguro, 30s)")
+    parser.add_argument("--test-binance-sandbox", action="store_true", help="Ejecutar test completo de live trading con Binance Sandbox")
     parser.add_argument("--skip-validation", action="store_true", help="Omitir validación automática")
     parser.add_argument("--symbols", type=str, help="Lista de símbolos separados por coma para backtest rápido (override config)")
     parser.add_argument("--timeframe", type=str, help="Timeframe a usar (override config)")
@@ -950,6 +1003,8 @@ def main():
         mode = "test_live_mt5"
     elif args.test_live_ccxt:
         mode = "test_live_ccxt"
+    elif args.test_binance_sandbox:
+        mode = "test_binance_sandbox"
     elif args.live_mt5 or args.mode == "live_mt5":
         mode = "live_mt5"
     elif args.live_ccxt or args.mode == "live_ccxt":
@@ -993,6 +1048,31 @@ def main():
             print("\n✅ TRADING EN VIVO EJECUTADO CORRECTAMENTE")
         else:
             print("\n❌ PRUEBA CCXT FALLÓ")
+            sys.exit(1)
+
+    elif mode == "test_binance_sandbox":
+        # Test completo de live trading con Binance Sandbox
+        print("\n🧪 MODO: TEST COMPLETO DE LIVE TRADING CON BINANCE SANDBOX")
+        print("📊 Exchange: Binance Testnet (Sandbox)")
+        print("💰 Capital: 1,000 USDT de prueba")
+        print("⚡ Funciones probadas:")
+        print("   • Conexión y autenticación")
+        print("   • Recopilación de datos en tiempo real")
+        print("   • Cálculo de indicadores técnicos")
+        print("   • Órdenes límite de compra/venta")
+        print("   • Stop Loss y Take Profit")
+        print("   • Cierre de posiciones")
+        print("   • Escenario completo de trading")
+        print("⚠️  Operaciones 100% reales en entorno de prueba\n")
+
+        success = run_binance_sandbox_test()
+        if success:
+            print("\n✅ TEST DE BINANCE SANDBOX COMPLETADO EXITOSAMENTE")
+            print("📊 Resultados guardados en: tests/test_results/")
+            print("📋 Revisa logs en: logs/binance_sandbox_test.log")
+        else:
+            print("\n❌ TEST DE BINANCE SANDBOX FALLÓ")
+            print("📋 Revisa logs en: logs/binance_sandbox_test.log")
             sys.exit(1)
 
     elif mode == "live_mt5":

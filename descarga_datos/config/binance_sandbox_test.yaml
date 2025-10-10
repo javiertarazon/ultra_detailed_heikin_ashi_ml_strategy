@@ -1,0 +1,68 @@
+# Configuración para Test de Live Trading con Binance Sandbox
+# Este archivo configura el sistema para operar en modo testnet de Binance
+
+# Configuración general
+system:
+  mode: live_test  # Modo de prueba para live trading
+  environment: testnet
+  log_level: INFO
+
+# Configuración de exchange
+exchange:
+  name: binance
+  testnet: true  # Usar testnet de Binance
+  api_key: ${BINANCE_TEST_API_KEY}
+  api_secret: ${BINANCE_TEST_API_SECRET}
+  sandbox: true
+
+# Símbolos y timeframes para testing
+trading:
+  symbols:
+    - BTC/USDT
+    - ETH/USDT
+  timeframes:
+    - 1m
+    - 5m
+    - 15m
+  capital: 1000  # Capital de test en USDT
+  max_position_size: 0.1  # 10% del capital máximo por posición
+  commission: 0.001  # 0.1% comisión
+  slippage: 0.0005  # 0.05% slippage
+
+# Gestión de riesgo
+risk_management:
+  enabled: true
+  max_drawdown: 0.05  # 5% máximo drawdown
+  max_position_size_pct: 0.1  # 10% del capital por posición
+  stop_loss_pct: 0.02  # 2% stop loss por defecto
+  take_profit_pct: 0.04  # 4% take profit por defecto
+  max_consecutive_losses: 3
+  daily_loss_limit: 0.03  # 3% pérdida máxima diaria
+
+# Configuración de estrategias para test
+strategies:
+  TestStrategy: true  # Estrategia simple para testing
+
+# Configuración de datos
+data:
+  history_bars: 100  # Barras históricas para indicadores
+  update_interval: 60  # Actualización cada 60 segundos en test
+
+# Configuración de logging para test
+logging:
+  level: DEBUG
+  file: logs/binance_sandbox_test.log
+  console: true
+
+# Configuración de resultados
+results:
+  save_to_db: true
+  export_json: true
+  dashboard_enabled: false  # Deshabilitar dashboard para test
+
+# Configuración específica del test
+test:
+  duration_minutes: 30  # Duración máxima del test
+  max_trades: 10  # Máximo número de trades por test
+  auto_close_positions: true  # Cerrar posiciones automáticamente al final
+  cancel_pending_orders: true  # Cancelar órdenes pendientes al final
