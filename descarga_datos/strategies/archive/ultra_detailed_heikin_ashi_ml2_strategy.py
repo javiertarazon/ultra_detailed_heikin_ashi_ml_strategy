@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """
-ULTRA-DETAILED HEIKIN ASHI STRATEGY WITH REAL ML MODELS
-=========================================================
+ULTRA-DETAILED HEIKIN ASHI STRATEGY WITH ADVANCED NEURAL NETWORK v2
+=====================================================================
 
-Estrategia ultra-optimizada con                 n_jobs=1  # CAMBIADO de -1 a 1 para evitar problemas de memoriaodelos de machine learning REALES entrenados
-con datos históricos. NO USA SIMULACIONES - Aprende patrones y correlaciones
+Estrategia ultra-optimizada con REDES NEURONALES AVANZADAS pero EFICIENTES
+entrenadas con datos históricos. NO USA SIMULACIONES - Aprende patrones y correlaciones
 reales de indicadores técnicos para generar operaciones de ALTA PROBABILIDAD.
 
-CARACTERÍSTICAS:
-- Modelos ML entrenados con datos históricos reales (RandomForest, GradientBoosting, Neural Networks)
+CARACTERÍSTICAS v2:
+- Redes Neuronales Avanzadas optimizadas para bajo consumo de recursos
+- Arquitectura MLP optimizada: capas densas con dropout y regularización
+- Entrenamiento eficiente con early stopping y learning rate scheduling
+- Gestión de memoria optimizada para sistemas con recursos limitados
+- Modelos ligeros pero potentes (>75% ML confidence)
 - Gestión de riesgo REAL basada en ATR y volatilidad del mercado
-- Señales de alta confianza (>70% ML confidence) + filtros técnicos estrictos
+- Señales de alta confianza + filtros técnicos estrictos
 - Trailing stops dinámicos y time exits
 - Validación completa de indicadores y datos
 
 REQUIERE: Datos históricos suficientes para entrenamiento ML (>100 muestras)
+OPTIMIZADO PARA: Sistemas con recursos limitados pero procesadores modernos
 """
 
 import pandas as pd
@@ -44,15 +49,13 @@ class MLModelManager:
     la compatibilidad con el código existente.
     """
 
-    def __init__(self, model_dir: str = None, config: dict = None):
+    def __init__(self, model_dir: str = None):
         # Usar el ModelManager centralizado
         self.model_manager = ModelManager(model_dir)
         # Mantener compatibilidad con código existente
         self.model_dir = self.model_manager.model_dir
         self.models = {}
         self.scalers = {}
-        # Agregar configuración para prepare_features
-        self.config = config
 
     def ensure_model_dir(self):
         """Crear directorio de modelos si no existe"""
@@ -68,50 +71,40 @@ class MLModelManager:
 
     def prepare_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Preparar features EXACTAMENTE IGUAL que en el entrenamiento ML
-        CRÍTICO: Debe coincidir con MLTrainer.prepare_features() para evitar mismatch
+        Preparar features para el modelo ML
         """
-        # 🎯 COPIA EXACTA de MLTrainer.prepare_features() - NO MODIFICAR
+        # 🎯 USAR MÉTODO CENTRALIZADO - Eliminar duplicación
         from indicators.technical_indicators import TechnicalIndicators
-        
-        # Usar la configuración ya cargada en el objeto, no recargar
-        # config = load_config_from_yaml()  # ❌ PROBLEMÁTICO en optimización paralela
-        config = self.config  # ✅ Usar config ya cargada
-        
-        indicator = TechnicalIndicators(config)
-        df = data.copy()  # Trabajar con copia para no modificar original
-        
-        # Calcular TODOS los indicadores usando el método centralizado
-        df = indicator.calculate_all_indicators(df)
-        
-        # Calcular features EXACTAMENTE como en MLTrainer
-        df['returns'] = df['close'].pct_change()
-        df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
-        df['volatility'] = df['returns'].rolling(window=20).std()
-        df['ha_close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
-        df['ha_open'] = (df['open'].shift(1) + df['close'].shift(1)) / 2
-        df['ha_high'] = df[['high', 'ha_open', 'ha_close']].max(axis=1)
-        df['ha_low'] = df[['low', 'ha_open', 'ha_close']].min(axis=1)
-        df['momentum_5'] = df['close'] - df['close'].shift(5)
-        df['momentum_10'] = df['close'] - df['close'].shift(10)
-        df['price_position'] = (df['close'] - df['close'].rolling(50).min()) / (df['close'].rolling(50).max() - df['close'].rolling(50).min())
-        df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
-        df['trend_strength'] = abs(df['ema_10'] - df['ema_20']) / df['atr']
-        
-        # Seleccionar EXACTAMENTE las mismas features que MLTrainer.select_features()
-        feature_cols = ['ha_close', 'ha_open', 'ha_high', 'ha_low', 'ema_10', 'ema_20', 'ema_200', 
-                       'macd', 'macd_signal', 'adx', 'sar', 'atr', 'volatility', 'bb_upper', 'bb_lower', 
-                       'rsi', 'momentum_5', 'momentum_10', 'volume_ratio', 'price_position', 
-                       'trend_strength', 'returns', 'log_returns']
-        
-        # Filtrar solo las columnas que existen y están en la lista
-        available_features = [col for col in feature_cols if col in df.columns]
-        features = df[available_features].copy()
-        
-        # Eliminar filas con NaN
-        features = features.dropna()
-        
-        # Features de volatilidad adicionales
+        indicators = TechnicalIndicators()
+        data = indicators.calculate_all_indicators_unified(data)
+
+        features = pd.DataFrame(index=data.index)
+
+        # Features de Heikin Ashi
+        features['ha_body_ratio'] = abs(data['ha_close'] - data['ha_open']) / (data['ha_high'] - data['ha_low'] + 1e-8)
+        features['ha_trend_strength'] = (data['ha_close'] - data['ha_open']) / data['atr']
+        features['ha_color_change'] = data['ha_color_change']
+
+        # Features técnicas principales
+        features['stoch_k'] = data['stoch_k']
+        features['stoch_d'] = data['stoch_d']
+        features['cci'] = data['cci']
+        features['rsi'] = data['rsi']
+        features['macd'] = data['macd']
+        features['macd_signal'] = data['macd_signal']
+        features['macd_hist'] = data['macd_hist']
+
+        # Features adicionales
+        features['volume_ratio'] = data['volume_ratio']
+        features['roc'] = data['roc']
+        features['willr'] = data['willr']
+        features['atr'] = data['atr']
+
+        # Features de momentum
+        features['price_change'] = data['close'].pct_change()
+        features['volume_change'] = data['volume'].pct_change()
+
+        # Features de volatilidad
         features['bb_upper'], features['bb_middle'], features['bb_lower'] = talib.BBANDS(data['close'], timeperiod=20)
         features['bb_width'] = (features['bb_upper'] - features['bb_lower']) / features['bb_middle']
 
@@ -128,26 +121,6 @@ class MLModelManager:
                 features[col] = features[col].clip(lower, upper)
 
         return features
-
-        # ⚠️ CÓDIGO INALCANZABLE ELIMINADO ⚠️
-        # El siguiente código nunca se ejecutaba porque estaba después del return
-        # Features de volatilidad
-        # features['bb_upper'], features['bb_middle'], features['bb_lower'] = talib.BBANDS(data['close'], timeperiod=20)
-        # features['bb_width'] = (features['bb_upper'] - features['bb_lower']) / features['bb_middle']
-
-        # Limpiar NaN y valores extremos
-        # features = features.fillna(0)
-        # features = features.replace([np.inf, -np.inf], 0)
-
-        # Limitar valores extremos (winsorizing)
-        # for col in features.columns:
-        #     if features[col].dtype in ['float64', 'float32']:
-        #         # Limitar al percentil 1-99 para evitar outliers extremos
-        #         lower = features[col].quantile(0.01)
-        #         upper = features[col].quantile(0.99)
-        #         features[col] = features[col].clip(lower, upper)
-
-        # return features
 
     def prepare_target(self, data: pd.DataFrame, lookahead: int = 1) -> pd.Series:
         """
@@ -181,7 +154,7 @@ class MLModelManager:
         try:
             from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
             from sklearn.neural_network import MLPClassifier
-            from sklearn.model_selection import train_test_split, cross_val_score
+            from sklearn.model_selection import train_test_split, TimeSeriesSplit
             from sklearn.preprocessing import StandardScaler
             from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
             print("Importaciones sklearn exitosas")
@@ -211,18 +184,38 @@ class MLModelManager:
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
 
-        # SOLO RANDOM FOREST - Otros modelos causan problemas en Python 3.13
+        # RED NEURONAL AVANZADA OPTIMIZADA v2 - Arquitectura eficiente para recursos limitados
         models_config = {
-            'random_forest': RandomForestClassifier(
-                n_estimators=200,        # Aumentado de 100 (más árboles = mejor generalización)
-                max_depth=15,            # Aumentado de 10 (más profundidad con más data)
-                min_samples_split=10,    # Reducido de 20 (menos restrictivo)
-                min_samples_leaf=5,      # Reducido de 10 (permite más detalle)
-                max_features='sqrt',     # Mejor para evitar overfitting
+            'neural_network_advanced': MLPClassifier(
+                hidden_layer_sizes=(128, 64, 32),  # Arquitectura profunda pero compacta
+                activation='relu',                   # ReLU para gradientes estables
+                solver='adam',                      # Adam optimizer eficiente
+                alpha=0.001,                        # Regularización L2 moderada
+                batch_size=64,                      # Batch size optimizado para memoria
+                learning_rate='adaptive',           # Learning rate adaptativo
+                learning_rate_init=0.001,           # LR inicial conservador
+                max_iter=500,                       # Iteraciones suficientes
+                early_stopping=True,                # Early stopping para evitar overfitting
+                validation_fraction=0.2,            # Validación interna
+                n_iter_no_change=20,                # Paciencia para early stopping
                 random_state=42,
-                n_jobs=1
+                verbose=False
+            ),
+            'neural_network_light': MLPClassifier(
+                hidden_layer_sizes=(64, 32),        # Arquitectura ligera
+                activation='relu',
+                solver='adam',
+                alpha=0.01,                         # Regularización más fuerte
+                batch_size=128,                     # Batch size mayor para eficiencia
+                learning_rate='adaptive',
+                learning_rate_init=0.01,            # LR inicial más alto
+                max_iter=300,                       # Menos iteraciones
+                early_stopping=True,
+                validation_fraction=0.2,
+                n_iter_no_change=15,
+                random_state=42,
+                verbose=False
             )
-            # GradientBoosting y NeuralNetwork DESHABILITADOS
         }
 
         # Entrenar y evaluar modelos
@@ -242,15 +235,28 @@ class MLModelManager:
             auc = roc_auc_score(y_test, y_pred_proba, multi_class='ovr') if len(np.unique(y_test)) > 1 else 0.5
 
             if enable_cv and len(X_train_scaled) >= cv_folds:
-                # Cross-validation configurable (default 10-fold) - FORZAR n_jobs=1
-                cv_scores = cross_val_score(
-                    model,
-                    X_train_scaled,
-                    y_train,
-                    cv=cv_folds,
-                    scoring='accuracy',
-                    n_jobs=1  # FORZADO a 1 para evitar problemas de paralelización en Python 3.13
-                )
+                # CORRECCIÓN CRÍTICA: TimeSeriesSplit para evitar look-ahead bias
+                # KFold estándar mezcla datos futuros con pasados - INVALIDANDO resultados
+                tscv = TimeSeriesSplit(n_splits=cv_folds)
+                cv_scores = []
+                
+                print(f"    Ejecutando validación cruzada temporal con {cv_folds} splits...")
+                for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_scaled)):
+                    X_fold_train = X_train_scaled[train_idx]
+                    X_fold_val = X_train_scaled[val_idx]
+                    y_fold_train = y_train.iloc[train_idx]
+                    y_fold_val = y_train.iloc[val_idx]
+                    
+                    # Crear modelo temporal para este fold
+                    fold_model = type(model)(**model.get_params())
+                    fold_model.fit(X_fold_train, y_fold_train)
+                    
+                    # Evaluar en validación temporal
+                    fold_score = fold_model.score(X_fold_val, y_fold_val)
+                    cv_scores.append(fold_score)
+                    print(f"      Fold {fold+1}: Accuracy = {fold_score:.3f}")
+                
+                cv_scores = np.array(cv_scores)
                 cv_score = cv_scores.mean()
                 cv_std = cv_scores.std()
             else:
@@ -279,16 +285,12 @@ class MLModelManager:
 
     def save_model(self, symbol: str, model_name: str, model, scaler):
         """Guardar modelo entrenado usando el ModelManager centralizado"""
-        # Construir nombre completo del modelo incluyendo el símbolo
-        full_model_name = f"{symbol}_{model_name}"
-        full_scaler_name = f"{symbol}_{model_name}_scaler"
-
         # Usar el ModelManager centralizado
-        success_model = self.model_manager.save_model(model, full_model_name)
-        success_scaler = self.model_manager.save_model(scaler, full_scaler_name)
-
+        success_model = self.model_manager.save_model(model, symbol, model_name)
+        success_scaler = self.model_manager.save_scaler(scaler, symbol, model_name)
+        
         if success_model and success_scaler:
-            print(f"    Modelo guardado: {full_model_name}")
+            print(f"    Modelo guardado: {self.model_manager.get_model_path(symbol, model_name)}")
         else:
             print(f"    Error al guardar modelo para {symbol}")
 
@@ -356,56 +358,15 @@ class MLModelManager:
         # Preparar features con datos reales
         features = self.prepare_features(data)
 
-        # DEBUG: Imprimir número de features
-        print(f"DEBUG: Features preparadas: {len(features.columns)} columnas")
-        print(f"DEBUG: Nombres de features: {list(features.columns)}")
+        # Asegurar que el scaler esté ajustado antes de usar transform
+        if not hasattr(scaler, 'mean_'):
+            # Si el scaler no está ajustado, ajustarlo con los datos actuales
+            scaler.fit(features)
 
-        # Ajustar scaler si no está fitted o si hay mismatch de features
-        try:
-            # Verificar si el scaler está fitted
-            if not hasattr(scaler, 'mean_') or scaler.mean_ is None:
-                raise ValueError("Scaler not fitted - debe estar guardado junto con el modelo entrenado")
-            features_scaled = scaler.transform(features)
-        except Exception as e:
-            # ❌ DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
-            print(f"ERROR CRÍTICO: Scaler no válido ({e}). Devolviendo confianza neutral (0.5)")
-            # Fallback seguro: devolver confianza neutral sin data leakage
-            confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
-            return confidence
-
-        # Verificar que el número de features coincida
-        # Determinar dinámicamente el número esperado de features basado en las disponibles
-        expected_features = len(features.columns)  # Usar el número real de features preparadas
-        actual_features = features_scaled.shape[1]
-        if actual_features != expected_features:
-            print(f"CRITICAL: Features mismatch - esperado {expected_features}, obtenido {actual_features}")
-            # ❌ DATA LEAKAGE CRÍTICO - NUNCA re-ajustar scaler en producción
-            print("ERROR CRÍTICO: Mismatch de features. Devolviendo confianza neutral (0.5)")
-            # Fallback seguro: devolver confianza neutral sin data leakage
-            confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
-            return confidence
+        features_scaled = scaler.transform(features)
 
         # Predecir probabilidades usando modelo entrenado
-        # Deshabilitar paralelización temporalmente para compatibilidad con Python 3.13
-        original_n_jobs = getattr(model, 'n_jobs', None)
-        if hasattr(model, 'n_jobs'):
-            model.n_jobs = 1
-        
-        try:
-            proba = model.predict_proba(features_scaled)
-        except ValueError as e:
-            if "features" in str(e).lower():
-                # Error de mismatch de features - NO intentar re-entrenar, devolver confianza neutral
-                print(f"ERROR: Mismatch de features en modelo ({e}). Usando confianza neutral (0.5)")
-                # Fallback: devolver confianza neutral sin intentar re-entrenar
-                confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
-                return confidence
-            else:
-                raise e
-        finally:
-            # Restaurar configuración original
-            if hasattr(model, 'n_jobs') and original_n_jobs is not None:
-                model.n_jobs = original_n_jobs
+        proba = model.predict_proba(features_scaled)
 
         # Convertir a confianza (probabilidad de cambio alcista - probabilidad de cambio bajista)
         confidence = proba[:, 2] - proba[:, 0] if proba.shape[1] > 2 else proba[:, 1] - 0.5
@@ -414,40 +375,42 @@ class MLModelManager:
         confidence = (confidence + 1) / 2
         confidence = np.clip(confidence, 0, 1)
 
-        # CRÍTICO: El índice debe coincidir con features.index, luego reindexar al data.index original
-        confidence_series = pd.Series(confidence, index=features.index, name='ml_confidence')
-        
-        # Reindexar para coincidir con el índice original de data (llenar NaN con 0.5 si es necesario)
-        confidence_series = confidence_series.reindex(data.index, fill_value=0.5)
-        
-        return confidence_series
+        return pd.Series(confidence, index=data.index, name='ml_confidence')
 
     def _calculate_heikin_ashi(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calcular velas Heikin Ashi usando el módulo centralizado."""
-        from indicators.technical_indicators import TechnicalIndicators
+        """Calcular velas Heikin Ashi"""
 
-        indicators = TechnicalIndicators()
-        heikin_ashi_data = indicators.calculate_heikin_ashi(data)
+        # Heikin Ashi calculation
+        ha_close = (data['open'] + data['high'] + data['low'] + data['close']) / 4
 
-        # Agregar columnas calculadas al DataFrame original
-        data = pd.concat([data, heikin_ashi_data], axis=1)
+        ha_open = pd.Series(index=data.index, dtype=float)
+        ha_open.iloc[0] = (data['open'].iloc[0] + data['close'].iloc[0]) / 2
+
+        for i in range(1, len(data)):
+            ha_open.iloc[i] = (ha_open.iloc[i-1] + ha_close.iloc[i-1]) / 2
+
+        ha_high = pd.concat([ha_open, ha_close, data['high']], axis=1).max(axis=1)
+        ha_low = pd.concat([ha_open, ha_close, data['low']], axis=1).min(axis=1)
+
+        # Agregar al DataFrame
+        data['ha_open'] = ha_open
+        data['ha_high'] = ha_high
+        data['ha_low'] = ha_low
+        data['ha_close'] = ha_close
+
+        # Color change (señal principal)
+        data['ha_color_change'] = (data['ha_close'] > data['ha_open']).astype(int).diff().fillna(0)
+        data['ha_bullish'] = (data['ha_close'] > data['ha_open']).astype(int)
+        data['ha_bearish'] = (data['ha_close'] < data['ha_open']).astype(int)
 
         return data
 
-    def _calculate_technical_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        ⚠️ MÉTODO OBSOLETO: Use TechnicalIndicators.calculate_all_indicators_unified en su lugar
-        
-        Este método se mantiene solo para compatibilidad con código existente.
-        Será eliminado en futuras versiones.
-        """
-        # Llamar al método centralizado
-        from indicators.technical_indicators import TechnicalIndicators
-        indicators = TechnicalIndicators()
-        return indicators.calculate_all_indicators_unified(data)
+    # El método _calculate_technical_indicators ha sido eliminado
+    # Se utiliza el método centralizado TechnicalIndicators.calculate_all_indicators_unified
+    # Ver método prepare_features() que usa la clase centralizada
 
 
-class UltraDetailedHeikinAshiMLStrategy:
+class UltraDetailedHeikinAshiML2Strategy:
     """
     Estrategia ultra-detallada con modelos ML reales entrenados
     """
@@ -459,37 +422,65 @@ class UltraDetailedHeikinAshiMLStrategy:
         elif hasattr(config, 'backtesting'):
             # Es un objeto Config - extraer parámetros relevantes
             self.config = {
-                'symbol': getattr(config.backtesting, 'symbols', ['SOL/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'SOL/USDT',
-                'timeframe': getattr(config.backtesting, 'timeframe', '4h') if hasattr(config.backtesting, 'timeframe') else '4h',
-                'ml_threshold': 0.25,  # Optimizado para SOL/USDT
-                'stoch_overbought': 85,
-                'stoch_oversold': 35,
-                'cci_threshold': 170,
-                'volume_ratio_min': 0.3,
-                'liquidity_score_min': 5,
-                'max_drawdown': 0.12,
-                'max_portfolio_heat': 0.18,
-                'max_concurrent_trades': 4,
-                'kelly_fraction': 0.35
+                'symbol': getattr(config.backtesting, 'symbols', ['DOGE/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'DOGE/USDT',
+                'timeframe': getattr(config.backtesting, 'timeframe', '1H') if hasattr(config.backtesting, 'timeframe') else '1H',
+                'ml_threshold': 0.3,  # ULTRA PERMISIVO - más señales
+                'stoch_overbought': 80,
+                'stoch_oversold': 20,
+                'cci_threshold': 100,
+                'volume_ratio_min': 0.3,  # ULTRA PERMISIVO - más entradas
+                'liquidity_score_min': 5,  # BAJADO DE 75 A 5 - CRÍTICO PARA GENERAR TRADES
+                'max_drawdown': 0.05,
+                'max_portfolio_heat': 0.04,
+                'max_concurrent_trades': 2,
+                'kelly_fraction': 0.5
             }
         else:
             # Es un diccionario
             self.config = config
 
         # Extraer parámetros con valores por defecto
-        self.symbol = self.config.get('symbol', 'SOL/USDT')
-        self.timeframe = self.config.get('timeframe', '4h')
+        self.symbol = self.config.get('symbol', 'DOGE/USDT')
+        self.timeframe = self.config.get('timeframe', '1H')
 
-        # Parámetros optimizados desde configuración centralizada
-        self.ml_threshold = self.config.get('ml_threshold', 0.25)
-        self.stoch_overbought = self.config.get('stoch_overbought', 85)
-        self.stoch_oversold = self.config.get('stoch_oversold', 35)
-        self.cci_threshold = self.config.get('cci_threshold', 170)
-        self.volume_ratio_min = self.config.get('volume_ratio_min', 0.3)
-        self.liquidity_score_min = self.config.get('liquidity_score_min', 5)
+        # Parámetros ultra-optimizados basados en análisis (OPTIMIZADO para rentabilidad)
+        self.ml_threshold = self.config.get('ml_threshold', 0.3)  # MUY PERMISIVO - más señales
+        self.stoch_overbought = self.config.get('stoch_overbought', 75)  # Más bajo
+        self.stoch_oversold = self.config.get('stoch_oversold', 25)  # Más alto
+        self.cci_threshold = self.config.get('cci_threshold', 80)  # Más bajo
+        self.volume_ratio_min = self.config.get('volume_ratio_min', 0.3)  # MUY PERMISIVO - permite más entradas
+        self.liquidity_score_min = self.config.get('liquidity_score_min', 5)  # BAJADO - más permisivo con nueva fórmula
 
-        # Cargar parámetros específicos del símbolo desde configuración centralizada
-        self._load_symbol_specific_params(config)
+        # NUEVOS PARÁMETROS OPTIMIZADOS (agregados después de optimización)
+        # Valores optimizados basados en backtesting Optuna (BTC/USDT como referencia)
+        if 'BTC' in self.symbol:
+            # Parámetros optimizados para BTC/USDT
+            self.volume_threshold = self.config.get('volume_threshold', 1.3)
+            self.atr_multiplier = self.config.get('atr_multiplier', 3.4)
+            self.stop_loss_pct = self.config.get('stop_loss_pct', 0.09)
+            self.take_profit_pct = self.config.get('take_profit_pct', 0.19)
+            self.rsi_overbought = self.config.get('rsi_overbought', 70)
+            self.rsi_oversold = self.config.get('rsi_oversold', 30)
+            self.stoch_overbought = self.config.get('stoch_overbought', 85)
+            self.stoch_oversold = self.config.get('stoch_oversold', 25)
+        elif 'TSLA' in self.symbol:
+            # Parámetros optimizados para TSLA/US
+            self.volume_threshold = self.config.get('volume_threshold', 1.7)
+            self.atr_multiplier = self.config.get('atr_multiplier', 2.0)
+            self.stop_loss_pct = self.config.get('stop_loss_pct', 0.09)
+            self.take_profit_pct = self.config.get('take_profit_pct', 0.15)
+            self.rsi_overbought = self.config.get('rsi_overbought', 65)
+            self.rsi_oversold = self.config.get('rsi_oversold', 30)
+            self.stoch_overbought = self.config.get('stoch_overbought', 75)
+            self.stoch_oversold = self.config.get('stoch_oversold', 15)
+        else:
+            # Valores por defecto basados en BTC/USDT (mejor score)
+            self.volume_threshold = self.config.get('volume_threshold', 1.3)
+            self.atr_multiplier = self.config.get('atr_multiplier', 3.4)
+            self.stop_loss_pct = self.config.get('stop_loss_pct', 0.09)
+            self.take_profit_pct = self.config.get('take_profit_pct', 0.19)
+            self.rsi_overbought = self.config.get('rsi_overbought', 70)
+            self.rsi_oversold = self.config.get('rsi_oversold', 30)
 
         # Gestión de riesgo avanzada OPTIMIZADA
         self.max_drawdown = self.config.get('max_drawdown', 0.05)
@@ -503,64 +494,13 @@ class UltraDetailedHeikinAshiMLStrategy:
         self.current_drawdown = 0.0
 
         # Inicializar gestor de modelos ML
-        self.ml_manager = MLModelManager(config=self.config)
+        self.ml_manager = MLModelManager()
 
-    def _load_symbol_specific_params(self, config):
+    def load_model(self, symbol: str, model_name: str = 'random_forest'):
         """
-        Carga parámetros específicos del símbolo desde configuración centralizada.
-        Esto elimina la necesidad de modificar la estrategia para cada símbolo.
+        Cargar modelo ML entrenado desde el gestor de modelos
         """
-        # Valores por defecto universales
-        default_params = {
-            'volume_threshold': 1.3,
-            'atr_multiplier': 3.4,
-            'stop_loss_pct': 0.09,
-            'take_profit_pct': 0.19,
-            'rsi_overbought': 70,
-            'rsi_oversold': 30,
-            'stoch_overbought': 85,
-            'stoch_oversold': 35,
-            'atr_period': 14,
-            'atr_volatility_threshold': 2.0,
-            'ema_trend_period': 50,
-            'max_consecutive_losses': 3,
-            'min_trend_strength': 0.5,
-            'sar_acceleration': 0.06,
-            'sar_maximum': 0.11,
-            'stop_loss_atr_multiplier': 3.25,
-            'take_profit_atr_multiplier': 5.5,
-            'trailing_stop_atr_multiplier': 1.5,
-            'volatility_filter_threshold': 0.03,
-            'volume_sma_period': 20,
-            'volume_threshold': 1000
-        }
-
-        # Intentar cargar parámetros específicos del símbolo desde configuración
-        symbol_params = {}
-        if config and hasattr(config, 'backtesting'):
-            # Es un objeto Config - buscar en optimized_parameters
-            backtesting_config = config.backtesting
-            if hasattr(backtesting_config, 'optimized_parameters'):
-                opt_params = backtesting_config.optimized_parameters
-                # La configuración actual tiene estructura: SOL/USDT -> 4h -> params
-                symbol_key = self.symbol.replace('/', '_').replace('.', '_')
-                if hasattr(opt_params, symbol_key):
-                    symbol_section = getattr(opt_params, symbol_key)
-                    if hasattr(symbol_section, self.timeframe):
-                        timeframe_section = getattr(symbol_section, self.timeframe)
-                        # Convertir a diccionario
-                        if hasattr(timeframe_section, '__dict__'):
-                            symbol_params = timeframe_section.__dict__
-                        elif hasattr(timeframe_section, 'items'):
-                            symbol_params = dict(timeframe_section)
-
-        # Aplicar parámetros específicos del símbolo o valores por defecto
-        for param_name, default_value in default_params.items():
-            # Primero intentar desde config directa, luego parámetros específicos del símbolo, luego default
-            value = self.config.get(param_name, symbol_params.get(param_name, default_value))
-            setattr(self, param_name, value)
-
-        print(f"📊 Parámetros cargados para {self.symbol}: atr_period={self.atr_period}, stop_loss_atr={self.stop_loss_atr_multiplier}, take_profit_atr={self.take_profit_atr_multiplier}")
+        return self.ml_manager.load_model(symbol, model_name)
 
     def run(self, data: pd.DataFrame, symbol: str, timeframe: str = '4h') -> Dict:
         """
@@ -593,28 +533,18 @@ class UltraDetailedHeikinAshiMLStrategy:
             data_processed = self._prepare_data(data.copy())
             print(f"Datos preparados: {len(data_processed)} filas con indicadores técnicos completos")
 
-            # FORZAR uso de modelos existentes durante optimización (NO re-entrenar)
-            # Durante optimización Optuna, los modelos ya deben estar entrenados
-            optimization_mode = getattr(self, '_optimization_mode', False)
+            # FORZAR uso de modelos existentes (NO re-entrenar en cada ejecución)
+            model, scaler = self.load_model(symbol, 'random_forest')
+            print(f"[DEBUG] load_model returned: model={model is not None}, scaler={scaler is not None}")
+            model_exists = model is not None
+            should_retrain = not model_exists  # Solo entrenar si NO existe el modelo
 
-            if optimization_mode:
-                # MODO OPTIMIZACIÓN: Asumir que modelos ya están entrenados
-                print(f"🎯 MODO OPTIMIZACIÓN: Usando modelos ML pre-entrenados para {symbol}")
-                model_exists = self.ml_manager.load_model(symbol, 'random_forest')[0] is not None
-                if not model_exists:
-                    raise ValueError(f"Modelos ML no encontrados para {symbol} en modo optimización. "
-                                   f"Ejecutar entrenamiento primero.")
+            if should_retrain:
+                print(f"⚠️  Modelos ML no encontrados. Entrenando con {len(data_processed)} muestras...")
+                self.ml_manager.train_models(data_processed, symbol)
+                print("✅ Modelos ML entrenados y guardados")
             else:
-                # MODO NORMAL: Verificar y entrenar si es necesario
-                model_exists = self.ml_manager.load_model(symbol, 'random_forest')[0] is not None
-                should_retrain = not model_exists
-
-                if should_retrain:
-                    print(f"⚠️  Modelos ML no encontrados. Entrenando con {len(data_processed)} muestras...")
-                    self.ml_manager.train_models(data_processed, symbol)
-                    print("✅ Modelos ML entrenados y guardados")
-                else:
-                    print(f"✅ Usando modelos ML existentes para {symbol} (skip re-training)")
+                print(f"✅ Usando modelos ML existentes para {symbol} (skip re-training)")
 
             # CACHEAR predicciones ML usando modelo entrenado REAL
             print(f"Generando predicciones ML reales para {len(data_processed)} velas...")
@@ -636,6 +566,7 @@ class UltraDetailedHeikinAshiMLStrategy:
 
         except Exception as e:
             print(f"[ERROR] Error en UltraDetailedHeikinAshiStrategy REAL ML: {e}")
+            print(f"[ERROR] Tipo de error: {type(e).__name__}")
             import traceback
             traceback.print_exc()
             return self._get_empty_results(symbol)
@@ -649,31 +580,49 @@ class UltraDetailedHeikinAshiMLStrategy:
         if missing_cols:
             raise ValueError(f"Columnas requeridas faltantes: {missing_cols}")
 
-        print(f"[CALC] Calculando indicadores técnicos para {len(data)} velas...")
-        
-        # 🎯 USAR MÉTODO CENTRALIZADO PARA CONSISTENCIA CON ML
-        # Esto garantiza que _prepare_data y prepare_features usen EXACTAMENTE los mismos indicadores
-        from indicators.technical_indicators import TechnicalIndicators
-        indicators = TechnicalIndicators()
-        data = indicators.calculate_all_indicators_unified(data)
-        
-        # ⚠️ CÓDIGO MANUAL ELIMINADO PARA EVITAR INCONSISTENCIAS ⚠️
-        # El siguiente código calculaba indicadores manualmente con TA-Lib,
-        # causando inconsistencias con el entrenamiento ML que usa TechnicalIndicators centralizada
-        
-        # 1. Heikin Ashi - AHORA CALCULADO POR calculate_all_indicators_unified
-        # data = self._calculate_heikin_ashi(data)
+            print(f"[CALC] Calculando indicadores técnicos para {len(data)} velas...")        # 1. Heikin Ashi - CORRECTAMENTE calculado
+        data = self._calculate_heikin_ashi(data)
 
-        # 2. Indicadores técnicos principales - AHORA CALCULADOS CENTRALIZADAMENTE
-        # try:
-        #     # Stochastic Oscillator
-        #     data['stoch_k'], data['stoch_d'] = talib.STOCH(
-        #         data['high'], data['low'], data['close'],
-        #         fastk_period=14, slowk_period=3, slowd_period=3
-        #     )
-        #     # ... resto de indicadores manuales eliminados
-        # except Exception as e:
-        #     raise ValueError(f"Error calculando indicadores técnicos: {e}")
+        # 2. Indicadores técnicos principales - VERIFICADOS con TA-Lib
+        try:
+            # Stochastic Oscillator
+            data['stoch_k'], data['stoch_d'] = talib.STOCH(
+                data['high'], data['low'], data['close'],
+                fastk_period=14, slowk_period=3, slowd_period=3
+            )
+
+            # CCI (Commodity Channel Index)
+            data['cci'] = talib.CCI(data['high'], data['low'], data['close'], timeperiod=14)
+
+            # RSI
+            data['rsi'] = talib.RSI(data['close'], timeperiod=14)
+
+            # MACD
+            data['macd'], data['macd_signal'], data['macd_hist'] = talib.MACD(
+                data['close'], fastperiod=12, slowperiod=26, signalperiod=9
+            )
+
+            # ATR para gestión de riesgo REAL
+            data['atr'] = talib.ATR(data['high'], data['low'], data['close'], timeperiod=14)
+
+            # Volumen ratio - indicador de liquidez real
+            data['volume_sma'] = talib.SMA(data['volume'], timeperiod=20)
+            data['volume_ratio'] = data['volume'] / data['volume_sma']
+
+            # Momentum adicional
+            data['roc'] = talib.ROC(data['close'], timeperiod=10)
+            data['willr'] = talib.WILLR(data['high'], data['low'], data['close'], timeperiod=14)
+
+            # Bollinger Bands para volatilidad
+            data['bb_upper'], data['bb_middle'], data['bb_lower'] = talib.BBANDS(
+                data['close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0
+            )
+            data['bb_width'] = (data['bb_upper'] - data['bb_lower']) / data['bb_middle']
+
+            print("Todos los indicadores técnicos calculados correctamente con TA-Lib")
+
+        except Exception as e:
+            raise ValueError(f"Error calculando indicadores técnicos: {e}")
 
         # 3. VALIDAR que no hay NaN críticos (más tolerante)
         critical_indicators = ['ha_close', 'stoch_k', 'cci', 'rsi', 'macd', 'atr']
@@ -698,14 +647,30 @@ class UltraDetailedHeikinAshiMLStrategy:
         return data
 
     def _calculate_heikin_ashi(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calcular velas Heikin Ashi usando el módulo centralizado."""
-        from indicators.technical_indicators import TechnicalIndicators
+        """Calcular velas Heikin Ashi"""
 
-        indicators = TechnicalIndicators()
-        heikin_ashi_data = indicators.calculate_heikin_ashi(data)
+        # Heikin Ashi calculation
+        ha_close = (data['open'] + data['high'] + data['low'] + data['close']) / 4
 
-        # Agregar columnas calculadas al DataFrame original
-        data = pd.concat([data, heikin_ashi_data], axis=1)
+        ha_open = pd.Series(index=data.index, dtype=float)
+        ha_open.iloc[0] = (data['open'].iloc[0] + data['close'].iloc[0]) / 2
+
+        for i in range(1, len(data)):
+            ha_open.iloc[i] = (ha_open.iloc[i-1] + ha_close.iloc[i-1]) / 2
+
+        ha_high = pd.concat([ha_open, ha_close, data['high']], axis=1).max(axis=1)
+        ha_low = pd.concat([ha_open, ha_close, data['low']], axis=1).min(axis=1)
+
+        # Agregar al DataFrame
+        data['ha_open'] = ha_open
+        data['ha_high'] = ha_high
+        data['ha_low'] = ha_low
+        data['ha_close'] = ha_close
+
+        # Color change (señal principal)
+        data['ha_color_change'] = (data['ha_close'] > data['ha_open']).astype(int).diff().fillna(0)
+        data['ha_bullish'] = (data['ha_close'] > data['ha_open']).astype(int)
+        data['ha_bearish'] = (data['ha_close'] < data['ha_open']).astype(int)
 
         return data
 
@@ -725,43 +690,48 @@ class UltraDetailedHeikinAshiMLStrategy:
         for i in range(1, len(data)):
             # CONFIRMAR ML confidence (umbral más bajo para testing)
             ml_conf = ml_confidence.iloc[i]
-            if ml_conf < 0.5: # REDUCIDO AÚN MÁS para asegurar señales
+            if ml_conf < 0.5:  # REDUCIDO AÚN MÁS para asegurar señales
                 continue
 
             # FILTROS TÉCNICOS MÁS RELAJADOS para testing
             ha_change_long = data['ha_color_change'].iloc[i] == 1
             ha_change_short = data['ha_color_change'].iloc[i] == -1
 
-            # RSI: Rango amplio
+            # RSI: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
             rsi = data['rsi'].iloc[i]
-            rsi_ok = 20 < rsi < 80  # AÚN MÁS AMPLIO
+            rsi_ok_long = 10 < rsi < 90  # MUY PERMISIVO PARA LONG - BALANCE
+            rsi_ok_short = 25 < rsi < 75  # MANTENER PARA SHORT
 
-            # Stochastic: Solo evitar extremos absolutos
+            # Stochastic: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
             stoch_k = data['stoch_k'].iloc[i]
-            stoch_ok = 10 < stoch_k < 90  # AÚN MENOS RESTRICTIVO
+            stoch_ok_long = 2 < stoch_k < 98  # EXTREMADAMENTE PERMISIVO PARA LONG
+            stoch_ok_short = 15 < stoch_k < 85  # MANTENER PARA SHORT
 
-            # Volumen: Mínimo requerimiento
-            volume_ok = data['volume_ratio'].iloc[i] > 0.8  # REDUCIDO AÚN MÁS
+            # Volumen: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
+            volume_ok_long = data['volume_ratio'].iloc[i] > 0.2  # MUY PERMISIVO PARA LONG
+            volume_ok_short = data['volume_ratio'].iloc[i] > 0.6  # MENOS ESTRICTO PARA SHORT
 
-            # ATR: Rango amplio
+            # ATR: MUY PERMISIVO PARA LONG - BALANCE LONG/SHORT
             atr = data['atr'].iloc[i]
             atr_pct = atr / data['close'].iloc[i]
-            volatility_ok = atr_pct > 0.001  # SOLO EVITAR VOLATILIDAD MUY BAJA
+            volatility_ok_long = atr_pct > 0.0002  # MUY PERMISIVO PARA LONG
+            volatility_ok_short = atr_pct > 0.0008  # MENOS ESTRICTO PARA SHORT
 
-            # DEBUG: Contar condiciones cumplidas
-            conditions_met = sum([ha_change_long or ha_change_short, rsi_ok, stoch_ok, volume_ok, volatility_ok])
+            # DEBUG: Contar condiciones cumplidas (DIFERENTE PARA LONG/SHORT)
+            conditions_met_long = sum([ha_change_long, rsi_ok_long, stoch_ok_long, volume_ok_long, volatility_ok_long])
+            conditions_met_short = sum([ha_change_short, rsi_ok_short, stoch_ok_short, volume_ok_short, volatility_ok_short])
 
-            # SEÑAL LONG: ML + HA + al menos 3 condiciones técnicas
-            if ha_change_long and conditions_met >= 3:
+            # SEÑAL LONG: ML + HA + al menos 1 condición técnica (MUY PERMISIVO PARA BALANCE)
+            if ha_change_long and conditions_met_long >= 1:
                 signals.iloc[i] = 1  # Long
                 long_signals += 1
 
-            # SEÑAL SHORT: ML + HA + al menos 3 condiciones técnicas
-            elif ha_change_short and conditions_met >= 3:
+            # SEÑAL SHORT: ML + HA + al menos 2 condiciones técnicas (MENOS ESTRICTO)
+            elif ha_change_short and conditions_met_short >= 2:
                 signals.iloc[i] = -1  # Short
                 short_signals += 1
 
-        print(f"Señales ML de ALTA PROBABILIDAD: {long_signals} LONG, {short_signals} SHORT")
+        print(f"Señales ML de ALTA PROBABILIDAD (LONG muy permisivo para balance): {long_signals} LONG, {short_signals} SHORT")
         print(f"Confianza ML promedio en señales: {ml_confidence[signals != 0].mean():.3f}")
 
         return signals
@@ -820,7 +790,14 @@ class UltraDetailedHeikinAshiMLStrategy:
                 continue
 
             # GESTIÓN DE RIESGO REAL: Calcular position size basado en ATR
-            if position == 0 and signals.iloc[i] != 0:
+            if signals.iloc[i] != 0:
+                # Verificar límite de posiciones concurrentes
+                active_trades_count = len([t for t in self.active_trades if t['status'] == 'open'])
+                if active_trades_count >= max_concurrent_trades:
+                    if i < 50:  # Solo log primeras 50 para no saturar
+                        logger.debug(f"[DEBUG] Saltando i={i} - Max concurrent trades alcanzado: {active_trades_count} >= {max_concurrent_trades}")
+                    continue
+
                 # DEBUG: Primera señal válida
                 if len(trades) == 0:
                     logger.info(f"[SIGNAL] Primera señal válida en i={i}: signal={signals.iloc[i]}, price={current_price}, atr={atr}")
@@ -887,100 +864,98 @@ class UltraDetailedHeikinAshiMLStrategy:
                 print(f"[TRADE] Trade abierto en i={i}: {direction} {position_size:.4f} @ {entry_price:.2f}")
 
             # Gestionar posiciones abiertas con TRAILING STOP 50%
-            elif position != 0:
+            # Procesar cada trade activo individualmente
+            current_drawdown = (peak_value - capital) / peak_value if peak_value > 0 else 0
+
+            for trade_idx, trade in enumerate(self.active_trades):
+                if trade['status'] != 'open':
+                    continue
+
+                trade_entry_price = trade['entry_price']
+                trade_stop_loss = trade['stop_loss']
+                trade_take_profit = trade['take_profit']
+                trade_position = 1 if trade['direction'] == 'long' else -1  # Normalizar posición
+                trade_entry_index = None  # TODO: Agregar tracking de índice de entrada por trade
+
                 # TRAILING STOP DEL 50% - Stop loss se mueve al 50% del profit alcanzado
-                unrealized_pnl = (current_price - entry_price) * position
+                unrealized_pnl = (current_price - trade_entry_price) * trade_position
                 if unrealized_pnl > 0:  # En ganancia
                     # Calcular profit actual en términos de precio
-                    profit_amount = abs(current_price - entry_price)  # Profit en precio
+                    profit_amount = abs(current_price - trade_entry_price)  # Profit en precio
                     new_stop_distance = profit_amount * 0.5  # 50% del profit
 
-                    if position > 0:  # Posición larga
-                        new_stop = entry_price + new_stop_distance
+                    if trade_position > 0:  # Posición larga
+                        new_stop = trade_entry_price + new_stop_distance
                         # Solo mover stop loss si es mejor que el actual (más alto)
-                        if new_stop > stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                        if new_stop > trade_stop_loss:
+                            trade['stop_loss'] = new_stop
+                            print(f"Trailing stop 50% ajustado: {new_stop:.6f} (profit: {profit_amount:.6f})")
                     else:  # Posición corta
-                        new_stop = entry_price - new_stop_distance
+                        new_stop = trade_entry_price - new_stop_distance
                         # Solo mover stop loss si es mejor que el actual (más bajo)
-                        if new_stop < stop_loss_price:
-                            stop_loss_price = new_stop
-                            print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
+                        if new_stop < trade_stop_loss:
+                            trade['stop_loss'] = new_stop
+                            print(f"Trailing stop 50% ajustado: {new_stop:.6f} (profit: {profit_amount:.6f})")
 
-                # ⚠️ CÓDIGO DUPLICADO ELIMINADO ⚠️
-                # El siguiente bloque estaba completamente repetido y no tenía efecto adicional
-                # if position > 0:  # Posición larga
-                #     new_stop = entry_price + new_stop_distance
-                #     # Solo mover stop loss si es mejor que el actual (más alto)
-                #     if new_stop > stop_loss_price:
-                #         stop_loss_price = new_stop
-                #         print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
-                # else:  # Posición corta
-                #     new_stop = entry_price - new_stop_distance
-                #     # Solo mover stop loss si es mejor que el actual (más bajo)
-                #     if new_stop < stop_loss_price:
-                #         stop_loss_price = new_stop
-                #         print(f"Trailing stop 50% ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
-
-                # Check condiciones de salida REALES
+                # Check condiciones de salida REALES para este trade
                 exit_reason = None
+                exit_price = None
 
                 # 1. SEÑAL CONTRARIA (reversión de Heikin Ashi)
-                if signals.iloc[i] == -position:
+                if signals.iloc[i] == -trade_position:
                     exit_price = current_price
                     exit_reason = 'signal_reversal'
 
                 # 2. TAKE PROFIT alcanzado
-                elif (position > 0 and current_price >= take_profit_price) or (position < 0 and current_price <= take_profit_price):
-                    exit_price = take_profit_price
+                elif (trade_position > 0 and current_price >= trade_take_profit) or (trade_position < 0 and current_price <= trade_take_profit):
+                    exit_price = trade_take_profit
                     exit_reason = 'take_profit'
 
                 # 3. STOP LOSS alcanzado
-                elif (position > 0 and current_price <= stop_loss_price) or (position < 0 and current_price >= stop_loss_price):
-                    exit_price = stop_loss_price
+                elif (trade_position > 0 and current_price <= trade['stop_loss']) or (trade_position < 0 and current_price >= trade['stop_loss']):
+                    exit_price = trade['stop_loss']
                     exit_reason = 'stop_loss'
 
                 # 4. TIME EXIT: Máximo 80 velas (4h * 80 = ~13 días) en posición (evitar stagnation)
-                elif entry_index is not None and (i - entry_index) > 80:
-                    exit_price = current_price
-                    exit_reason = 'time_exit'
+                # TODO: Implementar time exit por trade individual
+                # elif trade_entry_index is not None and (i - trade_entry_index) > 80:
+                #     exit_price = current_price
+                #     exit_reason = 'time_exit'
 
-                else:
-                    continue  # Mantener posición abierta
+                if exit_reason:
+                    # EJECUTAR SALIDA para este trade
+                    pnl = (exit_price - trade_entry_price) * (trade['position_size'] * trade_position)
 
-                # EJECUTAR SALIDA
-                pnl = (exit_price - entry_price) * position                # DEBUG: Primer trade cerrado
-                if len([t for t in self.active_trades if t['status'] == 'closed']) == 0:
-                    print(f"Primer trade cerrado:")
-                    print(f"   Entry: {entry_price:.6f} @ {entry_time}")
-                    print(f"   Exit: {exit_price:.6f} @ {current_time}")
-                    print(f"   Position: {position:.2f}")
-                    print(f"   P&L: ${pnl:.2f} ({exit_reason})")
+                    # DEBUG: Primer trade cerrado
+                    closed_trades = [t for t in self.active_trades if t['status'] == 'closed']
+                    if len(closed_trades) == 0:
+                        print(f"Primer trade cerrado:")
+                        print(f"   Entry: {trade_entry_price:.6f} @ {trade['entry_time']}")
+                        print(f"   Exit: {exit_price:.6f} @ {current_time}")
+                        print(f"   Position: {trade['position_size'] * trade_position:.2f}")
+                        print(f"   P&L: ${pnl:.2f} ({exit_reason})")
 
-                # Actualizar trade
-                for trade in self.active_trades:
-                    if trade['status'] == 'open':
-                        trade.update({
-                            'exit_time': current_time,
-                            'exit_price': exit_price,
-                            'pnl': pnl,
-                            'status': 'closed',
-                            'exit_reason': exit_reason
-                        })
-                        # Agregar trade cerrado a la lista de resultados
-                        trades.append(trade.copy())
-                        break
+                    # Actualizar trade con información de salida
+                    trade.update({
+                        'exit_time': current_time,
+                        'exit_price': exit_price,
+                        'pnl': pnl,
+                        'exit_reason': exit_reason,
+                        'status': 'closed'
+                    })
 
-                # Actualizar capital
-                capital += pnl
-                position = 0
-                entry_price = 0
+                    # Agregar a lista de trades completados
+                    trades.append(trade.copy())
 
-                # Actualizar drawdown
-                peak_value = max(peak_value, capital)
-                current_drawdown = (peak_value - capital) / peak_value
-                max_drawdown = max(max_drawdown, current_drawdown)
+                    # Actualizar capital
+                    capital += pnl
+
+                    # Actualizar drawdown
+                    if capital > peak_value:
+                        peak_value = capital
+                    current_drawdown = (peak_value - capital) / peak_value
+                    if current_drawdown > max_drawdown:
+                        max_drawdown = current_drawdown
 
                 # Check max drawdown
                 if current_drawdown > self.max_drawdown:

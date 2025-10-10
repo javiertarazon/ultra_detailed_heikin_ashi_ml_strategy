@@ -6,9 +6,76 @@ import random
 import asyncio
 from functools import wraps
 from typing import Callable, Any, Optional, Type, Union, List, Dict
-from utils.logger import get_logger
+import logging
 
-logger = get_logger("__name__")
+# Configurar logger
+logger = logging.getLogger(__name__)
+
+def retry_operation(retries=3, delay=1, backoff=2, exceptions=(Exception,)):
+    """
+    Decorador que reintenta una función si falla con excepciones específicas.
+    
+    Args:
+        retries: Número máximo de reintentos
+        delay: Tiempo inicial de espera entre reintentos (segundos)
+        backoff: Factor multiplicativo para el tiempo de espera entre reintentos
+        exceptions: Tupla de excepciones que activarán un reintento
+        
+    Returns:
+        El decorador configurado
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retry_count = 0
+            current_delay = delay
+            
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    retry_count += 1
+                    if retry_count > retries:
+                        logger.error(f"Máximo de reintentos alcanzado ({retries}). Último error: {str(e)}")
+                        raise
+                        
+                    logger.warning(f"Reintento {retry_count}/{retries} después de error: {str(e)}")
+                    logger.warning(f"Esperando {current_delay} segundos...")
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+        
+        return wrapper
+    return decorator
+
+class RetryError(Exception):
+    """Error cuando se agotan los reintentos."""
+    pass
+
+class RetryManager:
+    """
+    Gestiona reintentos de operaciones con backoff exponencial.
+    
+    Características:
+    - Backoff exponencial con jitter
+    - Manejo específico por tipo de error
+    - Logging detallado de reintentos
+    - Límites configurables
+    """
+    
+    def __init__(
+        self,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        exponential_base: float = 2,
+        jitter: bool = True
+    ):
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.exponential_base = exponential_base
+        self.jitter = jitter
+        self.logger = logging.getLogger(__name__)
         
         # Errores específicos y sus estrategias
         self.error_handlers = {

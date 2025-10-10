@@ -8,9 +8,64 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from utils.logger import get_logger
+import logging
+from typing import Dict, List, Optional, Union, Tuple
+import threading
+from pathlib import Path
+import os
+import asyncio
 
-logger = get_logger("__name__)
+# Intentar cargar variables de entorno desde .env (opcional)
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except ImportError:
+    # Si python-dotenv no está disponible, continuar sin él
+    # Las variables de entorno pueden estar configuradas directamente
+    pass
+
+# Intentar importar CCXT
+try:
+    import ccxt
+    import ccxt.async_support as ccxt_async
+    CCXT_AVAILABLE = True
+except ImportError:
+    CCXT_AVAILABLE = False
+    logging.warning("CCXT no disponible - Se requiere para trading en vivo de cripto")
+
+class CCXTLiveDataProvider:
+    """
+    Proveedor de datos en tiempo real desde exchanges CCXT para trading en vivo de cripto.
+
+    Esta clase se encarga de:
+    1. Conectar con exchanges CCXT y mantener la conexión activa
+    2. Obtener datos OHLCV actualizados para múltiples símbolos y timeframes
+    3. Verificar el estado del mercado (cripto siempre abierto)
+    4. Proporcionar información en tiempo real sobre precios y volumen
+    """
+
+    def __init__(self, config=None, exchange_name='bybit', symbols=None, timeframes=None, history_bars=100):
+        """
+        Inicializa el proveedor de datos en vivo de CCXT.
+
+        Args:
+            config: Configuración desde config.yaml (sección exchanges)
+            exchange_name: Nombre del exchange a usar (bybit, binance, etc.)
+            symbols: Lista de símbolos a procesar (ej: ['BTC/USDT', 'ETH/USDT'])
+            timeframes: Lista de timeframes a procesar (ej: ['1h', '4h'])
+            history_bars: Número de barras históricas a descargar inicialmente
+        """
+        # Cargar configuración si no se proporciona
+        if config is None:
+            from config.config_loader import load_config
+            config = load_config().get('exchanges', {})
+
+        self.config = config
+        self.exchange_name = exchange_name
+        self.symbols = symbols or ['BTC/USDT']
+        self.timeframes = timeframes or ['4h']
+        self.history_bars = history_bars
+        self.logger = logging.getLogger(__name__)
         self.connected = False
         self.connection_lock = threading.Lock()
         self.data_cache = {}  # Cache de datos por símbolo y timeframe
@@ -25,7 +80,7 @@ logger = get_logger("__name__)
         self.async_exchange = None
 
         # Rutas para almacenamiento de datos en vivo
-        self.data_path = Path(os.path.dirname(os.path.abspath(__file__))") / ".." / "data" / "live_data"
+        self.data_path = Path(os.path.dirname(os.path.abspath(__file__))) / ".." / "data" / "live_data"
         self.data_path.mkdir(parents=True, exist_ok=True)
 
         # Inicializar conexión
@@ -40,12 +95,22 @@ logger = get_logger("__name__)
                 self.logger.warning(f"Exchange {self.exchange_name} no está habilitado en configuración")
                 return False
 
+            # Obtener API keys desde variables de entorno o config
+            api_key = os.getenv(f'{self.exchange_name.upper()}_API_KEY') or exchange_config.get('api_key', '')
+            api_secret = os.getenv(f'{self.exchange_name.upper()}_API_SECRET') or exchange_config.get('api_secret', '')
+            
+            # Obtener configuración de sandbox
+            sandbox_mode = os.getenv('SANDBOX_MODE', 'false').lower() == 'true' or exchange_config.get('sandbox', False)
+            
+            self.logger.info(f"Inicializando {self.exchange_name} - Sandbox: {sandbox_mode}")
+            self.logger.info(f"API Key disponible: {'Sí' if api_key else 'No'}")
+
             # Configurar exchange síncrono
             exchange_class = getattr(ccxt, self.exchange_name)
             self.exchange = exchange_class({
-                'apiKey': exchange_config.get('api_key', ''),
-                'secret': exchange_config.get('api_secret', ''),
-                'sandbox': exchange_config.get('sandbox', False),
+                'apiKey': api_key,
+                'secret': api_secret,
+                'sandbox': sandbox_mode,
                 'timeout': exchange_config.get('timeout', 30000),
                 'enableRateLimit': True,
             })
@@ -53,9 +118,9 @@ logger = get_logger("__name__)
             # Configurar exchange asíncrono
             async_exchange_class = getattr(ccxt_async, self.exchange_name)
             self.async_exchange = async_exchange_class({
-                'apiKey': exchange_config.get('api_key', ''),
-                'secret': exchange_config.get('api_secret', ''),
-                'sandbox': exchange_config.get('sandbox', False),
+                'apiKey': api_key,
+                'secret': api_secret,
+                'sandbox': sandbox_mode,
                 'timeout': exchange_config.get('timeout', 30000),
                 'enableRateLimit': True,
             })

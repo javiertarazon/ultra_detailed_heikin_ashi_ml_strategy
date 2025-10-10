@@ -1,17 +1,19 @@
-active_exchange: binance  # 🔥 Binance para mejor conectividad con XRP/USDT
+active_exchange: binance  # 🔥 Binance para mejor conectividad con BNB/USDT
 backtesting:
   commission: 0.1
-  end_date: '2024-12-31'  # 🔥 Período histórico completo para XRP/USDT
+  end_date: '2024-12-31'  # 🔥 Período histórico completo para BNB/USDT
   initial_capital: 500
+
   start_date: '2022-01-01'  # 🔥 Inicio temprano para datos históricos
   timeframe: 4h
+  max_workers: 4  # 🔥 Limitar workers para evitar overuse de CPU
   optimized_parameters: null
   optimization:
     enabled: true
     n_trials: 150
     opt_end: '2025-01-01'
     opt_start: '2023-06-01'
-    study_name: crypto_ml_optimization  # 🔥 Genérico - se adapta al símbolo activo
+    study_name: bnb_ml_optimization
     targets:
       constraints:
         max_drawdown_limit: 0.12
@@ -23,101 +25,14 @@ backtesting:
       - total_trades
       minimize:
       - max_drawdown
-      4h:
-        atr_period: 14
-        atr_volatility_threshold: 2.0
-        ema_trend_period: 50
-        max_consecutive_losses: 3
-        min_trend_strength: 0.5
-        sar_acceleration: 0.02
-        sar_maximum: 0.15
-        stop_loss_atr_multiplier: 2.0
-        take_profit_percent: 3.0
-        trailing_stop_atr_multiplier: 1.5
-        volatility_filter_threshold: 0.03
-        volume_sma_period: 20
-        volume_threshold: 1000
-    DOGE/USDT:
-      4h:
-        atr_period: 19
-        atr_volatility_threshold: 2.0
-        ema_trend_period: 15
-        max_consecutive_losses: 3
-        min_trend_strength: 0.5
-        sar_acceleration: 0.06
-        sar_maximum: 0.11
-        stop_loss_atr_multiplier: 3.25
-        take_profit_atr_multiplier: 5.5
-        trailing_stop_atr_multiplier: 1.5
-        volatility_filter_threshold: 0.03
-        volume_sma_period: 20
-        volume_threshold: 1000
-    SOL/USDT:
-      4h:
-        atr_period: 14
-        atr_volatility_threshold: 2.0
-        ema_trend_period: 50
-        max_consecutive_losses: 3
-        min_trend_strength: 0.5
-        sar_acceleration: 0.02
-        sar_maximum: 0.15
-        stop_loss_atr_multiplier: 2.0
-        take_profit_percent: 3.0
-        trailing_stop_atr_multiplier: 1.5
-        volatility_filter_threshold: 0.03
-        volume_sma_period: 20
-        volume_threshold: 1000
-    SUSHI/USDT:
-      4h:
-        atr_period: 14
-        atr_volatility_threshold: 2.0
-        ema_trend_period: 50
-        max_consecutive_losses: 3
-        min_trend_strength: 0.5
-        sar_acceleration: 0.02
-        sar_maximum: 0.15
-        stop_loss_atr_multiplier: 2.0
-        take_profit_percent: 3.0
-        trailing_stop_atr_multiplier: 1.5
-        volatility_filter_threshold: 0.03
-        volume_sma_period: 20
-        volume_threshold: 1000
-    XRP/USDT:
-      4h:
-        atr_period: 14
-        atr_volatility_threshold: 2.0
-        ema_trend_period: 50
-        max_consecutive_losses: 3
-        min_trend_strength: 0.5
-        sar_acceleration: 0.02
-        sar_maximum: 0.15
-        stop_loss_atr_multiplier: 2.0
-        take_profit_percent: 3.0
-        trailing_stop_atr_multiplier: 1.5
-        volatility_filter_threshold: 0.03
-        volume_sma_period: 20
-        volume_threshold: 1000
   slippage: 0.05
   strategies:
-    DeepAnalysis: false
-    Estrategia_Basica: false
-    Estrategia_Compensacion: false
-    HeikinAshiVolumenSar: false
-    HeikinAshiVolumenSarImproved: false
-    OptimizedStrategy: false
-    Solana4H: false
-    Solana4HSAR: false
-    UltraDetailedHeikinAshi: false
+    # 🎯 ESTRATEGIA ÚNICA ACTIVA - Sistema limpio enfocado en resultados
     UltraDetailedHeikinAshiML: true
-    UltraDetailedHeikinAshiML2: false
   symbols:
-  # === SÍMBOLO ACTIVO - CAMBIAR AQUÍ PARA CAMBIAR DE SÍMBOLO ===
-  # Para cambiar entre símbolos, solo modificar esta línea y los parámetros abajo
-  # - DOGE/USDT  # ❌ Deshabilitado - cambiar aquí para usar DOGE
-  # - SOL/USDT   # ❌ Deshabilitado - cambiar aquí para usar SOL
-  - XRP/USDT    # 🔥 XRP como símbolo principal para ML completo
+  # === SÍMBOLO ACTIVO PARA ENTRENAMIENTO Y BACKTESTING ===
+  - BNB/USDT    # 🔥 BNB como símbolo principal para ML completo
 
-  # === TODOS LOS DEMÁS SÍMBOLOS DESHABILITADOS ===
 compensation_strategy:
   compensation_max_loss: 0.3
   emergency_stop_buffer: 0.98
@@ -128,16 +43,16 @@ compensation_strategy:
   tp_percent: 0.25
 exchanges:
   binance:
-    api_key: ''
-    api_secret: ''
+    api_key: ''  # Configurar en .env (recomendado) o aquí directamente
+    api_secret: ''  # Configurar en .env (recomendado) o aquí directamente
     enabled: true
-    sandbox: false
+    sandbox: true  # 🔥 MODO SANDBOX ACTIVADO - Usar Binance Testnet
     timeout: 30000
   bybit:
     api_key: ''
     api_secret: ''
     enabled: true
-    sandbox: false
+    sandbox: true  # 🔥 MODO SANDBOX ACTIVADO - Usar Bybit Testnet
     timeout: 30000
 indicators:
   adx:
@@ -171,16 +86,6 @@ ml_training:
     random_forest: true
   safe_mode: false
   models:
-    gradient_boosting:
-      learning_rate: 0.1
-      max_depth: 3
-      n_estimators: 100
-      random_state: 42
-    neural_network:
-      eval_metric: logloss
-      learning_rate: 0.1
-      max_depth: 4
-      n_estimators: 100
     random_forest:
       max_depth: 10
       n_estimators: 100
@@ -191,7 +96,7 @@ ml_training:
     n_trials: 100
     opt_end: '2025-01-01'
     opt_start: '2023-06-01'
-    study_name: xrp_usdt_ml_optimization
+    study_name: bnb_ml_optimization
     targets:
       constraints:
         max_drawdown_limit: 0.3
@@ -227,10 +132,10 @@ storage:
   path: data
   sqlite_enabled: true
 strategies:
-  Estrategia_Basica: false
-  UltraDetailedHeikinAshiML2: true
+  # 🎯 ESTRATEGIA ÚNICA ACTIVA - Sistema limpio enfocado en resultados
+  UltraDetailedHeikinAshiML: true
 strategy_params:
-  UltraDetailedHeikinAshiML2:
+  UltraDetailedHeikinAshiML:
     kelly_fraction: 0.5
     max_concurrent_trades: 3
     max_drawdown: 0.07
@@ -238,12 +143,12 @@ strategy_params:
     ml_threshold: 0.5
     stoch_overbought: 85
     stoch_oversold: 15
-    symbol: XRP/USDT
+    symbol: BNB/USDT
     timeframe: 4h
     volume_ratio_min: 1.4
 system:
   auto_launch_dashboard: true
   log_file: logs/bot_trader.log
-  log_level: INFO
+  log_level: DEBUG  # 🔍 Temporal para debugging del live trading
   name: Bot Trader Copilot
   version: 2.6.0

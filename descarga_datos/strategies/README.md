@@ -1,0 +1,1 @@
+# Strategies folder for trading logic. Only 4 strategies are retained.

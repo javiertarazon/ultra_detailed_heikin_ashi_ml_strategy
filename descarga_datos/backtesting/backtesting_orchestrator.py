@@ -26,18 +26,9 @@ from utils.logger import setup_logging, get_logger
 print('[ORCHESTRATOR] Logger utilities importadas')
 
 # Variable global para las estrategias disponibles
+# 🎯 SISTEMA LIMPIO - Solo estrategia exitosa UltraDetailedHeikinAshiML
 STRATEGY_CLASSES = {
-    'Estrategia_Basica': ('strategies.ut_bot_psar', 'UTBotPSARStrategy'),
-    'Estrategia_Compensacion': ('strategies.ut_bot_psar_compensation', 'UTBotPSARCompensationStrategy'),
-    'Solana4H': ('strategies.solana_4h_sar_strategy', 'Solana4HSARStrategy'),
-    'DeepAnalysis': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
-    'HeikinAshiVolumenSar': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
-    'HeikinAshiVolumenSarImproved': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
-    'Solana4HSAR': ('strategies.solana_4h_sar_strategy', 'Solana4HSARStrategy'),
-    'UltraDetailedHeikinAshi': ('strategies.ultra_detailed_heikin_ashi_strategy_backup_20251006', 'UltraDetailedHeikinAshiStrategy'),
-    'OptimizedStrategy': ('strategies.ultra_detailed_heikin_ashi_strategy_backup_20251006', 'UltraDetailedHeikinAshiStrategy'),
     'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
-    'UltraDetailedHeikinAshiML2': ('strategies.ultra_detailed_heikin_ashi_ml2_strategy', 'UltraDetailedHeikinAshiML2Strategy'),
 }
 
 def load_strategies_from_config(config):
@@ -58,19 +49,9 @@ def load_strategies_from_config(config):
         backtesting_config = config.get('backtesting', {})
         strategy_config = backtesting_config.get('strategies', {})
 
-    # Mapeo completo de estrategias disponibles - SISTEMA MODULAR v2.7
+    # 🎯 SISTEMA LIMPIO - Mapeo de estrategia única exitosa
     strategy_classes = {
-        'Estrategia_Basica': ('strategies.ut_bot_psar', 'UTBotPSARStrategy'),
-        'Estrategia_Compensacion': ('strategies.ut_bot_psar_compensation', 'UTBotPSARCompensationStrategy'),
-        'Solana4H': ('strategies.solana_4h_strategy', 'Solana4HStrategy'),
-        'DeepAnalysis': ('strategies.deep_analysis_strategy', 'DeepAnalysisStrategy'),
-        'HeikinAshiVolumenSar': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
-        'HeikinAshiVolumenSarImproved': ('strategies.heikin_ashi_volumen_sar_strategy_improved', 'HeikinAshiVolumenSarStrategyImproved'),
-        'Solana4HSAR': ('strategies.solana_4h_strategy', 'Solana4HStrategy'),
-        'UltraDetailedHeikinAshi': ('strategies.ultra_detailed_heikin_ashi_strategy', 'UltraDetailedHeikinAshiStrategy'),
-        'OptimizedStrategy': ('strategies.optimized_strategy', 'OptimizedStrategy'),
         'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
-        'UltraDetailedHeikinAshiML2': ('strategies.ultra_detailed_heikin_ashi_ml2_strategy', 'UltraDetailedHeikinAshiML2Strategy'),
     }
     
     # Exportamos como variable global para las pruebas

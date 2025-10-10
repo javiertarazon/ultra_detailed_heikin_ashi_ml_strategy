@@ -14,6 +14,8 @@ from typing import Optional, Dict, Any, List, Tuple
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import logging
 import os
 
 from utils.logger import get_logger
@@ -337,6 +339,15 @@ class AdvancedDataDownloader:
             symbol = symbols_to_download[i]
             if isinstance(result, Exception):
                 self.logger.error(f"Error descargando {symbol}: {result}")
+                # Fallback: intentar cargar datos cached si existen
+                cached_fallback = await self.get_data_from_db(symbol, timeframe, start_date, end_date)
+                if cached_fallback is not None and not cached_fallback.empty:
+                    self.logger.warning(f"⚠️ Usando datos cached como fallback para {symbol} ({len(cached_fallback)} velas)")
+                    symbol_data[symbol] = cached_fallback
+                    # Alertar sobre el fallback
+                    self._alert_download_fallback(symbol, timeframe, str(result))
+                else:
+                    self.logger.error(f"❌ No hay datos cached disponibles para {symbol}")
             elif result is not None and not result.empty:
                 symbol_data[symbol] = result
                 self.logger.info(f"✅ {symbol}: {len(result)} velas descargadas")
@@ -1166,9 +1177,28 @@ def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_da
         except Exception as download_error:
             logging.error(f"❌ Error en descarga para {symbol}: {str(download_error)}")
 
-        logging.warning(f"❌ No se pudieron obtener datos para {symbol}")
+        logging.warning(f"⚠️ No hay datos suficientes en caché para {symbol}, intentando descarga...")
         return None
 
     except Exception as e:
         logging.error(f"❌ Error en download_and_cache_data para {symbol}: {str(e)}")
         return None
+
+
+def _alert_download_fallback(self, symbol: str, timeframe: str, error_msg: str):
+    """
+    Alerta sobre uso de datos cached como fallback debido a errores de descarga.
+
+    Args:
+        symbol: Símbolo que falló
+        timeframe: Timeframe solicitado
+        error_msg: Mensaje de error original
+    """
+    from utils.monitoring import DownloadMonitor
+
+    monitor = DownloadMonitor()
+    monitor.alert_download_issue(symbol, timeframe, f"Fallback a datos cached: {error_msg}")
+
+    # Log detallado
+    self.logger.warning(f"🚨 ALERTA: {symbol} ({timeframe}) usando datos cached debido a: {error_msg}")
+    self.logger.warning(f"   Recomendación: Verificar conectividad de red o límites de API")

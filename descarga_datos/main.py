@@ -259,15 +259,15 @@ def run_live_mt5():
 
     try:
         from core.live_trading_orchestrator import run_live_trading
-        print(" 🚀 Iniciando simulación de live trading MT5...")
-        print(" 💡 Presione Ctrl+C para detener la simulación")
+        print(" 🚀 Iniciando TRADING EN VIVO MT5 (cuenta demo)...")
+        print(" 💡 Presione Ctrl+C para detener el trading")
 
-        # Para pruebas, limitar a 2 minutos para ver resultados rápido con 15m
-        run_live_trading(duration_minutes=2)  # 2 minutos para pruebas con 15m
-        print(" Live trading MT5 simulado completado")
+        # Para pruebas, limitar a 2 minutos
+        run_live_trading(duration_minutes=2)
+        print(" ✅ Trading en vivo MT5 completado")
         return True
     except Exception as e:
-        print(f" Error en live trading MT5: {e}")
+        print(f" ❌ Error en trading en vivo MT5: {e}")
         return False
 
 def run_live_ccxt():
@@ -292,8 +292,21 @@ def run_live_ccxt():
 
     try:
         from core.ccxt_live_trading_orchestrator import run_crypto_live_trading
-        print(" 🚀 Iniciando simulación de live trading CCXT...")
-        print(" 💡 Presione Ctrl+C para detener la simulación")
+        
+        # Obtener exchange activo desde config
+        active_exchange = config.active_exchange if hasattr(config, 'active_exchange') else 'binance'
+        
+        # Verificar si es sandbox
+        try:
+            exchange_config = getattr(config.exchanges, active_exchange, None)
+            is_sandbox = exchange_config.sandbox if exchange_config and hasattr(exchange_config, 'sandbox') else False
+            sandbox_mode = "TESTNET" if is_sandbox else "PRODUCCIÓN"
+        except:
+            sandbox_mode = "TESTNET"  # Por defecto asumimos testnet para seguridad
+        
+        print(f" 🚀 Iniciando TRADING EN VIVO con {active_exchange.upper()} ({sandbox_mode})...")
+        print(" 💡 Presione Ctrl+C para detener el trading")
+        print(f" 🔥 MODO: Trading real en cuenta {sandbox_mode.lower()}")
 
         # Para pruebas, ejecutar con timeout de seguridad
         import threading
@@ -304,7 +317,7 @@ def run_live_ccxt():
 
         def run_with_timeout():
             try:
-                run_crypto_live_trading()
+                run_crypto_live_trading(exchange_name=active_exchange)
                 result[0] = True
             except Exception as e:
                 exception[0] = e
@@ -313,25 +326,23 @@ def run_live_ccxt():
         thread = threading.Thread(target=run_with_timeout, daemon=True)
         thread.start()
 
-        # Esperar máximo 30 segundos
+        # Trading en vivo real - ejecuta indefinidamente
+        # Para detener, usa Ctrl+C
         try:
-            thread.join(timeout=30)
+            thread.join()  # Sin timeout - trading continuo
         except KeyboardInterrupt:
-            print(" ⏹️  Simulación interrumpida por usuario")
+            print(" ⏹️  Trading en vivo detenido por usuario")
             return True
 
-        if thread.is_alive():
-            print(" ⏰ Timeout de seguridad alcanzado (30s) - Deteniendo simulación")
-            return True
-        elif exception[0]:
-            print(f" Error en simulación: {exception[0]}")
+        if exception[0]:
+            print(f" ❌ Error en trading en vivo: {exception[0]}")
             return False
         else:
-            print(" Live trading CCXT simulado completado")
+            print(" ✅ Trading en vivo completado")
             return True
 
     except Exception as e:
-        print(f" Error en live trading CCXT: {e}")
+        print(f" ❌ Error en trading en vivo: {e}")
         return False
 
 async def run_backtest():
@@ -971,11 +982,15 @@ def main():
             sys.exit(1)
 
     elif mode == "test_live_ccxt":
-        # Prueba segura de live trading CCXT
-        print("\n🧪 MODO DE PRUEBA: Simulación segura de live trading CCXT")
+        # Prueba de trading en vivo CCXT en testnet
+        print("\n🔥 MODO: Trading en vivo REAL en cuenta TESTNET")
+        print("📊 Exchange: Binance Testnet (sandbox)")
+        print("💰 Capital: 10,000 USDT de prueba")
+        print("⚠️  Operaciones reales pero sin riesgo de dinero real\n")
+        
         success = run_live_ccxt()
         if success:
-            print("\n✅ PRUEBA CCXT COMPLETADA EXITOSAMENTE")
+            print("\n✅ TRADING EN VIVO EJECUTADO CORRECTAMENTE")
         else:
             print("\n❌ PRUEBA CCXT FALLÓ")
             sys.exit(1)

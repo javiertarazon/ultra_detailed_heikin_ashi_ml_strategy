@@ -220,3 +220,57 @@ def initialize_system_logging(config: Optional[Dict[str, Any]] = None) -> None:
 
 # Variable global para calcular duración de ejecución
 _start_time = None
+
+def log_action(action_name: str = None, log_level: str = "info"):
+    """
+    Decorador para logging automático de acciones.
+    
+    Args:
+        action_name: Nombre de la acción (si None, usa el nombre de la función)
+        log_level: Nivel de logging ('debug', 'info', 'warning', 'error')
+    
+    Ejemplo:
+        @log_action("procesando_datos")
+        def process_data(data):
+            return data * 2
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            # Obtener nombre de la acción
+            name = action_name or func.__name__
+            
+            # Crear logger
+            logger = logging.getLogger(func.__module__)
+            
+            # Log de inicio
+            start_msg = f"🚀 Iniciando: {name}"
+            getattr(logger, log_level)(start_msg)
+            
+            start_time = time.time()
+            
+            try:
+                # Ejecutar función
+                result = func(*args, **kwargs)
+                
+                # Calcular duración
+                duration = time.time() - start_time
+                
+                # Log de éxito
+                success_msg = f"✅ Completado: {name} ({duration:.2f}s)"
+                getattr(logger, log_level)(success_msg)
+                
+                return result
+                
+            except Exception as e:
+                # Calcular duración
+                duration = time.time() - start_time
+                
+                # Log de error
+                error_msg = f"❌ Error en {name}: {str(e)} ({duration:.2f}s)"
+                logger.error(error_msg)
+                
+                # Re-lanzar la excepción
+                raise e
+        
+        return wrapper
+    return decorator

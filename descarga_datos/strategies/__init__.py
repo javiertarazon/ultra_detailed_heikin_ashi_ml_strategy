@@ -1,4 +1,5 @@
 # Package for strategies
-from .ultra_detailed_heikin_ashi_strategy_backup_20251006 import UltraDetailedHeikinAshiStrategy
+# 🎯 SISTEMA LIMPIO - Solo estrategia exitosa activa
 from .ultra_detailed_heikin_ashi_ml_strategy import UltraDetailedHeikinAshiMLStrategy
-from .ultra_detailed_heikin_ashi_ml2_strategy import UltraDetailedHeikinAshiML2Strategy
+
+__all__ = ['UltraDetailedHeikinAshiMLStrategy']

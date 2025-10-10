@@ -217,29 +217,54 @@ class CCXTLiveTradingOrchestrator:
         """
         Procesa las señales de trading generadas por las estrategias.
         """
+        logger.debug(f"🔍 Procesando señales de trading...")
+        
         # Obtener datos actuales para cada símbolo
-        for symbol in self.backtesting_config.get('symbols', []):
-            if not self.data_provider.get_market_status(symbol):
+        symbols = self.backtesting_config.get('symbols', [])
+        logger.debug(f"📊 Símbolos configurados: {symbols}")
+        
+        for symbol in symbols:
+            logger.debug(f"📈 Analizando {symbol}...")
+            
+            # Verificar estado del mercado
+            market_status = self.data_provider.get_market_status(symbol)
+            logger.debug(f"🕒 Estado del mercado {symbol}: {market_status}")
+            
+            if not market_status:
+                logger.debug(f"⏸️ Mercado {symbol} cerrado, saltando...")
                 continue  # Mercado cerrado
 
             # Obtener datos históricos recientes
+            logger.debug(f"📥 Obteniendo datos históricos para {symbol}...")
             data = self.data_provider.get_historical_data(symbol, '4h', limit=100)
+            
             if data is None or data.empty:
+                logger.warning(f"⚠️ No hay datos disponibles para {symbol}")
                 continue
+            
+            logger.info(f"✅ Datos obtenidos para {symbol}: {len(data)} barras")
 
             # Aplicar cada estrategia habilitada
+            logger.debug(f"🎯 Estrategias disponibles: {list(self.strategy_classes.keys())}")
+            
             for strategy_name, (module_path, class_name) in self.strategy_classes.items():
                 try:
+                    logger.info(f"🔄 Ejecutando estrategia {strategy_name} para {symbol}...")
+                    
                     # Instanciar estrategia si no existe
                     if strategy_name not in self.strategy_instances:
+                        logger.debug(f"📦 Instanciando estrategia {strategy_name}...")
                         module = __import__(module_path, fromlist=[class_name])
                         strategy_class = getattr(module, class_name)
                         self.strategy_instances[strategy_name] = strategy_class()
+                        logger.debug(f"✅ Estrategia {strategy_name} instanciada")
 
                     strategy = self.strategy_instances[strategy_name]
 
                     # Ejecutar estrategia
+                    logger.debug(f"⚙️ Ejecutando strategy.run() para {symbol}...")
                     result = strategy.run(data, symbol)
+                    logger.info(f"📊 Resultado de {strategy_name}: {result.get('signal', 'NO_SIGNAL') if result else 'NONE'}")
 
                     # Procesar señales
                     self._handle_strategy_signal(strategy_name, symbol, result)

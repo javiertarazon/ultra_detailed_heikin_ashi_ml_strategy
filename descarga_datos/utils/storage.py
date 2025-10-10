@@ -161,41 +161,52 @@ class DataStorage(BaseDataHandler):
                     if any(isinstance(x, (dict, list)) for x in df[col].dropna()):
                         df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
             
-            # Guardar en SQLite
+            # Guardar en SQLite con transacción atómica
             with sqlite3.connect(self.db_path) as conn:
-                # Crear tabla si no existe
-                column_definitions = []
-                for col in df.columns:
-                    if col == 'timestamp':
-                        dtype = 'INTEGER'
-                    elif pd.api.types.is_float_dtype(df[col]):
-                        dtype = 'REAL'
-                    elif pd.api.types.is_integer_dtype(df[col]):
-                        dtype = 'INTEGER'
-                    else:
-                        dtype = 'TEXT'
-                    column_definitions.append(f"{col} {dtype}")
+                # Iniciar transacción
+                conn.execute("BEGIN")
                 
-                create_table_sql = f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    {', '.join(column_definitions)}
-                )
-                """
-                
-                # Crear tabla
-                conn.execute(create_table_sql)
-                
-                # Eliminar datos existentes si hay
                 try:
-                    delete_sql = f"DELETE FROM {table_name}"
-                    conn.execute(delete_sql)
-                except sqlite3.OperationalError:
-                    pass  # La tabla no existe, lo cual está bien
-                
-                # Guardar los datos
-                df.to_sql(table_name, conn, if_exists='append', index=False)
-                
-                return True
+                    # Crear tabla si no existe
+                    column_definitions = []
+                    for col in df.columns:
+                        if col == 'timestamp':
+                            dtype = 'INTEGER'
+                        elif pd.api.types.is_float_dtype(df[col]):
+                            dtype = 'REAL'
+                        elif pd.api.types.is_integer_dtype(df[col]):
+                            dtype = 'INTEGER'
+                        else:
+                            dtype = 'TEXT'
+                        column_definitions.append(f"{col} {dtype}")
+                    
+                    create_table_sql = f"""
+                    CREATE TABLE IF NOT EXISTS {table_name} (
+                        {', '.join(column_definitions)}
+                    )
+                    """
+                    
+                    # Crear tabla
+                    conn.execute(create_table_sql)
+                    
+                    # Eliminar datos existentes si hay
+                    try:
+                        delete_sql = f"DELETE FROM {table_name}"
+                        conn.execute(delete_sql)
+                    except sqlite3.OperationalError:
+                        pass  # La tabla no existe, lo cual está bien
+                    
+                    # Guardar los datos
+                    df.to_sql(table_name, conn, if_exists='append', index=False)
+                    
+                    # Confirmar transacción
+                    conn.commit()
+                    return True
+                    
+                except Exception as e:
+                    # Revertir transacción en caso de error
+                    conn.rollback()
+                    raise e
                 
         except Exception as e:
             logger.error(f"Error guardando datos en SQLite: {e}")
