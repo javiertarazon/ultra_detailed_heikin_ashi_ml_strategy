@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Backtester avanzado para estrategias de trading
@@ -55,6 +54,25 @@ class AdvancedBacktester(Backtester):
         # Parámetros de comisión y slippage (inicializados con valores por defecto)
         self.commission = 0.0005  # 0.05% por defecto para crypto
         self.slippage = 0.0002   # 0.02% por defecto
+
+    def configure(self, config: dict):
+        """
+        Configura los parámetros del backtester desde la configuración central.
+        
+        Args:
+            config: Diccionario con parámetros de configuración
+        """
+        if 'initial_capital' in config:
+            self.initial_capital = float(config['initial_capital'])
+            self.logger.info(f"Capital inicial configurado: ${self.initial_capital}")
+        
+        if 'commission' in config:
+            self.commission = float(config['commission'])
+            self.logger.info(f"Comisión configurada: {self.commission}")
+            
+        if 'slippage' in config:
+            self.slippage = float(config['slippage'])
+            self.logger.info(f"Slippage configurado: {self.slippage}")
 
     def run(self, strategy, data: pd.DataFrame, symbol: str, timeframe: str = '1d') -> Dict:
         """
@@ -467,82 +485,3 @@ class AdvancedBacktester(Backtester):
             'trades': [],
             'compensation_trades_data': []
         }
-
-    def _calculate_compensation_metrics(self, trades: List[Trade], symbol: str) -> Dict:
-        """
-        Calcula métricas específicas del sistema de compensación
-
-        Args:
-            trades: Lista de operaciones principales
-            symbol: Símbolo del activo
-
-        Returns:
-            Diccionario con métricas de compensación
-        """
-        if not self.compensation_enabled or not trades:
-            return self._get_empty_metrics()
-
-        # Simular posiciones en el risk manager para calcular compensaciones
-        losing_trades = [t for t in trades if t.get('pnl', 0) < 0]
-        compensation_metrics = {
-            'compensated_trades': 0,
-            'compensation_success_rate': 0.0,
-            'total_compensation_pnl': 0.0,
-            'avg_compensation_pnl': 0.0,
-            'compensation_ratio': 0.0,
-            'net_compensation_impact': 0.0
-        }
-
-        if not losing_trades:
-            return compensation_metrics
-
-        # Simular compensaciones para trades perdedores
-        total_compensation_pnl = 0.0
-        successful_compensations = 0
-
-        for trade in losing_trades:
-            # Calcular tamaño de compensación (50% del trade original)
-            compensation_size = abs(trade.get('pnl', 0)) * 0.5
-
-            # Determinar resultado de compensación basado en datos reales del mercado
-            # La tendencia del mercado determina el éxito de la compensación
-            # Si el mercado sigue en la dirección favorable, hay mayor probabilidad de éxito
-            
-            # Usar el período posterior al trade para determinar probabilidad de éxito
-            trade_exit_index = trade.get('exit_time', 0)
-            direction = trade.get('direction', 'long')
-            
-            if trade_exit_index + 5 < len(data):  # Verificar que hay datos después del trade
-                future_price_move = data['close'].iloc[trade_exit_index + 5] - data['close'].iloc[trade_exit_index]
-                # Si el mercado se mueve favorable a la dirección original del trade
-                favorable_move = (direction == 'long' and future_price_move > 0) or (direction == 'short' and future_price_move < 0)
-                compensation_success = favorable_move  # Basado en datos reales, no en random
-
-            if compensation_success:
-                # Compensación exitosa recupera parte de la pérdida
-                compensation_pnl = compensation_size * 0.8  # 80% de recuperación
-                successful_compensations += 1
-            else:
-                # Compensación fallida genera pérdida adicional
-                compensation_pnl = -compensation_size * 0.3  # 30% de pérdida adicional
-
-            total_compensation_pnl += compensation_pnl
-
-        # Calcular métricas
-        total_losing_trades = len(losing_trades)
-        compensation_metrics['compensated_trades'] = successful_compensations
-        compensation_metrics['compensation_success_rate'] = (successful_compensations / total_losing_trades) * 100 if total_losing_trades > 0 else 0
-        compensation_metrics['total_compensation_pnl'] = total_compensation_pnl
-        compensation_metrics['avg_compensation_pnl'] = total_compensation_pnl / total_losing_trades if total_losing_trades > 0 else 0
-        compensation_metrics['compensation_ratio'] = (successful_compensations / total_losing_trades) * 100 if total_losing_trades > 0 else 0
-
-        # Calcular impacto neto de compensaciones
-        original_total_pnl = sum(t.get('pnl', 0) for t in trades)
-        net_total_pnl = original_total_pnl + total_compensation_pnl
-        compensation_metrics['net_compensation_impact'] = ((net_total_pnl - original_total_pnl) / abs(original_total_pnl)) * 100 if original_total_pnl != 0 else 0
-
-        self.logger.info(f"[COMPENSATION] {symbol}: {successful_compensations}/{total_losing_trades} trades compensados")
-        self.logger.info(f"[COMPENSATION] {symbol}: P&L compensación: ${total_compensation_pnl:.2f}")
-        self.logger.info(f"[COMPENSATION] {symbol}: Tasa éxito: {compensation_metrics['compensation_success_rate']:.1f}%")
-
-        return compensation_metrics

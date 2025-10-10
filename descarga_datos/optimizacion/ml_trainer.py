@@ -178,8 +178,11 @@ class MLTrainer:
             
             logger.info(f'✅ Datos descargados: {len(df)} velas desde {df.index.min()} hasta {df.index.max()}')
             
-            # VALIDAR que los datos cubren el período requerido
-            if df.index.min() > pd.Timestamp(self.train_start):
+            # VALIDAR que los datos cubren el período requerido (con tolerancia de 1 día)
+            min_date_required = pd.Timestamp(self.train_start).date()
+            min_date_available = df.index.min().date()
+
+            if min_date_available > min_date_required + pd.Timedelta(days=1):
                 logger.error(f'❌ Datos descargados comienzan en {df.index.min()} pero necesitamos desde {self.train_start}')
                 raise ValueError(f'Datos insuficientes: comienzan en {df.index.min()}, necesario desde {self.train_start}')
             

@@ -23,7 +23,11 @@ from utils.logger import get_logger
 from .mt5_downloader import MT5Downloader
 from utils.storage import DataStorage, save_to_csv
 from utils.market_sessions import get_asset_class, expected_candles_for_range, timeframe_to_seconds
-# from utils.normalization import DataNormalizer  # TEMP: Comentado por scipy issue en Python 3.13
+# from utils.normalization import DataNormalizer()  # TEMP: Comentado por scipy issue en Python 3.13
+
+class NoDataAvailableError(Exception):
+    """Excepción lanzada cuando ningún exchange tiene datos disponibles para un símbolo/timeframe"""
+    pass
 
 class AdvancedDataDownloader:
     """
@@ -83,6 +87,19 @@ class AdvancedDataDownloader:
             getattr(ccxt, 'PermissionDenied', Exception)
         )
         return isinstance(e, retryable_types)
+
+    async def _check_symbol_available(self, exchange, exchange_name: str, symbol: str) -> bool:
+        """Verifica si un símbolo está disponible en un exchange antes de intentar descarga"""
+        try:
+            # Cargar mercados si no están cargados
+            if not hasattr(exchange, 'markets') or not exchange.markets:
+                await exchange.loadMarkets()
+            
+            # Verificar si el símbolo existe
+            return symbol in exchange.markets
+        except Exception as e:
+            self.logger.debug(f"No se pudo verificar disponibilidad de {symbol} en {exchange_name}: {e}")
+            return True  # Asumir disponible si no se puede verificar
 
     async def _fetch_crypto_paginated(self, exchange, exchange_name: str, symbol: str, timeframe: str,
                                       start_date: str, end_date: str) -> Optional[pd.DataFrame]:
@@ -493,6 +510,11 @@ class AdvancedDataDownloader:
                     self.logger.error(f"❌ {symbol}: CCXT no configurado, abortando descarga")
                     return None
                 
+                # Si no hay datos disponibles en ningún exchange, no reintentar
+                if isinstance(e, NoDataAvailableError):
+                    self.logger.warning(f"⚠️ {symbol}: No hay datos disponibles en exchanges CCXT, pasando a fallback")
+                    break
+                
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay * (2 ** attempt))
                 else:
@@ -637,32 +659,53 @@ class AdvancedDataDownloader:
           - Construir lista de prioridad (active_exchange primero si existe)
           - Intentar cada exchange hasta obtener dataset válido (>=1 vela)
           - Clasificar errores retryable (403, DDoS, 429, bloqueo geográfico) para intentar fallback
-          - Si todos fallan, relanzar último error
+          - Si todos fallan con dataset vacío, devolver None (no hay datos disponibles)
+          - Si hay error de conexión, relanzar para permitir reintento
         """
         if not self.ccxt_exchanges:
             raise Exception("No hay exchanges CCXT configurados")
 
         priority = self._get_exchange_priority_list()
+        all_empty = True  # Track if all exchanges returned empty datasets
         last_error: Optional[Exception] = None
-        for ex_name in priority:
+
+        for i, ex_name in enumerate(priority):
+            # Agregar delay entre exchanges para evitar rate limits
+            if i > 0:
+                await asyncio.sleep(1)  # 1 segundo entre exchanges
+            
             exchange = self.ccxt_exchanges[ex_name]
+            
+            # Pre-check: verificar si el símbolo está disponible
+            if not await self._check_symbol_available(exchange, ex_name, symbol):
+                self.logger.warning(f"{symbol}: no disponible en {ex_name}, saltando")
+                continue
+            
             try:
                 self.logger.info(f"{symbol}: intentando descarga en {ex_name}")
                 df = await self._fetch_crypto_paginated(exchange, ex_name, symbol, timeframe, start_date, end_date)
                 if df is None or df.empty:
                     self.logger.warning(f"{symbol}: dataset vacío desde {ex_name}, intentando siguiente exchange")
                     continue
+                # Found valid data
+                all_empty = False
                 self.logger.info(f"{symbol}: descarga exitosa en {ex_name} ({len(df)} velas)")
                 return df
             except Exception as e:
                 last_error = e
+                all_empty = False  # There was an actual error, not empty data
                 if self._is_retryable_exchange_error(e):
                     self.logger.warning(f"{symbol}: error retryable en {ex_name} -> fallback ({e})")
                     continue
                 else:
                     self.logger.error(f"{symbol}: error no retryable en {ex_name} -> aborta ({e})")
                     break
-        if last_error:
+
+        # If we get here, either all exchanges returned empty data or there was an error
+        if all_empty:
+            self.logger.warning(f"{symbol}: todos los exchanges devolvieron datasets vacíos - no hay datos disponibles para {timeframe}")
+            raise NoDataAvailableError(f"No hay datos históricos disponibles para {symbol} en timeframe {timeframe}")
+        elif last_error:
             raise last_error
         return None
 

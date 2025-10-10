@@ -1,11 +1,11 @@
 active_exchange: binance  # 🔥 Binance para mejor conectividad con BNB/USDT
 backtesting:
   commission: 0.1
-  end_date: '2024-12-31'  # 🔥 Período histórico completo para BNB/USDT
+  end_date: '2025-10-10'  # 🔥 Período actualizado hasta la fecha actual
   initial_capital: 500
 
-  start_date: '2022-01-01'  # 🔥 Inicio temprano para datos históricos
-  timeframe: 4h
+  start_date: '2025-01-01'  # 🔥 Período actualizado desde enero 2025
+  timeframe: 1h  # 🔥 Temporalidad 1h para análisis detallado
   max_workers: 4  # 🔥 Limitar workers para evitar overuse de CPU
   optimized_parameters: null
   optimization:
@@ -52,7 +52,19 @@ exchanges:
     api_key: ''
     api_secret: ''
     enabled: true
-    sandbox: true  # 🔥 MODO SANDBOX ACTIVADO - Usar Bybit Testnet
+    sandbox: false
+    timeout: 30000
+  kucoin:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: false
+    timeout: 30000
+  okx:
+    api_key: ''
+    api_secret: ''
+    enabled: true
+    sandbox: false
     timeout: 30000
 indicators:
   adx:
@@ -81,8 +93,6 @@ indicators:
     period: 14
 ml_training:
   enabled_models:
-    gradient_boosting: false
-    neural_network: false
     random_forest: true
   safe_mode: false
   models:
@@ -111,16 +121,9 @@ ml_training:
   training:
     min_samples: 500
     train_end: '2023-12-31'
-    train_start: '2022-01-01'
+    train_start: '2022-03-10'
     val_end: '2024-12-31'
     val_start: '2023-01-01'
-mt5:
-  enabled: true
-  login: 61406481
-  password: Jatr280371$
-  server: Pepperstone-Demo
-  terminal_path: ''
-  timeout: 60000
 risk:
   max_drawdown_limit: 30.0
   risk_percent: 2.0
@@ -144,7 +147,7 @@ strategy_params:
     stoch_overbought: 85
     stoch_oversold: 15
     symbol: BNB/USDT
-    timeframe: 4h
+    timeframe: 1h  # 🔥 Temporalidad 1h para análisis detallado
     volume_ratio_min: 1.4
 system:
   auto_launch_dashboard: true

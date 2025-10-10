@@ -503,11 +503,17 @@ def plot_strategy_comparison(results, selected_symbol):
 def main():
     st.title("📈 Dashboard Avanzado de Backtesting - Sistema Modular")
 
+    # Cargar configuración para obtener capital inicial
+    config = load_config()
+    initial_capital = 10000  # valor por defecto
+    if config and 'backtesting' in config:
+        initial_capital = config['backtesting'].get('initial_capital', 10000)
+
     # Cargar datos
     results, global_summary = load_results()
 
     # Generar equity_curve faltante si existen trades pero no equity (post-procesado)
-    def _build_equity_curve(trades, initial_capital=10000):
+    def _build_equity_curve(trades, initial_capital=initial_capital):
         equity = [initial_capital]
         running = initial_capital
         for t in trades:
@@ -886,8 +892,8 @@ def main():
     equity_curve = strategy_data.get('equity_curve', [])
     if not equity_curve and strategy_data.get('trades'):
         # Generar curva de equity sintética si faltaba
-        equity_curve = [10000]
-        running = 10000
+        equity_curve = [initial_capital]
+        running = initial_capital
         for t in strategy_data.get('trades', []):
             running += t.get('pnl', 0)
             equity_curve.append(running)
