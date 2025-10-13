@@ -1,47 +1,47 @@
-# 🤖 Bot Trader Copilot - Sistema Centralizado v2.8 🚀
+# 🤖 Bot Trader Copilot - Sistema Centralizado v3.0 🚀
 
 ## 📋 Descripción General
 
-**Bot Trader Copilot v2.8** es un sistema avanzado de trading automatizado con arquitectura **completamente centralizada** y **correcciones metodológicas críticas**. El sistema combina análisis técnico profesional, machine learning con validación temporal correcta y estrategias de trading cuantitativo para operar con múltiples activos financieros.
+**Bot Trader Copilot v3.0** es un sistema avanzado de trading automatizado con arquitectura **completamente centralizada y optimizada**. El sistema combina análisis técnico profesional, machine learning con validación temporal correcta y estrategias de trading cuantitativo para operar con múltiples activos financieros.
 
-### 🎯 Características Principales v2.8
+### 🎯 Características Principales v3.0
 
 - **� ARQUITECTURA CENTRALIZADA**: `main.py` como único punto de entrada autorizado
 - **🗄️ SQLite-First**: Base de datos como fuente primaria, CSV como fallback
 - **⚙️ Configuración Única**: Control total vía `config.yaml` centralizada
-- **🧠 ML Corregido**: TimeSeriesSplit elimina look-ahead bias completamente
+- **🧠 ML Corregido**: TimeSeriesSplit + indicadores centralizados (sin duplicación)
 - **� Flujos Async**: Sistema completamente asíncrono para máximo rendimiento
-- **📊 Indicadores Centralizados**: TechnicalIndicators unificada (elimina duplicación)
+- **📊 Live Trading Mejorado**: Logging detallado con P&L en tiempo real
 - **🎯 Validación Temporal**: Separación correcta train/validation/test
 - **� Backtesting Metodológicamente Correcto**: Sin sesgos ni contaminación de datos
 - **� Gestión Inteligente de Datos**: Verificación automática SQLite → CSV → Descarga
-- **�️ Sistema Robusto**: Manejo de errores y fallbacks en toda la arquitectura
+- **� Sistema Robusto**: Manejo de errores y fallbacks en toda la arquitectura
 - **🚀 Alto Rendimiento**: Descarga en lotes, procesamiento paralelo optimizado
 - **🔴 TRADING LIVE OPERATIVO**: Sistema probado y funcionando en mercados reales
 
-## 🚨 **VERSIÓN ACTUAL v2.8** - CORRECCIONES CRÍTICAS IMPLEMENTADAS
+## 🚨 **VERSIÓN ACTUAL v3.0** - SISTEMA LIMPIO Y OPTIMIZADO
 
-> **📍 MEJORAS METODOLÓGICAS**: Correcciones críticas en ML y arquitectura  
-> **📅 Actualizada**: 7 de Octubre de 2025  
-> **🎯 Foco Principal**: Sistema centralizado y correcciones ML críticas
+> **📍 NUEVAS MEJORAS v3.0**: Sistema completamente limpiado, estrategia única optimizada, live trading mejorado
+> **📅 Actualizada**: 13 de Octubre de 2025
+> **🎯 Foco Principal**: Sistema enfocado, logging mejorado, rendimiento optimizado
 
-### ✅ **CORRECCIONES CRÍTICAS v2.8:**
-- **🔧 Look-ahead Bias ELIMINADO**: TimeSeriesSplit reemplaza validation estática
-- **📅 Períodos Separados**: Train (2023), Validation (2024-H1), Test (2024-H2+)  
-- **📊 Indicadores Unificados**: TechnicalIndicators centralizada elimina duplicación
-- **🗄️ SQLite Centralizado**: Base de datos como fuente primaria de verdad
-- **🎯 Entrada Única**: Solo `main.py` como punto de acceso autorizado
-- **🔄 Async Completo**: Funciones críticas convertidas a async
+### ✅ **MEJORAS CRÍTICAS v3.0:**
+- **🧹 Limpieza Completa**: Eliminación de modelos antiguos, configuración depurada
+- **🎯 Estrategia Única**: UltraDetailedHeikinAshiML completamente optimizada  
+- **📊 Live Trading Mejorado**: Logging detallado con P&L en tiempo real y resúmenes periódicos
+- **⚡ Sistema Optimizado**: Enfoque en rendimiento y estabilidad
+- **🔄 Arquitectura Consolidada**: Componentes centralizados y sin duplicación
 
-### ✅ **RESULTADOS VALIDADOS v2.8:**
-- **📊 ETH/USDT**: $3,607.94 P&L, 447 trades, 68.53% win rate
-- **💰 SOL/USDT**: $1,403.42 P&L optimizado con pipeline ML
-- **🔄 Sistema Centralizado**: 100% funcional con datos desde SQLite
-- **📈 Dashboard**: Auto-launch en puerto 8520 con métricas reales
+
+### ✅ **RESULTADOS VALIDADOS v3.0:**
+- **📊 BNB/USDT**: Estrategia UltraDetailedHeikinAshiML completamente optimizada
+- **💰 Sistema Limpio**: Modelos antiguos eliminados, configuración depurada
+- **🔄 Live Trading Mejorado**: Logging detallado con P&L en tiempo real
+- **📈 Dashboard Optimizado**: Auto-launch con métricas consolidadas
 
 ---
 
-## 🏗️ Arquitectura Centralizada Completa v2.8
+## 🏗️ Arquitectura Centralizada Completa v3.0
 
 ### 🎯 FLUJO CENTRALIZADO ÚNICO
 
@@ -69,10 +69,10 @@ flowchart TD
     L --> M
 ```
 
-### 📁 Estructura Centralizada v2.8
+### 📁 Estructura Centralizada v3.0
 
 ```
-bot-trader-copilot/                 # 🚀 Sistema Centralizado v2.8
+bot-trader-copilot/                 # 🚀 Sistema Centralizado v3.0
 ├── descarga_datos/                 # 🎯 NÚCLEO CENTRALIZADO
 │   ├── main.py                     # 🎮 ÚNICO PUNTO DE ENTRADA
 │   ├── backtesting/                # 🏗️ Sistema de backtesting
@@ -104,12 +104,12 @@ bot-trader-copilot/                 # 🚀 Sistema Centralizado v2.8
 │   │   ├── csv/                    # 📄 CSV fallback
 │   │   └── dashboard_results/      # 📊 Resultados JSON
 │   └── tests/                      # 🧪 Testing integral
-├── requirements.txt                # 📦 Dependencias Python v2.8
+├── requirements.txt                # 📦 Dependencias Python v3.0
 ├── README.md                       # 📖 Documentación actualizada
 └── .github/                        # 🤖 GitHub + Copilot instrucciones
 ```
 
-### 🎯 PRINCIPIOS ARQUITECTURA v2.8
+### 🎯 PRINCIPIOS ARQUITECTURA v3.0
 
 1. **🎮 ENTRADA ÚNICA**: Solo `main.py` como punto de acceso
 2. **🗄️ SQLITE-FIRST**: Base de datos como fuente de verdad primaria
@@ -119,7 +119,7 @@ bot-trader-copilot/                 # 🚀 Sistema Centralizado v2.8
 6. **📊 INDICADORES ÚNICOS**: TechnicalIndicators centralizada
 7. **🛡️ FALLBACKS INTELIGENTES**: SQLite → CSV → Descarga automática
 
-## � INSTALACIÓN Y USO SISTEMA CENTRALIZADO v2.8
+## � INSTALACIÓN Y USO SISTEMA CENTRALIZADO v3.0
 
 ### ⚡ Instalación Rápida
 
@@ -399,7 +399,7 @@ def ensure_data_availability(config):
     return downloaded
 ```
 
-## �🔴 TRADING LIVE OPERATIVO v2.8
+## �🔴 TRADING LIVE OPERATIVO v3.0
 
 ### ✅ Sistema Probado en Mercados Reales
 
@@ -2531,14 +2531,14 @@ python descarga_datos/run_dashboard.py
 
 ---
 
-## 📚 DOCUMENTACIÓN COMPLETA v2.8
+## 📚 DOCUMENTACIÓN COMPLETA v3.0
 
 ### 📖 **Guías Disponibles**:
 
-- **📋 [README.md](README.md)**: Documentación principal del sistema centralizado v2.8
+- **📋 [README.md](README.md)**: Documentación principal del sistema centralizado v3.0
 - **🤖 [.github/copilot-instructions.md](.github/copilot-instructions.md)**: Instrucciones para AI agents actualizadas
-- **🔄 [MIGRATION_GUIDE_v2.8.md](MIGRATION_GUIDE_v2.8.md)**: Guía completa de migración desde v2.7
-- **🏗️ MODULAR_SYSTEM_README.md**: Arquitectura del sistema (deprecado en v2.8)
+- **🔄 [MIGRATION_GUIDE_v3.0.md](MIGRATION_GUIDE_v3.0.md)**: Guía completa de migración desde v2.8
+- **🏗️ MODULAR_SYSTEM_README.md**: Arquitectura del sistema (deprecado en v3.0)
 - **🤝 CONTRIBUTING.md**: Guía para contribuidores del proyecto
 - **📊 [OPTIMIZATION_RESULTS_ANALYSIS.md](descarga_datos/OPTIMIZATION_RESULTS_ANALYSIS.md)**: ⭐ **NUEVO** - Análisis completo de optimización Optuna (09/10/2025)
 - **⚡ [OPTIMIZATION_QUICK_SUMMARY.md](descarga_datos/OPTIMIZATION_QUICK_SUMMARY.md)**: ⭐ **NUEVO** - Resumen ejecutivo de optimización
@@ -2592,7 +2592,7 @@ python -m pytest tests/ -v                  # Suite completa de tests
 ### ⚙️ **Configuración Centralizada - config.yaml**:
 
 ```yaml
-# config/config.yaml - CONTROL TOTAL DEL SISTEMA v2.8
+# config/config.yaml - CONTROL TOTAL DEL SISTEMA v3.0
 backtesting:
   symbols: ['SOL/USDT', 'ETH/USDT']         # Símbolos a procesar
   timeframe: '4h'                            # Timeframe para análisis
@@ -2616,7 +2616,7 @@ storage:                                   # ARQUITECTURA SQLITE-FIRST
   cache_enabled: true                       # ⚡ Cache habilitado para performance
 ```
 
-### 🔧 **Arquitectura Centralizada v2.8 - Puntos Clave**:
+### 🔧 **Arquitectura Centralizada v3.0 - Puntos Clave**:
 
 1. **🎮 ENTRADA ÚNICA**: Solo `main.py` como punto de acceso autorizado
 2. **�️ SQLite-First**: Base de datos como fuente de verdad primaria
@@ -2626,7 +2626,7 @@ storage:                                   # ARQUITECTURA SQLITE-FIRST
 6. **🔄 Flujos Async**: Sistema completamente asíncrono para máximo rendimiento
 7. **🛡️ Fallbacks Inteligentes**: SQLite → CSV → Descarga automática
 
-### ✅ **Resultados Validados v2.8**:
+### ✅ **Resultados Validados v3.0**:
 - **💰 ETH/USDT**: $3,607.94 P&L, 447 trades, 68.53% win rate
 - **💎 SOL/USDT**: $1,403.42 P&L optimizado con pipeline ML
 - **🔄 Sistema Centralizado**: 100% funcional con datos desde SQLite
@@ -2636,7 +2636,7 @@ storage:                                   # ARQUITECTURA SQLITE-FIRST
 
 ---
 
-*Desarrollado con ❤️ para traders profesionales - Sistema Centralizado v2.8*
+*Desarrollado con ❤️ para traders profesionales - Sistema Centralizado v3.0*
 
 **📅 Creación Original**: Septiembre 2024  
 **🔄 Última Actualización**: 7 de Octubre de 2025  
