@@ -54,6 +54,7 @@ def load_strategies_from_config(config):
     # 🎯 SISTEMA COMPLETO - Mapeo de estrategia principal con ML real
     strategy_classes = {
         'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
+        'HeikinNeuronalMLPruebas': ('strategies.heikin_neuronal_ml_pruebas', 'HeikinNeuronalMLPruebasStrategy'),
         'SimpleTechnical': ('strategies.simple_technical_strategy', 'SimpleTechnicalStrategy'),
     }
     
