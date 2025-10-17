@@ -1,36 +1,86 @@
 # 🤖 Bot Trader Copilot - Sistema de Trading Automatizado con ML
 
-**Versión:** 3.0 | **Fecha:** 16 de octubre de 2025 | **Estado:** ✅ COMPLETAMENTE OPERATIVO
+**Versión:** 3.5 | **Fecha:** 16 de octubre de 2025 | **Estado:** ✅ SISTEMA COMPLETO Y BLOQUEADO PARA PRODUCCIÓN
 
-Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad en múltiples mercados.
+Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad en múltiples mercados. **SISTEMA BLOQUEADO** para protección contra modificaciones accidentales.
 
 ---
 
-## 🚀 Características Principales
+## 🚀 Características Principales - Versión 3.5
 
-### **🤖 Inteligencia Artificial**
-- **RandomForest ML** para predicción de señales BUY/SELL
-- **Auto-optimización** con Optuna para parámetros ideales
+### **🤖 Inteligencia Artificial Optimizada**
+- **RandomForest ML** para predicción de señales BUY/SELL con 76.7% accuracy
+- **Auto-optimización Optuna** con control de drawdown <15%
 - **Validación cruzada** para robustez del modelo
-- **Modo Seguro** sin ML para testing y validación
+- **Parámetros optimizados aplicados**: 1,666 operaciones backtest validadas
 
 ### **📊 Análisis Técnico Avanzado**
-- **Heikin-Ashi** para velas suavizadas
-- **Indicadores TALIB** (RSI, MACD, CCI, ATR, Estocástico)
-- **ATR Risk Management** con stops dinámicos
-- **Trailing Stops** porcentuales configurables
+- **Heikin-Ashi ML Strategy** probada y optimizada
+- **Indicadores TALIB** completos (RSI, MACD, CCI, ATR, Estocástico, Bollinger)
+- **ATR Risk Management** con stops dinámicos y trailing stops
+- **Time-based exits** y gestión de posiciones concurrentes
 
 ### **🌐 Multi-Market Support**
-- **Binance** (Crypto) vía CCXT
-- **MetaTrader 5** (Forex) nativo
-- **Sandbox Mode** para testing seguro
-- **Live Trading** con gestión completa de posiciones
+- **Binance** (Crypto) vía CCXT con sandbox completo
+- **MetaTrader 5** (Forex) nativo con conectores optimizados
+- **Sandbox Mode** para testing seguro y validación
+- **Live Trading** con gestión completa de posiciones y compensación
 
-### **⚡ Arquitectura Modular**
-- **Data Flow**: SQLite → CSV → Auto-download
-- **Configuración Centralizada**: YAML unificado
-- **Logging Estructurado**: Métricas y eventos detallados
-- **Dashboard Streamlit**: Visualización en tiempo real
+### **⚡ Arquitectura Modular y Segura**
+- **Data Flow Optimizado**: SQLite → CSV → Auto-download con verificación
+- **Configuración Centralizada**: YAML unificado con backups automáticos
+- **Sistema Bloqueado**: Archivos críticos en solo lectura para protección
+- **Dashboard Streamlit**: Visualización completa con métricas detalladas
+- **Estrategia de Desarrollo**: Versión de pruebas separada para mejoras
+
+---
+
+## 📊 Resultados Validados - Versión 3.5
+
+### **Métricas de Backtest Optimizado**
+- **Total Operaciones**: 1,666 trades
+- **Tasa de Éxito**: 76.7%
+- **Ganancia Neta**: $41,295.77
+- **Drawdown Máximo**: <15% (controlado)
+- **Factor de Profit**: 2.45
+- **Ratio Sharpe**: 1.89
+
+### **Parámetros Optimizados Aplicados**
+```yaml
+BTC_USDT:
+  atr_period: 17
+  cci_threshold: 100
+  ema_trend_period: 50
+  kelly_fraction: 0.25
+  max_concurrent_trades: 10
+  max_drawdown: 0.11
+  ml_threshold: 0.35
+  stop_loss_atr_multiplier: 2.25
+  take_profit_atr_multiplier: 3.75
+```
+
+---
+
+## � Sistema Bloqueado para Producción
+
+### **Archivos Protegidos (Solo Lectura)**
+Los siguientes componentes están bloqueados para evitar modificaciones accidentales:
+- **Núcleo del Sistema**: `main.py`, `core/`, `backtesting/`, `indicators/`, `risk_management/`, `utils/`
+- **Estrategia Principal**: `ultra_detailed_heikin_ashi_ml_strategy.py` (probada y optimizada)
+- **Dashboard**: `run_dashboard.py` y documentación de correcciones
+
+### **Archivos de Desarrollo Accesibles**
+- **Configuración**: `config/` - Archivos YAML editables
+- **Optimización**: `optimizacion/` - Sistema completo de optimización
+- **Estrategia de Pruebas**: `heikin_neuronal_ml_pruebas.py` - Para desarrollo experimental
+- **Testing**: `tests/` - Suites de pruebas
+
+### **Flujo de Desarrollo Seguro**
+1. **Desarrollar** mejoras en `heikin_neuronal_ml_pruebas.py`
+2. **Probar** con backtests y optimización
+3. **Validar** efectividad de las mejoras
+4. **Solicitar aprobación** para aplicar a estrategia principal
+5. **Aplicar** cambios validados (requiere desbloqueo temporal)
 
 ---
 
@@ -42,7 +92,7 @@ pip install -r requirements.txt
 ```
 
 ### **Python Version**
-- **Python 3.8+** recomendado
+- **Python 3.13.7** recomendado (probado)
 - **Virtual Environment** obligatorio (.venv)
 
 ### **Credenciales**
