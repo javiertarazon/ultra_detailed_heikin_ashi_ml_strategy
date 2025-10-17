@@ -26,9 +26,10 @@ from utils.logger import setup_logging, get_logger
 print('[ORCHESTRATOR] Logger utilities importadas')
 
 # Variable global para las estrategias disponibles
-# 🎯 SISTEMA COMPLETO - Estrategia principal con ML real
+# 🎯 SISTEMA COMPLETO - Estrategia principal con ML real + estrategia de pruebas
 STRATEGY_CLASSES = {
     'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
+    'HeikinNeuronalMLPruebas': ('strategies.heikin_neuronal_ml_pruebas', 'HeikinNeuronalMLPruebasStrategy'),
     'SimpleTechnical': ('strategies.simple_technical_strategy', 'SimpleTechnicalStrategy'),
 }
 
