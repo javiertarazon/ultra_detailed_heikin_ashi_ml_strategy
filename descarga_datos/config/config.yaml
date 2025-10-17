@@ -26,8 +26,8 @@ backtesting:
   slippage: 0.05
   start_date: '2025-01-01'
   strategies:
-    UltraDetailedHeikinAshiML: true
-    HeikinNeuronalMLPruebas: false  # Estrategia de pruebas - activar solo para desarrollo
+    UltraDetailedHeikinAshiML: false  # Estrategia principal (bloqueada) - DESACTIVADA
+    HeikinNeuronalMLPruebas: true     # Estrategia de pruebas - ACTIVADA para desarrollo
   strategy_paths:
     UltraDetailedHeikinAshiML:
     - strategies.ultra_detailed_heikin_ashi_ml_strategy
