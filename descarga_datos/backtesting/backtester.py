@@ -123,9 +123,27 @@ class AdvancedBacktester(Backtester):
                     equity_curve = pd.Series(dtype=float)
             # Reconstruir equity_curve si está vacía pero hay trades
             if equity_curve.empty and trades:
+                # Obtener límite de max_drawdown de la estrategia (solo para logging, no para truncar)
+                strategy_max_drawdown = getattr(strategy, 'max_drawdown', 0.15)  # Default 15%
                 balances = [self.initial_capital]
+                peak_value = self.initial_capital
+
                 for t in trades:
-                    balances.append(balances[-1] + t.get('pnl', 0))
+                    pnl = t.get('pnl', 0)
+                    new_balance = balances[-1] + pnl
+                    balances.append(new_balance)
+
+                    # Actualizar peak y calcular drawdown actual (solo para logging)
+                    peak_value = max(peak_value, new_balance)
+                    current_drawdown = (peak_value - new_balance) / peak_value if peak_value > 0 else 0
+
+                    # NO truncar la equity curve - el backtesting debe mostrar la curva completa
+                    # El truncamiento solo aplica para trading en vivo, no para análisis histórico
+                    # if current_drawdown > strategy_max_drawdown:
+                    #     # Truncar la equity_curve hasta este punto
+                    #     balances = balances[:-1]  # Remover el último balance que causó el exceso
+                    #     break
+
                 equity_curve = pd.Series(balances)
             # Usar la lista de datos de compensación (dicts) en vez de cantidad
             compensation_trades_list = strategy_results.get('compensation_trades_data', [])
@@ -336,6 +354,8 @@ class AdvancedBacktester(Backtester):
             'avg_loss_pnl': -gross_loss / losing_trades if losing_trades > 0 else 0,
             'largest_win': max([t.get('pnl', 0) for t in trades if t.get('pnl', 0) > 0], default=0),
             'largest_loss': min([t.get('pnl', 0) for t in trades if t.get('pnl', 0) < 0], default=0),
+            # CAPITAL INICIAL para sincronización con dashboard
+            'initial_capital': self.initial_capital,
             # Métricas de compensación reales
             'compensated_trades': compensated_trades_count,
             'compensation_success_rate': compensation_success_rate,

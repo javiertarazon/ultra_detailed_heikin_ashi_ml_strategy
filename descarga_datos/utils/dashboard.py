@@ -221,7 +221,7 @@ def calculate_drawdown_percentage(max_drawdown, total_pnl):
     return max_drawdown  # Retornar el valor directo ya que viene en porcentaje
 
 
-def generate_equity_curve_from_trades(trades, initial_capital=10000):
+def generate_equity_curve_from_trades(trades, initial_capital):
     """
     Genera una curva de equity a partir de una lista de trades.
     """
@@ -328,38 +328,46 @@ def plot_equity_curve(equity_curve, symbol, strategy_name):
         return fig
 
     df = pd.DataFrame({'Equity': equity_curve})
-    df['Trade'] = df.index
-    df['Drawdown'] = ((df['Equity'] - df['Equity'].cummax()) / df['Equity'].cummax() * 100).fillna(0)
+    df['Punto'] = df.index + 1  # Número de punto en la curva (1-based)
+    df['Drawdown'] = ((df['Equity'].cummax() - df['Equity']) / df['Equity'].cummax() * 100).fillna(0)  # Drawdown como valores positivos
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                        subplot_titles=[f"Curva de Capital - {symbol} ({strategy_name})", "Drawdown"],
                        vertical_spacing=0.1)
 
     # Curva de equity
-    fig.add_trace(go.Scatter(x=df['Trade'], y=df['Equity'], mode='lines',
+    fig.add_trace(go.Scatter(x=df['Punto'], y=df['Equity'], mode='lines',
                             name='Capital', line=dict(color='blue', width=2)), row=1, col=1)
 
-    # Drawdown (en valores negativos para mejor visualización)
-    fig.add_trace(go.Scatter(x=df['Trade'], y=df['Drawdown'], mode='lines',
-                            name='Drawdown', fill='tozeroy', 
-                            line=dict(color='red', width=1.5)), row=2, col=1)
+    # Drawdown (ya calculado como valores positivos)
+    fig.add_trace(go.Scatter(x=df['Punto'], y=df['Drawdown'], mode='lines',
+                            name='Drawdown', fill='tozeroy',
+                            line=dict(color='red', width=1),
+                            fillcolor='rgba(255, 0, 0, 0.3)'), row=2, col=1)
 
     fig.update_layout(height=600, template="plotly_white", showlegend=True)
-    fig.update_yaxes(title_text="Capital ($)", row=1, col=1)
-    fig.update_yaxes(title_text="Drawdown (%)", row=2, col=1)
-    fig.update_xaxes(title_text="Número de Trade", row=2, col=1)
+    fig.update_yaxes(title_text="Capital ($)", row=1, col=1, tickformat="$,.0f")
+    fig.update_yaxes(title_text="Drawdown (%)", row=2, col=1, tickformat=".1f")
+    fig.update_xaxes(title_text="Puntos en la Curva", row=2, col=1, tickmode='auto')
 
     # Añadir estadísticas como anotaciones
     max_equity = df['Equity'].max()
-    min_drawdown = df['Drawdown'].min()
+    max_drawdown_value = df['Drawdown'].max()  # Drawdown ya es positivo
     final_equity = df['Equity'].iloc[-1]
-    
+    total_return = ((final_equity - df['Equity'].iloc[0]) / df['Equity'].iloc[0]) * 100
+
     fig.add_annotation(
-        text=f"Capital Final: ${final_equity:,.0f}<br>Máximo: ${max_equity:,.0f}<br>Max DD: {min_drawdown:.1f}%",
+        text=f"📊 Estadísticas de Rendimiento<br>" +
+             f"Capital Inicial: ${df['Equity'].iloc[0]:,.0f}<br>" +
+             f"Capital Final: ${final_equity:,.0f}<br>" +
+             f"Retorno Total: {total_return:.1f}%<br>" +
+             f"Máximo Capital: ${max_equity:,.0f}<br>" +
+             f"Max Drawdown: {max_drawdown_value:.1f}%",
         xref="paper", yref="paper",
         x=0.02, y=0.98, xanchor='left', yanchor='top',
         showarrow=False, font=dict(size=10),
-        bgcolor="rgba(255,255,255,0.8)", bordercolor="gray", borderwidth=1
+        bgcolor="rgba(255,255,255,0.9)", bordercolor="gray", borderwidth=1,
+        align="left"
     )
 
     return fig
@@ -509,11 +517,30 @@ def main():
     if config and 'backtesting' in config:
         initial_capital = config['backtesting'].get('initial_capital', 10000)
 
+    # DEBUG: Mostrar el capital inicial que se está usando
+    st.write("### 🔍 DEBUG - Capital Inicial")
+    st.write(f"**Capital inicial cargado desde config:** ${initial_capital}")
+    if config and 'backtesting' in config:
+        st.write(f"**Config backtesting completa:** {config['backtesting']}")
+    else:
+        st.write("**ERROR:** No se pudo cargar la configuración backtesting")
+
+    # Calcular equity final esperado para verificación
+    results, _ = load_results()
+    if results:
+        for sym, sym_data in results.items():
+            strategies = sym_data.get('strategies', {}) if isinstance(sym_data, dict) else {}
+            for sname, sdata in strategies.items():
+                if isinstance(sdata, dict):
+                    total_pnl = sdata.get('total_pnl', 0)
+                    expected_final = initial_capital + total_pnl
+                    st.write(f"**{sym} - {sname}:** P&L=${total_pnl:.2f}, Capital esperado final=${expected_final:.2f}")
+
     # Cargar datos
     results, global_summary = load_results()
 
     # Generar equity_curve faltante si existen trades pero no equity (post-procesado)
-    def _build_equity_curve(trades, initial_capital=initial_capital):
+    def _build_equity_curve(trades, initial_capital):
         equity = [initial_capital]
         running = initial_capital
         for t in trades:
@@ -528,7 +555,7 @@ def main():
                 trades = sdata.get('trades', [])
                 eq = sdata.get('equity_curve', [])
                 if trades and (not eq or len(eq) < 2):
-                    sdata['equity_curve'] = _build_equity_curve(trades)
+                    sdata['equity_curve'] = _build_equity_curve(trades, initial_capital)
 
     # Construir resumen tabular global (símbolo / estrategia)
     summary_rows = []
@@ -892,8 +919,10 @@ def main():
     equity_curve = strategy_data.get('equity_curve', [])
     if not equity_curve and strategy_data.get('trades'):
         # Generar curva de equity sintética si faltaba
-        equity_curve = [initial_capital]
-        running = initial_capital
+        # Usar capital inicial de los resultados del backtester si está disponible
+        backtester_initial_capital = strategy_data.get('initial_capital', initial_capital)
+        equity_curve = [backtester_initial_capital]
+        running = backtester_initial_capital
         for t in strategy_data.get('trades', []):
             running += t.get('pnl', 0)
             equity_curve.append(running)

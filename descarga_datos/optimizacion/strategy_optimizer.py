@@ -33,7 +33,9 @@ from typing import Dict, List, Tuple
 
 from config.config_loader import load_config_from_yaml
 # from core.downloader import AdvancedDataDownloader, download_and_cache_data  # Removido por compatibilidad Python 3.13
+from core.downloader import AdvancedDataDownloader, download_and_cache_data
 # from indicators.technical_indicators import TechnicalIndicators  # Removido por compatibilidad Python 3.13
+from indicators.technical_indicators import TechnicalIndicators
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -77,6 +79,7 @@ class StrategyOptimizer:
             'constraints': {
                 'min_trades': 20,
                 'max_drawdown_limit': 0.15,
+                'max_pnl_limit': 20647.89,  # 50% menos del P&L actual de $41,295.77
                 'min_win_rate': 0.55
             }
         }
@@ -97,7 +100,7 @@ class StrategyOptimizer:
             logger.info("🔍 Intentando cargar desde SQLite...")
             from utils.storage import DataStorage
             
-            storage = DataStorage(db_path="data/data.db")
+            storage = DataStorage()
             table_name = f"{self.symbol.replace('/', '_')}_{self.timeframe}"
             
             # Convertir fechas a timestamps
@@ -144,7 +147,22 @@ class StrategyOptimizer:
 
         except Exception as e:
             logger.error(f"Error cargando datos para {self.symbol}: {e}")
-            raise
+            # Si no se pudieron cargar datos, intentar descargar
+            logger.info("📥 Intentando descargar datos desde exchange...")
+            try:
+                downloader = AdvancedDataDownloader()
+                self.data = download_and_cache_data(
+                    symbol=self.symbol,
+                    timeframe=self.timeframe,
+                    start_date=self.start_date,
+                    end_date=self.end_date
+                )
+                if self.data is None or len(self.data) == 0:
+                    raise ValueError(f"No se pudieron descargar datos para {self.symbol}")
+                logger.info(f"✅ Datos descargados: {len(self.data)} registros")
+            except Exception as download_error:
+                logger.error(f"Error descargando datos: {download_error}")
+                raise ValueError(f"No se pudieron obtener datos para {self.symbol} ni desde almacenamiento ni desde exchange") from e
             
         logger.info(f"Descargados {len(self.data)} registros")
         return self.data
@@ -202,10 +220,11 @@ class StrategyOptimizer:
             "ema_trend_period": trial.suggest_int("ema_trend_period", 15, 120, step=5),  # 🔥 Trends más cortos
             
             # Parámetros de gestión de riesgo - CRYPTO ULTRA AGRESIVO
-            "max_drawdown": trial.suggest_float("max_drawdown", 0.03, 0.12, step=0.01),  # 🔥 Hasta 12% DD
+            "max_drawdown": trial.suggest_float("max_drawdown", 0.03, 0.15, step=0.01),  # 🔥 Hasta 15% DD
             "max_portfolio_heat": trial.suggest_float("max_portfolio_heat", 0.08, 0.20, step=0.01),  # 🔥 Hasta 20% heat
             "max_concurrent_trades": trial.suggest_int("max_concurrent_trades", 3, 10),  # 🔥 Hasta 10 trades simultáneos
             "kelly_fraction": trial.suggest_float("kelly_fraction", 0.25, 0.80, step=0.05),  # 🔥 Kelly agresivo
+            # "trailing_stop_pct": FIJADO EN 70% EN LA ESTRATEGIA - NO OPTIMIZABLE
         }
         
         # Crear instancia de la estrategia con los parámetros a optimizar
@@ -240,12 +259,17 @@ class StrategyOptimizer:
         penalty = 1.0
         
         if max_drawdown > max_dd_limit:
-            penalty *= 0.5
+            penalty *= 0.1  # Penalización más fuerte para drawdown > 15%
             logger.warning(f"Trial penalizado: DD {max_drawdown:.2%} > límite {max_dd_limit:.2%}")
         
         if win_rate < min_wr:
             penalty *= 0.7
             logger.warning(f"Trial penalizado: WR {win_rate:.2%} < mínimo {min_wr:.2%}")
+        
+        max_pnl_limit = constraints.get('max_pnl_limit', float('inf'))
+        if total_pnl > max_pnl_limit:
+            penalty *= 0.5
+            logger.warning(f"Trial penalizado: P&L {total_pnl:.2f} > límite {max_pnl_limit:.2f}")
         
         # Construir retorno basado en targets configurados
         maximize_targets = self.optimization_targets.get('maximize', ['total_pnl', 'win_rate'])

@@ -18,6 +18,7 @@ import pandas as pd
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 import threading
+from indicators.technical_indicators import TechnicalIndicators
 import queue
 import json
 from pathlib import Path
@@ -187,6 +188,7 @@ class CCXTLiveTradingOrchestrator:
 
         try:
             start_time = time.time()
+            cycle_count = 0
 
             while self.running:
                 # Verificar límite de tiempo
@@ -194,20 +196,23 @@ class CCXTLiveTradingOrchestrator:
                     logger.info(f"Duración límite alcanzada ({duration_minutes} minutos)")
                     break
 
-                # Procesar señales de trading
-                self._process_trading_signals()
+                # Procesar señales de trading cada 60 segundos
+                if cycle_count % 60 == 0:
+                    self._process_trading_signals()
 
-                # Verificar y gestionar posiciones abiertas
-                self._manage_open_positions()
+                    # Verificar y gestionar posiciones abiertas
+                    self._manage_open_positions()
 
-                # Actualizar métricas
-                self._update_metrics()
+                    # Actualizar métricas
+                    self._update_metrics()
 
-                # Esperar antes del siguiente ciclo
-                time.sleep(60)  # Verificar cada minuto
+                cycle_count += 1
+
+                # Esperar 1 segundo y verificar señales de interrupción
+                time.sleep(1)
 
         except KeyboardInterrupt:
-            logger.info("Trading detenido por usuario")
+            logger.info("Trading detenido por usuario (Ctrl+C)")
         except Exception as e:
             logger.error(f"Error durante el trading: {e}")
         finally:
@@ -236,13 +241,30 @@ class CCXTLiveTradingOrchestrator:
 
             # Obtener datos históricos recientes
             logger.debug(f"📥 Obteniendo datos históricos para {symbol}...")
-            data = self.data_provider.get_historical_data(symbol, '4h', limit=100)
+            # Usar timeframe configurado en lugar de hardcodeado
+            timeframe = self.backtesting_config.get('timeframe', '4h')
+            # Obtener suficientes barras para compensar NaN iniciales después de calcular indicadores
+            data = self.data_provider.get_historical_data(symbol, timeframe, limit=80)
             
             if data is None or data.empty:
                 logger.warning(f"⚠️ No hay datos disponibles para {symbol}")
                 continue
             
             logger.info(f"✅ Datos obtenidos para {symbol}: {len(data)} barras")
+
+            # CALCULAR INDICADORES TÉCNICOS ANTES DE PASAR A ESTRATEGIAS
+            logger.debug(f"🔧 Calculando indicadores técnicos para {symbol}...")
+            try:
+                indicators = TechnicalIndicators()
+                data_with_indicators = indicators.calculate_all_indicators_unified(data.copy())
+                logger.info(f"✅ Indicadores calculados para {symbol}: {len(data_with_indicators)} barras")
+                
+                # GUARDAR DATOS CON INDICADORES PARA ANÁLISIS POSTERIOR
+                self._save_data_with_indicators(symbol, timeframe, data_with_indicators)
+                
+            except Exception as e:
+                logger.error(f"❌ Error calculando indicadores para {symbol}: {e}")
+                continue
 
             # Aplicar cada estrategia habilitada
             logger.debug(f"🎯 Estrategias disponibles: {list(self.strategy_classes.keys())}")
@@ -261,30 +283,44 @@ class CCXTLiveTradingOrchestrator:
 
                     strategy = self.strategy_instances[strategy_name]
 
-                    # Ejecutar estrategia
-                    logger.debug(f"⚙️ Ejecutando strategy.run() para {symbol}...")
-                    result = strategy.run(data, symbol)
+                    # Ejecutar estrategia usando LIVE SIGNAL METHOD
+                    logger.debug(f"⚙️ Ejecutando strategy.get_live_signal() para {symbol}...")
+                    result = strategy.get_live_signal(data_with_indicators, symbol)
                     logger.info(f"📊 Resultado de {strategy_name}: {result.get('signal', 'NO_SIGNAL') if result else 'NONE'}")
 
-                    # Procesar señales
-                    self._handle_strategy_signal(strategy_name, symbol, result)
+                    # Procesar señales con instancia de estrategia
+                    self._handle_strategy_signal(strategy_name, symbol, result, strategy)
 
                 except Exception as e:
                     logger.error(f"Error procesando estrategia {strategy_name} para {symbol}: {e}")
 
-    def _handle_strategy_signal(self, strategy_name: str, symbol: str, result: Dict[str, Any]):
+    def _handle_strategy_signal(self, strategy_name: str, symbol: str, result: Dict[str, Any], strategy_instance=None):
         """
-        Maneja las señales generadas por una estrategia.
+        Maneja las señales generadas por una estrategia con información completa de risk management.
 
         Args:
             strategy_name: Nombre de la estrategia
             symbol: Símbolo del par
-            result: Resultado de la estrategia
+            result: Resultado de la estrategia con signal_data
+            strategy_instance: Instancia de la estrategia para consultas futuras
         """
         try:
             # Verificar si hay señal de entrada
-            if 'signal' in result and result['signal'] in ['BUY', 'SELL']:
-                signal = result['signal']
+            signal = result.get('signal', 'NO_SIGNAL')
+            signal_data = result.get('signal_data', {})
+
+            if signal in ['BUY', 'SELL'] and signal_data.get('current_signal') == signal:
+                logger.info(f"Abrir nueva posición {signal} para {symbol} - Estrategia: {strategy_name}")
+
+                # Extraer parámetros de risk management de la estrategia
+                order_type = OrderType.BUY if signal == 'BUY' else OrderType.SELL
+
+                # Usar parámetros proporcionados por la estrategia
+                stop_loss_price = signal_data.get('stop_loss_price')
+                take_profit_price = signal_data.get('take_profit_price')
+                trailing_stop_pct = signal_data.get('trailing_stop_pct')
+                risk_per_trade = signal_data.get('risk_per_trade')
+                entry_price = signal_data.get('entry_price')
 
                 # Verificar si ya tenemos una posición abierta para este símbolo
                 existing_position = None
@@ -300,28 +336,34 @@ class CCXTLiveTradingOrchestrator:
 
                 # Si no hay posición abierta, abrir nueva
                 if not existing_position:
-                    logger.info(f"Abrir nueva posición {signal} para {symbol} - Estrategia: {strategy_name}")
+                    logger.info(f"Abrir nueva posición {signal} para {symbol} con risk management de estrategia")
 
-                    order_type = OrderType.BUY if signal == 'BUY' else OrderType.SELL
-
-                    # Abrir posición
+                    # Abrir posición con parámetros de risk management de la estrategia
                     position = self.order_executor.open_position(
                         symbol=symbol,
-                        order_type=order_type
+                        order_type=order_type,
+                        stop_loss_price=stop_loss_price,
+                        take_profit_price=take_profit_price,
+                        trailing_stop_pct=trailing_stop_pct,
+                        risk_per_trade=risk_per_trade,
+                        price=entry_price
                     )
 
                     if position:
                         position['strategy'] = strategy_name
+                        position['ml_confidence'] = result.get('ml_confidence', 0.5)
+                        position['atr'] = signal_data.get('atr')
                         self.active_positions[position['ticket']] = position
                         self.live_metrics['total_trades'] += 1
-                        logger.info(f"Posición abierta: {position}")
+                        logger.info(f"Posición abierta con risk management: {position}")
 
         except Exception as e:
             logger.error(f"Error manejando señal de estrategia {strategy_name}: {e}")
 
     def _manage_open_positions(self):
         """
-        Gestiona las posiciones abiertas (stop loss, take profit, etc.).
+        Gestiona las posiciones abiertas consultando a la estrategia sobre cierres.
+        La estrategia maneja trailing stops, stop loss y take profit.
         """
         positions_to_close = []
 
@@ -334,33 +376,44 @@ class CCXTLiveTradingOrchestrator:
 
                 current_price = current_price_info['last']
 
-                # Verificar stop loss
-                if position['stop_loss']:
-                    if position['type'] == 'buy' and current_price <= position['stop_loss']:
-                        logger.info(f"Stop loss alcanzado para posición {ticket}")
-                        positions_to_close.append(ticket)
-                        continue
-                    elif position['type'] == 'sell' and current_price >= position['stop_loss']:
-                        logger.info(f"Stop loss alcanzado para posición {ticket}")
-                        positions_to_close.append(ticket)
-                        continue
+                # Consultar a la estrategia sobre si debe cerrar la posición
+                strategy_name = position.get('strategy', 'default')
+                if strategy_name in self.strategy_instances:
+                    strategy = self.strategy_instances[strategy_name]
 
-                # Verificar take profit
-                if position['take_profit']:
-                    if position['type'] == 'buy' and current_price >= position['take_profit']:
-                        logger.info(f"Take profit alcanzado para posición {ticket}")
-                        positions_to_close.append(ticket)
-                        continue
-                    elif position['type'] == 'sell' and current_price <= position['take_profit']:
-                        logger.info(f"Take profit alcanzado para posición {ticket}")
-                        positions_to_close.append(ticket)
-                        continue
+                    # Verificar si la estrategia tiene método para gestionar posiciones
+                    if hasattr(strategy, 'should_close_position'):
+                        close_decision = strategy.should_close_position(
+                            position_data=position,
+                            current_price=current_price,
+                            entry_price=position['entry_price'],
+                            take_profit_price=position.get('take_profit')
+                        )
+
+                        if close_decision.get('should_close', False):
+                            reason = close_decision.get('reason', 'strategy_decision')
+                            logger.info(f"Posición {ticket} debe cerrarse por: {reason}")
+                            positions_to_close.append((ticket, close_decision))
+                            continue
+
+                # Fallback: verificar stop loss básico si la estrategia no puede decidir
+                else:
+                    stop_loss = position.get('stop_loss')
+                    if stop_loss:
+                        if position['type'] == 'buy' and current_price <= stop_loss:
+                            logger.info(f"Stop loss alcanzado para posición {ticket}")
+                            positions_to_close.append((ticket, {'reason': 'stop_loss_fallback'}))
+                            continue
+                        elif position['type'] == 'sell' and current_price >= stop_loss:
+                            logger.info(f"Stop loss alcanzado para posición {ticket}")
+                            positions_to_close.append((ticket, {'reason': 'stop_loss_fallback'}))
+                            continue
 
             except Exception as e:
                 logger.error(f"Error gestionando posición {ticket}: {e}")
 
         # Cerrar posiciones identificadas
-        for ticket in positions_to_close:
+        for ticket, close_info in positions_to_close:
             if self.order_executor.close_position(ticket):
                 position = self.active_positions[ticket]
                 pnl = position.get('pnl', 0)
@@ -371,6 +424,7 @@ class CCXTLiveTradingOrchestrator:
                 else:
                     self.live_metrics['losing_trades'] += 1
 
+                position['exit_reason'] = close_info.get('reason', 'unknown')
                 self.position_history.append(position)
                 del self.active_positions[ticket]
 
@@ -468,6 +522,32 @@ class CCXTLiveTradingOrchestrator:
             'total_pnl': self.live_metrics['total_pnl'],
             'runtime_minutes': self.live_metrics['runtime_minutes']
         }
+
+    def _save_data_with_indicators(self, symbol: str, timeframe: str, data: pd.DataFrame) -> None:
+        """
+        Guarda los datos con indicadores calculados para análisis posterior.
+        Se guarda periódicamente durante el live trading.
+        """
+        try:
+            from pathlib import Path
+            import os
+            
+            # Crear directorio si no existe
+            data_dir = Path("data/live_data_with_indicators")
+            data_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Crear nombre de archivo seguro
+            safe_symbol = symbol.replace('/', '_')
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{safe_symbol}_{timeframe}_indicators_{timestamp}.csv"
+            filepath = data_dir / filename
+            
+            # Guardar datos con indicadores
+            data.to_csv(filepath)
+            logger.debug(f"✅ Datos con indicadores guardados: {filepath}")
+            
+        except Exception as e:
+            logger.error(f"Error guardando datos con indicadores para {symbol} {timeframe}: {e}")
 
 
 def run_crypto_live_trading(config_path: str = None, exchange_name: str = 'bybit',

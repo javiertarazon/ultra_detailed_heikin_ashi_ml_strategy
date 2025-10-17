@@ -35,6 +35,7 @@ except ImportError:
 from utils.logger import setup_logger
 from utils.retry_manager import retry_operation
 from risk_management.risk_management import apply_risk_management
+import logging
 
 # Enums para órdenes
 class OrderType(Enum):
@@ -214,30 +215,31 @@ class CCXTOrderExecutor:
             return None
 
     def apply_risk_management(self, symbol: str, order_type: OrderType, entry_price: float,
-                            stop_loss: float = None, take_profit: float = None) -> Dict[str, Any]:
+                            stop_loss: float = None, take_profit: float = None, risk_per_trade: float = None) -> Dict[str, Any]:
         """
-        Aplica gestión de riesgo a la orden.
+        Aplica gestión de riesgo a la orden usando parámetros proporcionados por la estrategia.
 
         Args:
             symbol: Símbolo del par
             order_type: Tipo de orden (BUY/SELL)
             entry_price: Precio de entrada
-            stop_loss: Stop loss opcional
-            take_profit: Take profit opcional
+            stop_loss: Stop loss opcional (proporcionado por estrategia)
+            take_profit: Take profit opcional (proporcionado por estrategia)
+            risk_per_trade: Porcentaje de riesgo por trade (proporcionado por estrategia)
 
         Returns:
             Dict con parámetros de riesgo aplicados
         """
         try:
+            # Usar risk_per_trade proporcionado por estrategia o valor por defecto
+            risk_pct = risk_per_trade if risk_per_trade is not None else self.risk_per_trade
+
             # Obtener balance actual
             balance_info = self.exchange.fetch_balance()
             total_balance = balance_info.get('total', {}).get('USDT', 0)
 
             if total_balance <= 0:
                 raise ValueError("Balance insuficiente")
-
-            # Calcular tamaño de posición basado en riesgo
-            risk_amount = total_balance * self.risk_per_trade
 
             # Calcular stop loss si no se proporciona
             if stop_loss is None:
@@ -254,7 +256,7 @@ class CCXTOrderExecutor:
                 else:
                     take_profit = entry_price - (risk_distance * 2)
 
-            # Calcular cantidad basada en riesgo
+            # Calcular cantidad basada en riesgo usando el porcentaje proporcionado
             if order_type == OrderType.BUY:
                 risk_distance = entry_price - stop_loss
             else:
@@ -263,6 +265,7 @@ class CCXTOrderExecutor:
             if risk_distance <= 0:
                 raise ValueError("Stop loss inválido")
 
+            risk_amount = total_balance * risk_pct
             quantity = risk_amount / risk_distance
 
             return {
@@ -270,7 +273,7 @@ class CCXTOrderExecutor:
                 'stop_loss': stop_loss,
                 'take_profit': take_profit,
                 'risk_amount': risk_amount,
-                'risk_percent': self.risk_per_trade
+                'risk_percent': risk_pct
             }
 
         except Exception as e:
@@ -278,17 +281,20 @@ class CCXTOrderExecutor:
             return {}
 
     def open_position(self, symbol: str, order_type: OrderType, quantity: float = None,
-                     stop_loss: float = None, take_profit: float = None,
+                     stop_loss_price: float = None, take_profit_price: float = None,
+                     trailing_stop_pct: float = None, risk_per_trade: float = None,
                      price: float = None) -> Optional[Dict[str, Any]]:
         """
-        Abre una nueva posición.
+        Abre una nueva posición usando parámetros de risk management proporcionados por la estrategia.
 
         Args:
             symbol: Símbolo del par
             order_type: Tipo de orden (BUY/SELL)
-            quantity: Cantidad a operar (opcional, se calcula por riesgo)
-            stop_loss: Precio de stop loss
-            take_profit: Precio de take profit
+            quantity: Cantidad a operar (opcional, se calcula por riesgo si no se proporciona)
+            stop_loss_price: Precio exacto de stop loss (proporcionado por estrategia)
+            take_profit_price: Precio exacto de take profit (proporcionado por estrategia)
+            trailing_stop_pct: Porcentaje para trailing stop (proporcionado por estrategia)
+            risk_per_trade: Porcentaje de riesgo por trade (proporcionado por estrategia)
             price: Precio límite (para órdenes limit)
 
         Returns:
@@ -306,14 +312,21 @@ class CCXTOrderExecutor:
                     return None
                 price = current_price['ask'] if order_type == OrderType.BUY else current_price['bid']
 
-            # Aplicar gestión de riesgo si no se proporciona cantidad
+            # Si no se proporciona quantity, calcular basado en riesgo
             if quantity is None:
-                risk_params = self.apply_risk_management(symbol, order_type, price, stop_loss, take_profit)
+                if risk_per_trade is None:
+                    risk_per_trade = self.risk_per_trade  # Usar valor por defecto
+
+                risk_params = self.apply_risk_management(symbol, order_type, price,
+                                                       stop_loss_price, take_profit_price, risk_per_trade)
                 if not risk_params:
                     return None
                 quantity = risk_params['quantity']
-                stop_loss = risk_params['stop_loss']
-                take_profit = risk_params['take_profit']
+                # Usar stop_loss y take_profit proporcionados por estrategia, o calculados
+                if stop_loss_price is None:
+                    stop_loss_price = risk_params['stop_loss']
+                if take_profit_price is None:
+                    take_profit_price = risk_params['take_profit']
 
             # Verificar límites de posición
             if len(self.open_positions) >= self.max_positions:
@@ -334,7 +347,7 @@ class CCXTOrderExecutor:
             # Ejecutar orden
             order = self.exchange.create_order(**order_params)
 
-            # Crear registro de posición
+            # Crear registro de posición con información completa de risk management
             position_info = {
                 'ticket': str(uuid.uuid4()),
                 'order_id': order['id'],
@@ -342,14 +355,16 @@ class CCXTOrderExecutor:
                 'type': order_type.value,
                 'quantity': quantity,
                 'entry_price': order.get('price', price),
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
+                'stop_loss': stop_loss_price,
+                'take_profit': take_profit_price,
+                'trailing_stop_pct': trailing_stop_pct,
+                'risk_per_trade': risk_per_trade or self.risk_per_trade,
                 'open_time': datetime.now(),
                 'status': 'open'
             }
 
             self.open_positions[position_info['ticket']] = position_info
-            self.logger.info(f"Posición abierta: {position_info}")
+            self.logger.info(f"Posición abierta con risk management: {position_info}")
 
             return position_info
 

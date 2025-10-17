@@ -17,15 +17,15 @@ import os
 # Importar sistema de logging centralizado
 from utils.logger import get_logger
 
-# Intentar importar pandas-ta a través del wrapper
+# Intentar importar talib wrapper
 logger = get_logger(__name__)
 try:
     from utils.talib_wrapper import talib
     TALIB_AVAILABLE = True
-    logger.info("pandas-ta disponible para indicadores técnicos")
+    logger.info("talib wrapper disponible para indicadores técnicos")
 except ImportError:
     TALIB_AVAILABLE = False
-    logger.warning("pandas-ta no disponible, usando implementaciones propias")
+    logger.warning("talib wrapper no disponible, usando implementaciones propias")
 from utils.normalization import DataNormalizer
 from config.config import NormalizationConfig
 from utils.storage import save_to_csv, DataStorage
@@ -501,6 +501,30 @@ class TechnicalIndicators:
             # SAR - Calculado y normalizado de forma especial
             sar_values = self.calculate_sar(df)
             result_df['sar'] = self.normalize_sar(sar_values, df)
+            
+            # MACD, RSI y otros indicadores adicionales requeridos por ML
+            if TALIB_AVAILABLE:
+                try:
+                    # MACD usando talib wrapper
+                    macd_line, macd_signal, macd_hist = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+                    result_df['macd'] = macd_line
+                    result_df['macd_signal'] = macd_signal
+                    
+                    # RSI usando talib wrapper
+                    result_df['rsi'] = talib.RSI(df['close'], timeperiod=14)
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error calculando MACD/RSI con talib wrapper: {e}")
+                    # Implementaciones fallback simples
+                    result_df['macd'] = np.nan
+                    result_df['macd_signal'] = np.nan
+                    result_df['rsi'] = np.nan
+            else:
+                # Implementaciones propias si TALIB no está disponible
+                self.logger.warning("talib wrapper no disponible, indicadores MACD/RSI no calculados")
+                result_df['macd'] = np.nan
+                result_df['macd_signal'] = np.nan
+                result_df['rsi'] = np.nan
             
             # Verificar que tenemos todas las columnas necesarias
             required_columns = ['open', 'high', 'low', 'close', 'volume', 'timestamp']

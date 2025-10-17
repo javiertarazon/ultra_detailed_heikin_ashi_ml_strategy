@@ -1,0 +1,28 @@
+{
+  "symbol": "BTC/USDT",
+  "timeframe": "1d",
+  "model_type": "RandomForest",
+  "features": [
+    "ha_close",
+    "ha_open",
+    "ha_high",
+    "ha_low",
+    "ema_10",
+    "ema_20",
+    "ema_200",
+    "adx",
+    "sar",
+    "atr",
+    "volatility",
+    "momentum_5",
+    "momentum_10",
+    "volume_ratio",
+    "price_position",
+    "trend_strength",
+    "returns",
+    "log_returns"
+  ],
+  "cv_mean": 0.5196012500276067,
+  "val_auc": 0.5326361440491876,
+  "timestamp": "20251016_073612"
+}

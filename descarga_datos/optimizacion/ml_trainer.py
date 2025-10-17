@@ -105,11 +105,30 @@ class MLTrainer:
             logger.error('KeyboardInterrupt durante importación de AdvancedDataDownloader')
             raise RuntimeError('No se puede importar AdvancedDataDownloader')
 
-        # CRÍTICO: Forzar descarga limpiando cache primero
+        # CRÍTICO: Verificar si ya tenemos datos válidos antes de descargar
         symbol_clean = self.symbol.replace('/', '_')
         csv_path = Path('data/csv') / f'{symbol_clean}_{self.timeframe}.csv'
         if csv_path.exists():
-            logger.info(f'🗑️ Eliminando cache antiguo: {csv_path}')
+            try:
+                # Verificar si los datos existentes cubren el período requerido
+                existing_data = pd.read_csv(csv_path)
+                if len(existing_data) > 0:
+                    min_ts = existing_data['timestamp'].min()
+                    max_ts = existing_data['timestamp'].max()
+                    required_start = pd.Timestamp(self.train_start).timestamp()
+                    required_end = pd.Timestamp(self.val_end).timestamp()
+
+                    if min_ts <= required_start and max_ts >= required_end:
+                        logger.info(f'✅ Datos locales válidos encontrados: {len(existing_data)} registros cubren el período requerido')
+                        # Usar datos existentes, no descargar
+                        return existing_data
+                    else:
+                        logger.info(f'⚠️ Datos locales insuficientes: {min_ts} - {max_ts} vs requerido {required_start} - {required_end}')
+            except Exception as e:
+                logger.warning(f'Error verificando datos existentes: {e}')
+
+            # Solo eliminar si los datos no son suficientes
+            logger.info(f'🗑️ Eliminando cache antiguo insuficiente: {csv_path}')
             csv_path.unlink()
         
         # Crear config temporal para downloader con fechas correctas
@@ -195,7 +214,7 @@ class MLTrainer:
             await downloader.shutdown()
 
     def prepare_features(self, df):
-        # Usar el objeto Config correctamente
+        # Usar exactamente el mismo método que la estrategia UltraDetailedHeikinAshiMLStrategy
         from indicators.technical_indicators import TechnicalIndicators
         indicator = TechnicalIndicators(self.config)
         df = indicator.calculate_all_indicators(df)
@@ -211,6 +230,12 @@ class MLTrainer:
         df['price_position'] = (df['close'] - df['close'].rolling(50).min()) / (df['close'].rolling(50).max() - df['close'].rolling(50).min())
         df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
         df['trend_strength'] = abs(df['ema_10'] - df['ema_20']) / df['atr']
+
+        # Calcular features adicionales de Bollinger Bands (igual que en la estrategia)
+        import talib
+        df['bb_upper'], df['bb_middle'], df['bb_lower'] = talib.BBANDS(df['close'], timeperiod=20)
+        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+
         return df
 
     def create_labels(self, df):
@@ -221,7 +246,7 @@ class MLTrainer:
         return labels
 
     def select_features(self):
-        return ['ha_close', 'ha_open', 'ha_high', 'ha_low', 'ema_10', 'ema_20', 'ema_200', 'macd', 'macd_signal', 'adx', 'sar', 'atr', 'volatility', 'bb_upper', 'bb_lower', 'rsi', 'momentum_5', 'momentum_10', 'volume_ratio', 'price_position', 'trend_strength', 'returns', 'log_returns']
+        return ['ha_close', 'ha_open', 'ha_high', 'ha_low', 'ema_10', 'ema_20', 'ema_200', 'macd', 'macd_signal', 'adx', 'sar', 'atr', 'volatility', 'bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'rsi', 'momentum_5', 'momentum_10', 'volume_ratio', 'price_position', 'trend_strength', 'returns', 'log_returns']
 
     def train_models(self, X_train, y_train, X_val, y_val):
         logger.info('Entrenando modelos ML...')
@@ -244,6 +269,7 @@ class MLTrainer:
             from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
             from sklearn.model_selection import TimeSeriesSplit, cross_val_score
             from sklearn.metrics import confusion_matrix, roc_auc_score
+            from sklearn.preprocessing import StandardScaler
             try:
                 from xgboost import XGBClassifier  # type: ignore
                 XGBOOST_AVAILABLE = True
@@ -311,12 +337,17 @@ class MLTrainer:
         for name, model in models.items():
             logger.info(f'Entrenando {name}...')
             try:
-                cv_scores = cross_val_score(model, X_train, y_train, cv=tscv, scoring='roc_auc', n_jobs=1)
+                # Crear y ajustar scaler para este modelo
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train)
+                X_val_scaled = scaler.transform(X_val)
+
+                cv_scores = cross_val_score(model, X_train_scaled, y_train, cv=tscv, scoring='roc_auc', n_jobs=1)
                 logger.info(f'{name} - CV Mean: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})')
 
-                model.fit(X_train, y_train)
-                y_val_pred = model.predict(X_val)
-                y_val_proba = model.predict_proba(X_val)[:, 1]
+                model.fit(X_train_scaled, y_train)
+                y_val_pred = model.predict(X_val_scaled)
+                y_val_proba = model.predict_proba(X_val_scaled)[:, 1]
                 val_auc = roc_auc_score(y_val, y_val_proba)
                 val_accuracy = (y_val_pred == y_val).mean()
 
@@ -324,6 +355,7 @@ class MLTrainer:
 
                 results[name] = {
                     'model': model,
+                    'scaler': scaler,
                     'cv_scores': cv_scores.tolist(),
                     'cv_mean': float(cv_scores.mean()),
                     'cv_std': float(cv_scores.std()),
@@ -348,8 +380,25 @@ class MLTrainer:
     def save_models(self, results, feature_names):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         for name, data in results.items():
+            # Guardar modelo y scaler juntos en un diccionario
+            model_data = {
+                'model': data['model'],
+                'scaler': data['scaler'],
+                'metadata': {
+                    'symbol': self.symbol,
+                    'timeframe': self.timeframe,
+                    'model_type': name,
+                    'features': feature_names,
+                    'cv_mean': data['cv_mean'],
+                    'val_auc': data['val_auc'],
+                    'timestamp': timestamp
+                }
+            }
+
             model_path = self.models_dir / f'{name}_{timestamp}.joblib'
-            joblib.dump(data['model'], model_path)
+            joblib.dump(model_data, model_path)
+
+            # También guardar metadata por separado para compatibilidad
             metadata = {'symbol': self.symbol, 'timeframe': self.timeframe, 'model_type': name, 'features': feature_names, 'cv_mean': data['cv_mean'], 'val_auc': data['val_auc'], 'timestamp': timestamp}
             with open(self.models_dir / f'{name}_{timestamp}_metadata.json', 'w') as f:
                 json.dump(metadata, f, indent=2)

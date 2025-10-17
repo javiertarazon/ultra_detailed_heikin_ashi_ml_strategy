@@ -107,5 +107,25 @@ class TalibWrapper:
 
         return pd.Series(sar, index=high.index)
 
+    @staticmethod
+    def MACD(data, fastperiod=12, slowperiod=26, signalperiod=9):
+        """Moving Average Convergence Divergence"""
+        data = pd.Series(data)
+        
+        # Calcular EMA rápida y lenta
+        fast_ema = data.ewm(span=fastperiod).mean()
+        slow_ema = data.ewm(span=slowperiod).mean()
+        
+        # Calcular MACD line (diferencia entre EMA rápida y lenta)
+        macd_line = fast_ema - slow_ema
+        
+        # Calcular signal line (EMA del MACD)
+        signal_line = macd_line.ewm(span=signalperiod).mean()
+        
+        # Calcular histogram (diferencia entre MACD y signal)
+        histogram = macd_line - signal_line
+        
+        return macd_line, signal_line, histogram
+
 # Crear instancia singleton para usar como talib
 talib = TalibWrapper()

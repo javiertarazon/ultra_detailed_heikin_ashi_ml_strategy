@@ -31,20 +31,40 @@ class ModelManager:
 
         self.logger.info(f"ModelManager inicializado en {self.base_dir}")
 
-    def save_model(self, model: Any, model_name: str, metadata: Optional[Dict] = None) -> bool:
+    def ensure_model_dir(self):
+        """Crear directorio de modelos si no existe"""
+        os.makedirs(self.base_dir, exist_ok=True)
+
+    def get_model_path(self, symbol: str, model_name: str) -> str:
+        """Obtener ruta del modelo para un símbolo específico"""
+        symbol_dir = os.path.join(self.base_dir, symbol)
+        os.makedirs(symbol_dir, exist_ok=True)
+        return os.path.join(symbol_dir, f"{model_name}.pkl")
+
+    def get_scaler_path(self, symbol: str, model_name: str) -> str:
+        """Obtener ruta del scaler para un símbolo específico"""
+        symbol_dir = os.path.join(self.base_dir, symbol)
+        os.makedirs(symbol_dir, exist_ok=True)
+        return os.path.join(symbol_dir, f"{model_name}_scaler.pkl")
+
+    def save_model(self, model: Any, model_name: str, symbol: str = None, metadata: Optional[Dict] = None) -> bool:
         """
         Guarda un modelo en disco
 
         Args:
             model: Modelo a guardar
             model_name: Nombre del modelo
+            symbol: Símbolo (opcional, para organizar en subdirectorios)
             metadata: Metadatos opcionales
 
         Returns:
             bool: True si se guardó correctamente
         """
         try:
-            model_path = os.path.join(self.base_dir, f"{model_name}.pkl")
+            if symbol:
+                model_path = self.get_model_path(symbol, model_name)
+            else:
+                model_path = os.path.join(self.base_dir, f"{model_name}.pkl")
 
             # Guardar modelo y metadatos
             data = {
@@ -63,18 +83,22 @@ class ModelManager:
             self.logger.error(f"Error guardando modelo {model_name}: {e}")
             return False
 
-    def load_model(self, model_name: str) -> Optional[Any]:
+    def load_model(self, model_name: str, symbol: str = None) -> Optional[Any]:
         """
         Carga un modelo desde disco
 
         Args:
             model_name: Nombre del modelo
+            symbol: Símbolo (opcional, para organizar en subdirectorios)
 
         Returns:
-            Modelo cargado o None si falla
+            Modelo cargado o None si no existe
         """
         try:
-            model_path = os.path.join(self.base_dir, f"{model_name}.pkl")
+            if symbol:
+                model_path = self.get_model_path(symbol, model_name)
+            else:
+                model_path = os.path.join(self.base_dir, f"{model_name}.pkl")
 
             if not os.path.exists(model_path):
                 self.logger.warning(f"Modelo {model_name} no encontrado en {model_path}")

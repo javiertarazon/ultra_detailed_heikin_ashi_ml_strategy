@@ -1,70 +1,73 @@
-active_exchange: binance  # 🔥 Binance para mejor conectividad con BNB/USDT
+active_exchange: binance
 backtesting:
   commission: 0.1
-  end_date: '2025-10-10'  # 🔥 Período actualizado hasta la fecha actual
+  data_quality: null
+  end_date: '2025-10-16'
   initial_capital: 500
-
-  start_date: '2025-01-01'  # 🔥 Período actualizado desde enero 2025
-  timeframe: 1h  # 🔥 Temporalidad 1h para análisis detallado
-  max_workers: 4  # 🔥 Limitar workers para evitar overuse de CPU
-  optimized_parameters: null
-  optimization:
-    enabled: true
-    n_trials: 150
-    opt_end: '2025-01-01'
-    opt_start: '2023-06-01'
-    study_name: bnb_ml_optimization
-    targets:
-      constraints:
-        max_drawdown_limit: 0.12
-        min_trades: 50
-        min_win_rate: 0.45
-      maximize:
-      - total_pnl
-      - profit_factor
-      - total_trades
-      minimize:
-      - max_drawdown
+  optimized_parameters:
+    BTC_USDT:
+      atr_period: 17
+      cci_threshold: 100
+      ema_trend_period: 50
+      kelly_fraction: 0.25
+      max_concurrent_trades: 10
+      max_drawdown: 0.11
+      max_portfolio_heat: 0.14
+      ml_threshold: 0.35
+      ml_threshold_min: 0.4
+      ml_threshold_max: 0.75
+      sar_acceleration: 0.04
+      sar_maximum: 0.26
+      stoch_overbought: 75
+      stoch_oversold: 15
+      stop_loss_atr_multiplier: 2.25
+      take_profit_atr_multiplier: 3.75
+      volume_ratio_min: 0.3
   slippage: 0.05
+  start_date: '2025-01-01'
   strategies:
-    # 🎯 ESTRATEGIA ÚNICA ACTIVA - Sistema limpio enfocado en resultados
     UltraDetailedHeikinAshiML: true
+    HeikinNeuronalMLPruebas: false  # Estrategia de pruebas - activar solo para desarrollo
+  strategy_paths:
+    UltraDetailedHeikinAshiML:
+    - strategies.ultra_detailed_heikin_ashi_ml_strategy
+    - UltraDetailedHeikinAshiMLStrategy
+    HeikinNeuronalMLPruebas:
+    - strategies.heikin_neuronal_ml_pruebas
+    - HeikinNeuronalMLPruebasStrategy
+  symbol_selection:
+    BTC/USDT: true
   symbols:
-  # === SÍMBOLO ACTIVO PARA ENTRENAMIENTO Y BACKTESTING ===
-  - BNB/USDT    # 🔥 BNB como símbolo principal para ML completo
-
+  - BTC/USDT
+  timeframe: 15m
 compensation_strategy:
-  compensation_max_loss: 0.3
-  emergency_stop_buffer: 0.98
+  compensation_max_loss: 1.0
+  emergency_stop_buffer: 0.8
   enabled: true
-  loss_threshold: 0.2
-  max_account_drawdown: 25.0
-  size_multiplier: 1.5
-  tp_percent: 0.25
+  loss_threshold: 0.5
+  max_account_drawdown: 3.0
+  risk_multiplier_high_dd: 0.7
+  size_multiplier: 3.0
+  tp_percent: 0.5
+data:
+  limit_per_request: 1000
+  max_retries: 3
+  retry_delay: 5
+  use_ccxt_for_crypto: true
+  use_mt5_for_stocks: false
+  validate_data: true
 exchanges:
   binance:
-    api_key: ''  # Configurar en .env (recomendado) o aquí directamente
-    api_secret: ''  # Configurar en .env (recomendado) o aquí directamente
+    api_key: ''
+    api_secret: ''
     enabled: true
-    sandbox: true  # 🔥 MODO SANDBOX ACTIVADO - Usar Binance Testnet
+    sandbox: true
     timeout: 30000
   bybit:
     api_key: ''
     api_secret: ''
     enabled: true
-    sandbox: false
-    timeout: 30000
-  kucoin:
-    api_key: ''
-    api_secret: ''
-    enabled: true
-    sandbox: false
-    timeout: 30000
-  okx:
-    api_key: ''
-    api_secret: ''
-    enabled: true
-    sandbox: false
+    sandbox: true
     timeout: 30000
 indicators:
   adx:
@@ -90,11 +93,41 @@ indicators:
     maximum: 0.2
   volatility:
     enabled: true
+    method: standard_deviation
     period: 14
+live_trading:
+  account_type: DEMO
+  active_strategy: Solana4HRiskManaged
+  active_symbol: BTC/USDT
+  apply_risk_management: true
+  ccxt_exchange: bybit
+  ccxt_symbols:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+  ccxt_timeframes:
+  - 1h
+  - 4h
+  enabled: false
+  initial_history_bars: 1000
+  max_positions: 5
+  max_positions_per_symbol: 1
+  mode: MT5
+  mt5_symbols:
+  - EURUSD
+  - USDJPY
+  - XAUUSD
+  mt5_timeframes:
+  - 1h
+  - 4h
+  - 1d
+  risk_per_trade: 0.01
+  strategy_mapping: {}
+  update_interval_seconds: 5
+  validation: {}
 ml_training:
   enabled_models:
     random_forest: true
-  safe_mode: false
   models:
     random_forest:
       max_depth: 10
@@ -103,30 +136,35 @@ ml_training:
       random_state: 42
   optimization:
     enabled: true
-    n_trials: 100
-    opt_end: '2025-01-01'
-    opt_start: '2023-06-01'
-    study_name: bnb_ml_optimization
-    targets:
-      constraints:
-        max_drawdown_limit: 0.3
-        min_trades: 10
-        min_win_rate: 0.5
-      maximize:
-      - total_pnl
-      - profit_factor
-      - win_rate
-      minimize:
-      - max_drawdown
+    n_trials: 150
+    opt_end: '2025-10-16'
+    opt_start: '2025-07-01'
+    study_name: btc_ml_optimization_drawdown_focused_v1
+    constraints:
+      max_drawdown_limit: 0.08
+  safe_mode: false
   training:
     min_samples: 500
-    train_end: '2023-12-31'
-    train_start: '2022-03-10'
-    val_end: '2024-12-31'
+    train_end: '2022-12-31'
+    train_start: '2020-01-01'
+    val_end: '2023-12-31'
     val_start: '2023-01-01'
+mt5:
+  enabled: false
+  login: 0
+  password: ''
+  server: ''
+  terminal_path: ''
+  timeout: 60000
+reports:
+  generate_comparison: true
+  output_directory: backtest_results
+  save_equity_curves: true
+  save_individual_results: true
+  save_trade_details: true
 risk:
-  max_drawdown_limit: 30.0
-  risk_percent: 2.0
+  max_drawdown_limit: 8.0
+  risk_percent: 0.5
   sl_atr_multiplier: 1.5
   tp_atr_multiplier: 2.0
 storage:
@@ -134,24 +172,9 @@ storage:
   csv_enabled: true
   path: data
   sqlite_enabled: true
-strategies:
-  # 🎯 ESTRATEGIA ÚNICA ACTIVA - Sistema limpio enfocado en resultados
-  UltraDetailedHeikinAshiML: true
-strategy_params:
-  UltraDetailedHeikinAshiML:
-    kelly_fraction: 0.5
-    max_concurrent_trades: 3
-    max_drawdown: 0.07
-    max_portfolio_heat: 0.06
-    ml_threshold: 0.5
-    stoch_overbought: 85
-    stoch_oversold: 15
-    symbol: BNB/USDT
-    timeframe: 1h  # 🔥 Temporalidad 1h para análisis detallado
-    volume_ratio_min: 1.4
 system:
   auto_launch_dashboard: true
   log_file: logs/bot_trader.log
-  log_level: DEBUG  # 🔍 Temporal para debugging del live trading
+  log_level: INFO
   name: Bot Trader Copilot
-  version: 2.6.0
+  version: 3.0

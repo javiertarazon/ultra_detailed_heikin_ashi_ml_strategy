@@ -449,7 +449,23 @@ class AdvancedDataDownloader:
 
         # Combinar todos los DataFrames
         try:
-            combined_df = pd.concat(all_data_frames, ignore_index=True)
+            # Normalizar timestamps para evitar conflictos de timezone
+            normalized_frames = []
+            for df in all_data_frames:
+                if df is not None and not df.empty:
+                    # Asegurar que timestamp esté en formato consistente
+                    if 'timestamp' in df.columns:
+                        if df['timestamp'].dt.tz is not None:
+                            # Convertir timezone-aware a naive (UTC)
+                            df = df.copy()
+                            df['timestamp'] = df['timestamp'].dt.tz_convert('UTC').dt.tz_localize(None)
+                    normalized_frames.append(df)
+
+            if not normalized_frames:
+                self.logger.error(f"❌ {symbol}: No hay frames válidos para combinar")
+                return None
+
+            combined_df = pd.concat(normalized_frames, ignore_index=True)
 
             # Eliminar duplicados basados en timestamp
             combined_df = combined_df.drop_duplicates(subset=['timestamp'], keep='first')
@@ -457,7 +473,7 @@ class AdvancedDataDownloader:
             # Ordenar por timestamp
             combined_df = combined_df.sort_values('timestamp').reset_index(drop=True)
 
-            self.logger.info(f"📦 {symbol}: Combinados {len(all_data_frames)} lotes → {len(combined_df)} velas totales")
+            self.logger.info(f"📦 {symbol}: Combinados {len(normalized_frames)} lotes → {len(combined_df)} velas totales")
 
             return combined_df
 
@@ -544,8 +560,21 @@ class AdvancedDataDownloader:
         except Exception as e:
             self.logger.error(f"❌ {symbol}: Fallback falló: {e}")
         
+        # ========== ÚLTIMO FALLBACK: YAHOO FINANCE ==========
+        self.logger.info(f"📈 {symbol}: Intentando último fallback con Yahoo Finance")
+        
+        try:
+            df = await self._download_yahoo_finance_symbol(symbol, timeframe, start_date, end_date)
+            if df is not None and len(df) > 0:
+                self.logger.info(f"✅ {symbol}: Yahoo Finance exitoso ({len(df)} velas)")
+                return df
+            else:
+                self.logger.warning(f"⚠️ {symbol}: Yahoo Finance retornó vacío")
+        except Exception as e:
+            self.logger.error(f"❌ {symbol}: Yahoo Finance falló: {e}")
+        
         # ========== FALLO TOTAL ==========
-        self.logger.error(f"❌ {symbol}: Todas las fuentes fallaron (primario={primary_source}, fallback={fallback_source})")
+        self.logger.error(f"❌ {symbol}: Todas las fuentes fallaron (primario={primary_source}, fallback={fallback_source}, yahoo_finance)")
         return None
     
     def _convert_to_ccxt_format(self, symbol: str) -> str:
@@ -708,6 +737,154 @@ class AdvancedDataDownloader:
         elif last_error:
             raise last_error
         return None
+
+    async def _download_yahoo_finance_symbol(self, symbol: str, timeframe: str,
+                                          start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """
+        Descarga datos desde Yahoo Finance como último fallback.
+        Para timeframes altos como 15m con datos antiguos, usa 1d y marca como datos diarios.
+        """
+        try:
+            import yfinance as yf
+        except ImportError:
+            self.logger.error("yfinance no está instalado, no se puede usar Yahoo Finance como fallback")
+            return None
+
+        # Convertir símbolo de CCXT a formato Yahoo Finance
+        yahoo_symbol = self._convert_to_yahoo_format(symbol)
+        self.logger.info(f"📈 {symbol}: Intentando Yahoo Finance con símbolo {yahoo_symbol}")
+
+        # Yahoo Finance limita datos de alta frecuencia a 60 días
+        # Para datos históricos antiguos, usar 1d siempre
+        use_daily = True
+        yahoo_interval = '1d'
+        
+        # Solo usar intervalos altos si el rango es reciente (< 60 días)
+        date_diff = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days
+        if date_diff <= 60 and timeframe in ['1m', '5m', '15m', '30m', '1h']:
+            use_daily = False
+            yahoo_interval = timeframe
+
+        if use_daily:
+            self.logger.info(f"📈 {symbol}: Usando datos diarios (1d) para rango histórico amplio")
+        else:
+            self.logger.info(f"📈 {symbol}: Usando intervalo {yahoo_interval} para rango reciente")
+
+        try:
+            # Descargar datos
+            ticker = yf.Ticker(yahoo_symbol)
+            df = ticker.history(start=start_date, end=end_date, interval=yahoo_interval)
+
+            if df is None or df.empty:
+                self.logger.warning(f"{symbol}: Yahoo Finance retornó datos vacíos para {yahoo_symbol}")
+                return None
+
+            # Limpiar y formatear DataFrame
+            df = df.reset_index()
+            df.columns = df.columns.str.lower()
+
+            # Renombrar columnas para coincidir con formato OHLCV
+            column_mapping = {
+                'datetime': 'timestamp',
+                'date': 'timestamp',
+                'open': 'open',
+                'high': 'high',
+                'low': 'low',
+                'close': 'close',
+                'volume': 'volume'
+            }
+
+            df = df.rename(columns=column_mapping)
+
+            # Mantener solo columnas necesarias
+            required_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            df = df[[col for col in required_cols if col in df.columns]]
+
+            # Asegurar que timestamp esté en el formato correcto
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df = df.sort_values('timestamp').reset_index(drop=True)
+
+            # Filtrar por rango de fechas
+            start_ts = pd.Timestamp(start_date).tz_localize('UTC')
+            end_ts = pd.Timestamp(end_date).tz_localize('UTC')
+            df = df[(df['timestamp'] >= start_ts) & (df['timestamp'] <= end_ts)]
+
+            if df.empty:
+                self.logger.warning(f"{symbol}: No hay datos en el rango solicitado después del filtrado")
+                return None
+
+            # Si usamos datos diarios pero el timeframe solicitado es menor, marcar como datos diarios
+            if use_daily and timeframe != '1d':
+                self.logger.warning(f"{symbol}: Datos diarios usados para timeframe {timeframe} - precisión limitada")
+                df.attrs['source_exchange'] = 'yahoo_finance_daily'
+            else:
+                df.attrs['source_exchange'] = 'yahoo_finance'
+
+            self.logger.info(f"✅ {symbol}: Yahoo Finance exitoso ({len(df)} velas desde {yahoo_symbol})")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"❌ {symbol}: Error descargando desde Yahoo Finance: {e}")
+            return None
+
+    def _convert_to_yahoo_format(self, symbol: str) -> str:
+        """
+        Convierte símbolo de CCXT a formato Yahoo Finance
+
+        Ejemplos:
+          BTC/USDT → BTC-USD
+          ETH/USD → ETH-USD
+          AAPL/USD → AAPL (para acciones)
+        """
+        if '/' not in symbol:
+            return symbol
+
+        base, quote = symbol.split('/', 1)
+
+        # Para cripto, usar formato BASE-QUOTE
+        if quote.upper() in ['USDT', 'USD', 'BTC', 'ETH', 'BNB']:
+            if quote.upper() == 'USDT':
+                return f"{base}-USD"  # BTC-USD en lugar de BTC-USDT
+            else:
+                return f"{base}-{quote}"
+
+        # Para acciones, solo el símbolo base
+        return base
+
+    def _resample_yahoo_data(self, df: pd.DataFrame, target_timeframe: str) -> pd.DataFrame:
+        """
+        Remuestrea datos de Yahoo Finance al timeframe objetivo.
+        Solo para timeframes más altos que 1d.
+        """
+        try:
+            # Mapear timeframe a frecuencia pandas
+            freq_map = {
+                '1w': 'W',
+                '1M': 'M'
+            }
+
+            if target_timeframe not in freq_map:
+                self.logger.warning(f"No se puede remuestrear a {target_timeframe}, devolviendo datos originales")
+                return df
+
+            # Configurar timestamp como índice
+            df = df.set_index('timestamp')
+
+            # Remuestrear usando OHLC
+            resampled = df.resample(freq_map[target_timeframe]).agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna()
+
+            return resampled.reset_index()
+
+        except Exception as e:
+            self.logger.error(f"Error remuestreando datos: {e}")
+            return df
 
     def _download_stock_symbol(self, symbol: str, timeframe: str,
                              start_date: str, end_date: str) -> Optional[pd.DataFrame]:
@@ -1184,7 +1361,7 @@ def download_and_cache_data(symbol: str, timeframe: str, start_date: str, end_da
             end_ts = int(pd.Timestamp(end_date).timestamp()) if end_date else None
 
             df = downloader.storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
-            if df is not None and not df.empty and len(df) > 10:
+            if df is not None and df.empty == False and len(df) > 10:
                 logging.info(f"✅ Datos obtenidos de caché para {symbol}: {len(df)} velas")
                 return df
 

@@ -232,68 +232,156 @@ class OptimizationPipeline:
                 "symbol": symbol
             }
 
-        # Extraer mejores parámetros del frente de Pareto
+        # Extraer mejores parámetros del frente de Pareto - SELECCIONAR POR MÁXIMO P&L
         study, pareto_trials = opt_results
         if pareto_trials and len(pareto_trials) > 0:
-            best_trial = pareto_trials[0]  # Tomar el primer trial del frente de Pareto
+            # Seleccionar el trial con el máximo P&L del frente de Pareto
+            best_trial = max(pareto_trials, key=lambda t: t.values[3])  # values[3] es total_pnl
             best_params = best_trial.params
+            best_pnl = best_trial.values[3]
+            logger.info(f"Mejor trial seleccionado por P&L máximo: ${best_pnl:.2f}")
             logger.info(f"Mejores parámetros encontrados: {best_params}")
         else:
             logger.warning("No se encontraron trials en el frente de Pareto, usando parámetros por defecto")
             best_params = {}
 
-        # Crear estrategia con parámetros optimizados
+        # COMPARAR CON PARÁMETROS ORIGINALES ANTES DE APLICAR
+        logger.info("🔍 Comparando parámetros originales vs optimizados...")
+        original_results = self._run_backtest_with_params(symbol, {}, "originales")
+        optimized_results = self._run_backtest_with_params(symbol, best_params, "optimizados")
+
+        # Comparar resultados
+        original_pnl = original_results.get('total_pnl', 0)
+        optimized_pnl = optimized_results.get('total_pnl', 0)
+
+        logger.info(f"🔍 COMPARACIÓN DE PARÁMETROS:")
+        logger.info(f"   Parámetros originales: P&L = ${original_pnl:.2f}")
+        logger.info(f"   Parámetros optimizados: P&L = ${optimized_pnl:.2f}")
+        logger.info(f"   Mejora: ${optimized_pnl - original_pnl:.2f} ({((optimized_pnl/original_pnl-1)*100) if original_pnl != 0 else 0:.1f}%)")
+
+        # DECISIÓN: Usar optimizados solo si mejoran significativamente los originales
+        improvement_threshold = 0.05  # 5% de mejora mínima
+        if optimized_pnl > original_pnl * (1 + improvement_threshold):
+            logger.info(f"✅ Usando parámetros OPTIMIZADOS (mejora > {improvement_threshold*100:.0f}%)")
+            final_params = best_params
+            final_results = optimized_results
+            final_results['params_source'] = 'optimized'
+        else:
+            logger.warning(f"⚠️ Parámetros optimizados NO mejoran significativamente los originales. Usando ORIGINALES.")
+            logger.warning(f"   Recomendación: Revisar configuración de optimización o aumentar número de trials.")
+            final_params = {}
+            final_results = original_results
+            final_results['params_source'] = 'original'
+
+        # Guardar resultados de comparación
+        comparison_results = {
+            'original_results': original_results,
+            'optimized_results': optimized_results,
+            'comparison': {
+                'original_pnl': original_pnl,
+                'optimized_pnl': optimized_pnl,
+                'improvement': optimized_pnl - original_pnl,
+                'improvement_pct': ((optimized_pnl/original_pnl-1)*100) if original_pnl != 0 else 0,
+                'params_used': final_results['params_source']
+            }
+        }
+
+        # Actualizar config solo si usamos parámetros optimizados
+        if final_results['params_source'] == 'optimized':
+            self._update_config_with_optimized_params(symbol, final_params)
+
+        # Agregar comparación a resultados finales
+        final_results['comparison'] = comparison_results['comparison']
+
+        return final_results
+
+    def _run_backtest_with_params(self, symbol, params, params_type="desconocidos"):
+        """
+        Ejecuta un backtest con parámetros específicos.
+
+        Args:
+            symbol (str): Símbolo a testear
+            params (dict): Parámetros a usar
+            params_type (str): Tipo de parámetros para logging
+
+        Returns:
+            dict: Resultados del backtest
+        """
+        logger.info(f"Ejecutando backtest con parámetros {params_type} para {symbol}")
+
+        # Crear estrategia con parámetros específicos
         if isinstance(self.config, dict):
             strategy_config = self.config.copy()
-            strategy_config.update(best_params)
+            strategy_config.update(params)
         else:
             # Es un objeto Config - convertir a dict y actualizar
             strategy_config = dataclasses.asdict(self.config)
-            strategy_config.update(best_params)
+            strategy_config.update(params)
 
         strategy = UltraDetailedHeikinAshiMLStrategy(config=strategy_config)
-
-        # ACTIVAR MODO OPTIMIZACIÓN para evitar re-entrenamiento ML durante backtest final
         strategy._optimization_mode = True
 
-        # Cargar datos para backtest desde SQLite (SOLO DATOS REALES)
-        logger.info("Cargando datos para backtest final desde base de datos...")
-
-        # Importar StorageManager para acceder a datos reales
+        # Cargar datos para backtest desde SQLite
         from utils.storage import DataStorage
-        
-        # Crear conexión a la base de datos
-        storage = DataStorage(db_path=f"{self.config.storage.path}/data.db")
-        
-        # Convertir fechas a timestamps
+        storage = DataStorage()
+
         start_ts = int(pd.Timestamp(self.opt_start).timestamp()) if self.opt_start else None
         end_ts = int(pd.Timestamp(self.opt_end).timestamp()) if self.opt_end else None
-        
-        # Tabla para el símbolo y timeframe
         table_name = f"{symbol.replace('/', '_')}_{self.timeframe}"
-        
-        # Cargar datos reales desde SQLite
-        data = storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
-        
-        if data is None or data.empty:
-            logger.error(f"❌ No se encontraron datos reales para {symbol} en el período de optimización")
-            return {
-                "error": f"No hay datos disponibles para {symbol} en período {self.opt_start} a {self.opt_end}",
-                "status": "error"
-            }
 
-        # Asegurar high >= max(open, close) y low <= min(open, close)
+        data = storage.query_data(table_name, start_ts=start_ts, end_ts=end_ts)
+
+        if data is None or data.empty:
+            logger.error(f"No hay datos para backtest con parámetros {params_type}")
+            return {"total_pnl": 0, "error": "No data available"}
+
+        # Asegurar integridad de datos
         data['high'] = np.maximum(data[['open', 'close']].max(axis=1), data['high'])
         data['low'] = np.minimum(data[['open', 'close']].min(axis=1), data['low'])
 
         # Ejecutar backtest
         try:
-            backtest_results = strategy.run(data, symbol, self.timeframe)
-            logger.info(f"Backtest final completado para {symbol}")
-            return backtest_results
+            results = strategy.run(data, symbol, self.timeframe)
+            logger.info(f"Backtest {params_type} completado: P&L = ${results.get('total_pnl', 0):.2f}")
+            return results
         except Exception as e:
-            logger.error(f"Error durante backtest final: {e}")
-            raise
+            logger.error(f"Error en backtest {params_type}: {e}")
+            return {"total_pnl": 0, "error": str(e)}
+
+    def _update_config_with_optimized_params(self, symbol, params):
+        """
+        Actualiza la configuración con parámetros optimizados.
+
+        Args:
+            symbol (str): Símbolo
+            params (dict): Parámetros optimizados
+        """
+        try:
+            # Cargar configuración actual
+            config = load_config_from_yaml()
+
+            # Preparar parámetros optimizados para el símbolo
+            symbol_key = symbol.replace('/', '_').replace('.', '_')
+            optimized_params = getattr(config.backtesting, 'optimized_parameters', {}) or {}
+
+            # Actualizar parámetros para este símbolo
+            optimized_params[symbol_key] = params
+            config.backtesting.optimized_parameters = optimized_params
+
+            # Guardar configuración actualizada
+            import yaml
+            config_path = Path("descarga_datos/config/config.yaml")
+
+            # Convertir config a dict para guardar
+            config_dict = dataclasses.asdict(config)
+
+            with open(config_path, 'w') as f:
+                yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+
+            logger.info(f"Configuración actualizada con parámetros optimizados para {symbol}")
+
+        except Exception as e:
+            logger.error(f"Error actualizando configuración: {e}")
 
     def _get_default_parameters(self, symbol):
         """

@@ -26,9 +26,10 @@ from utils.logger import setup_logging, get_logger
 print('[ORCHESTRATOR] Logger utilities importadas')
 
 # Variable global para las estrategias disponibles
-# 🎯 SISTEMA LIMPIO - Solo estrategia exitosa UltraDetailedHeikinAshiML
+# 🎯 SISTEMA COMPLETO - Estrategia principal con ML real
 STRATEGY_CLASSES = {
     'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
+    'SimpleTechnical': ('strategies.simple_technical_strategy', 'SimpleTechnicalStrategy'),
 }
 
 def load_strategies_from_config(config):
@@ -49,9 +50,10 @@ def load_strategies_from_config(config):
         backtesting_config = config.get('backtesting', {})
         strategy_config = backtesting_config.get('strategies', {})
 
-    # 🎯 SISTEMA LIMPIO - Mapeo de estrategia única exitosa
+    # 🎯 SISTEMA COMPLETO - Mapeo de estrategia principal con ML real
     strategy_classes = {
         'UltraDetailedHeikinAshiML': ('strategies.ultra_detailed_heikin_ashi_ml_strategy', 'UltraDetailedHeikinAshiMLStrategy'),
+        'SimpleTechnical': ('strategies.simple_technical_strategy', 'SimpleTechnicalStrategy'),
     }
     
     # Exportamos como variable global para las pruebas

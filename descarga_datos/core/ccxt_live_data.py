@@ -198,6 +198,7 @@ class CCXTLiveDataProvider:
     def get_historical_data(self, symbol: str, timeframe: str, limit: int = 100) -> Optional[pd.DataFrame]:
         """
         Obtiene datos históricos OHLCV para un símbolo y timeframe específico.
+        Si no hay suficientes barras disponibles, usa timeframe más bajo y agrupa.
 
         Args:
             symbol: Símbolo del par (ej: 'BTC/USDT')
@@ -220,14 +221,29 @@ class CCXTLiveDataProvider:
                 if (datetime.now() - cached_data['timestamp']).seconds < 300:
                     return cached_data['data']
 
-            # Obtener datos desde CCXT
+            # INTENTAR OBTENER DATOS EN TIMEFRAME SOLICITADO
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
 
-            if not ohlcv:
-                self.logger.warning(f"No se obtuvieron datos para {symbol} {timeframe}")
-                return None
+            if not ohlcv or len(ohlcv) < limit:
+                self.logger.warning(f"Insuficientes datos en {timeframe} ({len(ohlcv) if ohlcv else 0}/{limit}). Intentando agrupar desde timeframe más bajo...")
 
-            # Convertir a DataFrame
+                # ESTRATEGIA DE RESPALDO: Usar timeframe más bajo y agrupar
+                df = self._get_data_with_aggregation(symbol, timeframe, limit)
+                if df is not None and len(df) >= limit:
+                    # Cachear datos agrupados
+                    self.data_cache[cache_key] = {
+                        'data': df.copy(),
+                        'timestamp': datetime.now()
+                    }
+                    # GUARDAR DATOS EN VIVO AUTOMÁTICAMENTE
+                    self._save_live_data(symbol, timeframe, df)
+                    self.logger.info(f"Datos históricos agrupados obtenidos: {symbol} {timeframe} - {len(df)} barras")
+                    return df
+                else:
+                    self.logger.error(f"No se pudieron obtener suficientes datos ni con agrupación para {symbol} {timeframe}")
+                    return None
+
+            # Convertir a DataFrame (caso normal)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
@@ -240,6 +256,9 @@ class CCXTLiveDataProvider:
                 'data': df.copy(),
                 'timestamp': datetime.now()
             }
+
+            # GUARDAR DATOS EN VIVO AUTOMÁTICAMENTE
+            self._save_live_data(symbol, timeframe, df)
 
             self.logger.info(f"Datos históricos obtenidos: {symbol} {timeframe} - {len(df)} barras")
             return df
@@ -349,6 +368,103 @@ class CCXTLiveDataProvider:
                 'free': balance.get('free', {}),
                 'used': balance.get('used', {})
             }
+
         except Exception as e:
             self.logger.error(f"Error obteniendo balance de cuenta: {e}")
+            return None
+
+    def _save_live_data(self, symbol: str, timeframe: str, data: pd.DataFrame) -> None:
+        """
+        Guarda los datos recolectados en live en la carpeta live_data
+        """
+        try:
+            # Crear nombre de archivo seguro
+            safe_symbol = symbol.replace('/', '_')
+            filename = f"{safe_symbol}_{timeframe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            filepath = self.data_path / filename
+
+            # Guardar datos
+            data.to_csv(filepath)
+            self.logger.debug(f"✅ Datos live guardados: {filepath}")
+
+        except Exception as e:
+            self.logger.error(f"Error guardando datos live para {symbol} {timeframe}: {e}")
+
+    def _get_data_with_aggregation(self, symbol: str, target_timeframe: str, limit: int) -> Optional[pd.DataFrame]:
+        """
+        Obtiene datos usando timeframe más bajo y los agrupa para formar el timeframe objetivo.
+        Ejemplo: Si target_timeframe='4h', usa '15m' y agrupa 16 barras de 15m en 1 barra de 4h.
+
+        Args:
+            symbol: Símbolo del par
+            target_timeframe: Timeframe objetivo (ej: '4h')
+            limit: Número de barras objetivo
+
+        Returns:
+            DataFrame con datos agrupados o None si hay error
+        """
+        try:
+            # MAPA DE TIMEFRAMES PARA AGRUPACIÓN
+            timeframe_map = {
+                '1d': ('4h', 6),      # 1 día = 6 barras de 4h
+                '4h': ('15m', 16),    # 4h = 16 barras de 15m
+                '1h': ('5m', 12),     # 1h = 12 barras de 5m
+                '30m': ('5m', 6),     # 30m = 6 barras de 5m
+                '15m': ('1m', 15),    # 15m = 15 barras de 1m
+            }
+
+            if target_timeframe not in timeframe_map:
+                self.logger.error(f"No hay estrategia de agrupación definida para {target_timeframe}")
+                return None
+
+            source_timeframe, bars_per_group = timeframe_map[target_timeframe]
+
+            # Calcular cuántas barras del timeframe fuente necesitamos
+            source_limit = limit * bars_per_group
+
+            self.logger.info(f"Obteniendo {source_limit} barras de {source_timeframe} para agrupar en {limit} barras de {target_timeframe}")
+
+            # Obtener datos del timeframe fuente
+            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe=source_timeframe, limit=source_limit)
+
+            if not ohlcv or len(ohlcv) < source_limit:
+                self.logger.warning(f"Insuficientes datos fuente: {len(ohlcv) if ohlcv else 0}/{source_limit} barras de {source_timeframe}")
+                return None
+
+            # Convertir a DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+
+            # AGRUPAR DATOS: Combinar 'bars_per_group' barras en una
+            grouped_data = []
+
+            for i in range(0, len(df), bars_per_group):
+                group = df.iloc[i:i+bars_per_group]
+                if len(group) == bars_per_group:  # Solo grupos completos
+                    # Crear barra agrupada
+                    aggregated_bar = {
+                        'timestamp': group.index[0],  # Timestamp del inicio del grupo
+                        'open': group['open'].iloc[0],  # Open del primer precio
+                        'high': group['high'].max(),   # Máximo high del grupo
+                        'low': group['low'].min(),     # Mínimo low del grupo
+                        'close': group['close'].iloc[-1],  # Close del último precio
+                        'volume': group['volume'].sum()    # Suma de volúmenes
+                    }
+                    grouped_data.append(aggregated_bar)
+
+            if len(grouped_data) < limit:
+                self.logger.warning(f"Agrupación incompleta: {len(grouped_data)}/{limit} barras")
+                return None
+
+            # Crear DataFrame final
+            result_df = pd.DataFrame(grouped_data)
+            result_df['timestamp'] = pd.to_datetime(result_df['timestamp'])
+            result_df.set_index('timestamp', inplace=True)
+
+            self.logger.info(f"✅ Datos agrupados exitosamente: {len(result_df)} barras de {target_timeframe} desde {source_timeframe}")
+            return result_df
+
+        except Exception as e:
+            self.logger.error(f"Error en agrupación de datos para {symbol} {target_timeframe}: {e}")
             return None
