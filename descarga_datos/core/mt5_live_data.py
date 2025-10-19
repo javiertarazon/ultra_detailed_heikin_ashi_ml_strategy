@@ -10,9 +10,13 @@ import numpy as np
 from datetime import datetime, timedelta
 from utils.logger import get_logger
 
-logger = get_logger("__name__)
+logger = get_logger(__name__)
+import threading
+
+class MT5LiveDataProvider:
+    def __init__(self, config=None):
         self.connected = False
-        self.connection_lock = threading.Lock(")
+        self.connection_lock = threading.Lock()
         self.data_cache = {}  # Cache de datos por símbolo y timeframe
         self.market_status = {}  # Estado del mercado por símbolo
         
@@ -218,7 +222,7 @@ logger = get_logger("__name__)
             
             return True
     
-    def get_live_data(self, symbol: str, timeframe: str, bars: int = 100) -> Optional[pd.DataFrame]:
+    def get_live_data(self, symbol: str, timeframe: str, bars: int = 100, with_indicators: bool = True) -> Optional[pd.DataFrame]:
         """
         Obtiene datos en tiempo real para un símbolo y timeframe específico.
         
@@ -226,9 +230,10 @@ logger = get_logger("__name__)
             symbol: Símbolo para obtener datos (ej: "EURUSD", "AAPL.US")
             timeframe: Timeframe en formato MT5 (ej: "1h", "4h", "1d")
             bars: Número de barras a obtener
+            with_indicators: Si es True, calcula indicadores técnicos
         
         Returns:
-            DataFrame con datos OHLCV o None si falla
+            DataFrame con datos OHLCV e indicadores técnicos o None si falla
         """
         if not self.ensure_connection():
             self.logger.error("No hay conexión con MT5")

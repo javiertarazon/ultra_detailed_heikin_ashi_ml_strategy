@@ -23,6 +23,9 @@ import queue
 import json
 from pathlib import Path
 import os
+import asyncio
+from datetime import datetime, timedelta
+import numpy as np
 
 # Importar componentes CCXT
 from core.ccxt_live_data import CCXTLiveDataProvider
@@ -31,7 +34,7 @@ from core.ccxt_order_executor import CCXTOrderExecutor, OrderType
 # Importar utilidades
 from config.config_loader import load_config
 from utils.logger import setup_logger
-from risk_management.risk_management import apply_risk_management
+from risk_management.risk_management import apply_risk_management, get_risk_manager
 
 # Configurar logging
 logger = setup_logger('CCXTLiveTradingOrchestrator')
@@ -88,6 +91,12 @@ class CCXTLiveTradingOrchestrator:
 
         # Cola para procesamiento seguro de señales
         self.signal_queue = queue.Queue()
+        
+        # Variables para el monitoreo continuo de posiciones
+        self.position_monitor_interval = 60  # Intervalo de monitoreo en segundos
+        self.position_monitor_task = None
+        self.position_update_lock = threading.Lock()
+        self.stop_monitoring = False
 
         # Métricas en vivo
         self.live_metrics = {
@@ -183,6 +192,9 @@ class CCXTLiveTradingOrchestrator:
 
         # Iniciar actualizaciones de datos en tiempo real
         self.data_provider.start_real_time_updates()
+        
+        # Iniciar monitoreo continuo de posiciones
+        self.start_position_monitoring()
 
         logger.info("Iniciando trading en vivo...")
 
@@ -191,6 +203,8 @@ class CCXTLiveTradingOrchestrator:
             cycle_count = 0
 
             while self.running:
+                logger.debug(f"🔄 Loop de trading - Cycle: {cycle_count}, Running: {self.running}")
+                
                 # Verificar límite de tiempo
                 if duration_minutes and (time.time() - start_time) > (duration_minutes * 60):
                     logger.info(f"Duración límite alcanzada ({duration_minutes} minutos)")
@@ -198,6 +212,7 @@ class CCXTLiveTradingOrchestrator:
 
                 # Procesar señales de trading cada 60 segundos
                 if cycle_count % 60 == 0:
+                    logger.info(f"🎯 Procesando señales de trading - Cycle: {cycle_count}")
                     self._process_trading_signals()
 
                     # Verificar y gestionar posiciones abiertas
@@ -222,14 +237,14 @@ class CCXTLiveTradingOrchestrator:
         """
         Procesa las señales de trading generadas por las estrategias.
         """
-        logger.debug(f"🔍 Procesando señales de trading...")
+        logger.info(f"🔍 Procesando señales de trading...")
         
         # Obtener datos actuales para cada símbolo
         symbols = self.backtesting_config.get('symbols', [])
-        logger.debug(f"📊 Símbolos configurados: {symbols}")
+        logger.info(f"📊 Símbolos configurados: {symbols}")
         
         for symbol in symbols:
-            logger.debug(f"📈 Analizando {symbol}...")
+            logger.info(f"📈 Analizando {symbol}...")
             
             # Verificar estado del mercado
             market_status = self.data_provider.get_market_status(symbol)
@@ -239,32 +254,26 @@ class CCXTLiveTradingOrchestrator:
                 logger.debug(f"⏸️ Mercado {symbol} cerrado, saltando...")
                 continue  # Mercado cerrado
 
-            # Obtener datos históricos recientes
-            logger.debug(f"📥 Obteniendo datos históricos para {symbol}...")
+            # Obtener datos históricos recientes con indicadores incluidos
+            logger.debug(f"📥 Obteniendo datos históricos con indicadores para {symbol}...")
             # Usar timeframe configurado en lugar de hardcodeado
             timeframe = self.backtesting_config.get('timeframe', '4h')
             # Obtener suficientes barras para compensar NaN iniciales después de calcular indicadores
-            data = self.data_provider.get_historical_data(symbol, timeframe, limit=80)
+            # Aseguramos que with_indicators=True para que ya vengan calculados
+            data_with_indicators = self.data_provider.get_historical_data(symbol, timeframe, limit=80, with_indicators=True)
             
-            if data is None or data.empty:
+            if data_with_indicators is None or data_with_indicators.empty:
                 logger.warning(f"⚠️ No hay datos disponibles para {symbol}")
                 continue
             
-            logger.info(f"✅ Datos obtenidos para {symbol}: {len(data)} barras")
-
-            # CALCULAR INDICADORES TÉCNICOS ANTES DE PASAR A ESTRATEGIAS
-            logger.debug(f"🔧 Calculando indicadores técnicos para {symbol}...")
+            logger.info(f"✅ Datos obtenidos con indicadores para {symbol}: {len(data_with_indicators)} barras")
+            
+            # GUARDAR DATOS CON INDICADORES PARA ANÁLISIS POSTERIOR
             try:
-                indicators = TechnicalIndicators()
-                data_with_indicators = indicators.calculate_all_indicators_unified(data.copy())
-                logger.info(f"✅ Indicadores calculados para {symbol}: {len(data_with_indicators)} barras")
-                
-                # GUARDAR DATOS CON INDICADORES PARA ANÁLISIS POSTERIOR
                 self._save_data_with_indicators(symbol, timeframe, data_with_indicators)
-                
             except Exception as e:
-                logger.error(f"❌ Error calculando indicadores para {symbol}: {e}")
-                continue
+                logger.error(f"❌ Error guardando datos con indicadores para {symbol}: {e}")
+                # Continuamos de todas formas ya que tenemos los datos en memoria
 
             # Aplicar cada estrategia habilitada
             logger.debug(f"🎯 Estrategias disponibles: {list(self.strategy_classes.keys())}")
@@ -278,7 +287,12 @@ class CCXTLiveTradingOrchestrator:
                         logger.debug(f"📦 Instanciando estrategia {strategy_name}...")
                         module = __import__(module_path, fromlist=[class_name])
                         strategy_class = getattr(module, class_name)
-                        self.strategy_instances[strategy_name] = strategy_class()
+                        # Pasar config para que la estrategia cargue parámetros optimizados igual que en backtest
+                        try:
+                            self.strategy_instances[strategy_name] = strategy_class(config=self.config)
+                        except TypeError:
+                            # Fallback si no acepta config
+                            self.strategy_instances[strategy_name] = strategy_class()
                         logger.debug(f"✅ Estrategia {strategy_name} instanciada")
 
                     strategy = self.strategy_instances[strategy_name]
@@ -286,7 +300,14 @@ class CCXTLiveTradingOrchestrator:
                     # Ejecutar estrategia usando LIVE SIGNAL METHOD
                     logger.debug(f"⚙️ Ejecutando strategy.get_live_signal() para {symbol}...")
                     result = strategy.get_live_signal(data_with_indicators, symbol)
-                    logger.info(f"📊 Resultado de {strategy_name}: {result.get('signal', 'NO_SIGNAL') if result else 'NONE'}")
+                    # Mejorar logging del resultado para depuración en vivo
+                    if result:
+                        sig = result.get('signal', 'NO_SIGNAL')
+                        reason = result.get('reason', '')
+                        ml_conf = result.get('ml_confidence', result.get('signal_data', {}).get('ml_confidence', None))
+                        logger.info(f"📊 Resultado de {strategy_name}: {sig} - reason={reason} - ml_conf={ml_conf}")
+                    else:
+                        logger.info(f"📊 Resultado de {strategy_name}: NONE")
 
                     # Procesar señales con instancia de estrategia
                     self._handle_strategy_signal(strategy_name, symbol, result, strategy)
@@ -360,10 +381,83 @@ class CCXTLiveTradingOrchestrator:
         except Exception as e:
             logger.error(f"Error manejando señal de estrategia {strategy_name}: {e}")
 
+    def _update_trailing_stop(self, ticket: str, position: Dict, current_price: float) -> bool:
+        """
+        Actualiza dinámicamente el trailing stop de una posición.
+        
+        Args:
+            ticket: ID de la posición
+            position: Datos de la posición
+            current_price: Precio actual del mercado
+            
+        Returns:
+            bool: True si se actualizó el stop loss, False si no
+        """
+        try:
+            entry_price = position.get('entry_price')
+            current_stop = position.get('stop_loss')
+            trailing_stop_pct = position.get('trailing_stop_pct', 0.80)
+            direction = position.get('type', 'buy')
+            
+            if not entry_price or not current_stop:
+                return False
+            
+            # Calcular profit actual
+            if direction == 'buy':
+                unrealized_pnl = current_price - entry_price
+                profit_amount = max(0, unrealized_pnl)
+            else:  # sell/short
+                unrealized_pnl = entry_price - current_price
+                profit_amount = max(0, unrealized_pnl)
+            
+            # Solo actualizar si hay ganancia
+            if profit_amount > 0:
+                # Calcular nuevo stop loss basado en trailing stop
+                new_stop_distance = profit_amount * trailing_stop_pct
+                
+                if direction == 'buy':
+                    # Para BUY: nuevo stop = entry + (profit * trailing_pct)
+                    new_stop_price = entry_price + new_stop_distance
+                    
+                    # Solo actualizar si el nuevo stop es MAYOR que el actual (sube el stop)
+                    if new_stop_price > current_stop:
+                        position['stop_loss'] = new_stop_price
+                        position['trailing_stop_updated'] = True
+                        position['highest_price'] = max(position.get('highest_price', current_price), current_price)
+                        
+                        self.active_positions[ticket] = position
+                        logger.info(f"🔼 Trailing stop actualizado para {ticket}: "
+                                  f"Stop {current_stop:.2f} → {new_stop_price:.2f} "
+                                  f"(Profit: {profit_amount:.2f}, {trailing_stop_pct:.0%})")
+                        return True
+                        
+                else:  # sell/short
+                    # Para SELL: nuevo stop = entry - (profit * trailing_pct)
+                    new_stop_price = entry_price - new_stop_distance
+                    
+                    # Solo actualizar si el nuevo stop es MENOR que el actual (baja el stop)
+                    if new_stop_price < current_stop:
+                        position['stop_loss'] = new_stop_price
+                        position['trailing_stop_updated'] = True
+                        position['lowest_price'] = min(position.get('lowest_price', current_price), current_price)
+                        
+                        self.active_positions[ticket] = position
+                        logger.info(f"🔽 Trailing stop actualizado para {ticket}: "
+                                  f"Stop {current_stop:.2f} → {new_stop_price:.2f} "
+                                  f"(Profit: {profit_amount:.2f}, {trailing_stop_pct:.0%})")
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error actualizando trailing stop para {ticket}: {e}")
+            return False
+
     def _manage_open_positions(self):
         """
         Gestiona las posiciones abiertas consultando a la estrategia sobre cierres.
         La estrategia maneja trailing stops, stop loss y take profit.
+        También actualiza dinámicamente el trailing stop cuando hay ganancias.
         """
         positions_to_close = []
 
@@ -375,6 +469,13 @@ class CCXTLiveTradingOrchestrator:
                     continue
 
                 current_price = current_price_info['last']
+                
+                # NUEVO: Actualizar trailing stop dinámicamente
+                if position.get('trailing_stop_pct') and position.get('entry_price'):
+                    updated = self._update_trailing_stop(ticket, position, current_price)
+                    if updated:
+                        # Si se actualizó el stop, refrescar la posición
+                        position = self.active_positions[ticket]
 
                 # Consultar a la estrategia sobre si debe cerrar la posición
                 strategy_name = position.get('strategy', 'default')
@@ -414,6 +515,11 @@ class CCXTLiveTradingOrchestrator:
 
         # Cerrar posiciones identificadas
         for ticket, close_info in positions_to_close:
+            # Verificar primero si la posición existe en active_positions
+            if ticket not in self.active_positions:
+                logger.warning(f"Posición {ticket} no encontrada en active_positions, no se puede cerrar")
+                continue
+                
             if self.order_executor.close_position(ticket):
                 position = self.active_positions[ticket]
                 pnl = position.get('pnl', 0)
@@ -451,11 +557,225 @@ class CCXTLiveTradingOrchestrator:
         except Exception as e:
             logger.error(f"Error actualizando métricas: {e}")
 
+    def start_position_monitoring(self):
+        """
+        Inicia un hilo separado para monitorear continuamente las posiciones abiertas.
+        """
+        if self.position_monitor_task is None:
+            logger.info("Iniciando monitoreo continuo de posiciones...")
+            self.stop_monitoring = False
+            self.position_monitor_task = threading.Thread(
+                target=self._position_monitor_loop, 
+                name="PositionMonitor"
+            )
+            self.position_monitor_task.daemon = True
+            self.position_monitor_task.start()
+            logger.info("✅ Monitoreo de posiciones iniciado en segundo plano")
+        else:
+            logger.warning("El monitoreo de posiciones ya está activo")
+    
+    def stop_position_monitoring(self):
+        """
+        Detiene el monitoreo continuo de posiciones.
+        """
+        if self.position_monitor_task and self.position_monitor_task.is_alive():
+            logger.info("Deteniendo monitoreo de posiciones...")
+            self.stop_monitoring = True
+            self.position_monitor_task.join(timeout=5.0)
+            self.position_monitor_task = None
+            logger.info("✅ Monitoreo de posiciones detenido")
+        else:
+            logger.info("No hay monitoreo activo de posiciones")
+    
+    def _position_monitor_loop(self):
+        """
+        Loop principal del monitor de posiciones. Verifica continuamente el estado
+        de las posiciones abiertas y actualiza su información.
+        """
+        logger.info("Monitor de posiciones iniciado - Intervalo: {}s".format(self.position_monitor_interval))
+        
+        try:
+            while not self.stop_monitoring:
+                try:
+                    self._update_open_positions()
+                    time.sleep(self.position_monitor_interval)
+                except Exception as e:
+                    logger.error(f"Error en ciclo de monitoreo de posiciones: {e}")
+                    time.sleep(self.position_monitor_interval)
+        except Exception as e:
+            logger.error(f"Error fatal en monitoreo de posiciones: {e}")
+        finally:
+            logger.info("Monitor de posiciones finalizado")
+    
+    def _update_open_positions(self):
+        """
+        Actualiza la información de todas las posiciones abiertas desde el exchange.
+        """
+        if not self.active_positions:
+            return
+            
+        with self.position_update_lock:
+            try:
+                # Obtener información actualizada de posiciones desde el exchange
+                updated_positions = self.order_executor.get_open_positions()
+                current_prices = {}
+                
+                # Obtener precios actuales para cálculos
+                # Verificar si updated_positions es una lista (como debería ser)
+                if isinstance(updated_positions, list):
+                    unique_symbols = set(pos['symbol'] for pos in updated_positions)
+                else:
+                    # Para compatibilidad si en algún momento updated_positions fuera un diccionario
+                    unique_symbols = set(pos['symbol'] for pos in updated_positions.values())
+                    
+                for symbol in unique_symbols:
+                    try:
+                        current_prices[symbol] = self.data_provider.get_last_price(symbol)
+                    except Exception as e:
+                        logger.error(f"Error obteniendo precio para {symbol}: {e}")
+                
+                # Actualizar información en memoria
+                # Verificar si updated_positions es una lista
+                if isinstance(updated_positions, list):
+                    # Para cada posición en la lista
+                    for position in updated_positions:
+                        ticket = position.get('id') or position.get('ticket') or position.get('position_id')
+                        if not ticket:
+                            logger.warning("Posición sin ID encontrada, omitiendo")
+                            continue
+                        
+                        symbol = position['symbol']
+                        if symbol in current_prices:
+                            current_price = current_prices[symbol]
+                            
+                            # Obtener tamaño de la posición (puede ser 'size' o 'quantity')
+                            position_size = position.get('size', position.get('quantity', 0))
+                            
+                            # Calcular PnL actual
+                            if position['type'] == 'buy':
+                                pnl_pct = (current_price / position['entry_price'] - 1) * 100
+                            else:  # sell/short
+                                pnl_pct = (1 - current_price / position['entry_price']) * 100
+                                
+                            position['current_price'] = current_price
+                            position['current_pnl_pct'] = pnl_pct
+                            position['current_pnl'] = position_size * pnl_pct / 100
+                            position['last_updated'] = datetime.now().isoformat()
+                            
+                            # Obtener el riesgo aplicado a esta operación
+                            risk_manager = get_risk_manager()
+                            risk_metrics = risk_manager.calculate_position_risk(
+                                entry_price=position['entry_price'],
+                                current_price=current_price,
+                                stop_loss=position['stop_loss'],
+                                position_size=position_size,
+                                direction=position['type']
+                            )
+                            position['risk_metrics'] = risk_metrics
+                            
+                            # Guardar posición actualizada
+                            self.active_positions[ticket] = position
+                            
+                            # Registrar actualización en el log
+                            logger.info(f"Posición {ticket} actualizada: {symbol} {position['type']} - "
+                                       f"P&L: {position['current_pnl']:.2f} ({pnl_pct:.2f}%)")
+                else:
+                    # Caso de compatibilidad si updated_positions es un diccionario
+                    for ticket, position in updated_positions.items():
+                        symbol = position['symbol']
+                        if symbol in current_prices:
+                            current_price = current_prices[symbol]
+                            
+                            # Obtener tamaño de la posición (puede ser 'size' o 'quantity')
+                            position_size = position.get('size', position.get('quantity', 0))
+                            
+                            # Calcular PnL actual
+                            if position['type'] == 'buy':
+                                pnl_pct = (current_price / position['entry_price'] - 1) * 100
+                            else:  # sell/short
+                                pnl_pct = (1 - current_price / position['entry_price']) * 100
+                                
+                            position['current_price'] = current_price
+                            position['current_pnl_pct'] = pnl_pct
+                            position['current_pnl'] = position_size * pnl_pct / 100
+                            position['last_updated'] = datetime.now().isoformat()
+                            
+                            # Obtener el riesgo aplicado a esta operación
+                            risk_manager = get_risk_manager()
+                            risk_metrics = risk_manager.calculate_position_risk(
+                                entry_price=position['entry_price'],
+                                current_price=current_price,
+                                stop_loss=position['stop_loss'],
+                                position_size=position_size,
+                                direction=position['type']
+                            )
+                            position['risk_metrics'] = risk_metrics
+                            
+                            # Guardar posición actualizada
+                            self.active_positions[ticket] = position
+                            
+                            # Registrar actualización en el log
+                            logger.info(f"Posición {ticket} actualizada: {symbol} {position['type']} - "
+                                       f"P&L: {position['current_pnl']:.2f} ({pnl_pct:.2f}%)")
+                
+                # Guardar el historial completo
+                self._save_position_updates()
+                
+            except Exception as e:
+                logger.error(f"Error actualizando posiciones: {e}")
+    
+    def _save_position_updates(self):
+        """
+        Guarda las actualizaciones de posiciones en un archivo para análisis posterior.
+        """
+        try:
+            # Función helper para convertir datetime y numpy types a JSON serializable
+            def convert_to_json_serializable(obj):
+                """Convierte objetos no serializables a formatos JSON"""
+                if isinstance(obj, dict):
+                    return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_to_json_serializable(item) for item in obj]
+                elif isinstance(obj, datetime):
+                    return obj.isoformat()
+                elif hasattr(obj, 'item'):  # numpy types
+                    return obj.item()
+                elif isinstance(obj, (np.integer, np.floating)):
+                    return float(obj)
+                else:
+                    return obj
+            
+            # Guardar snapshot actual de posiciones (convertir a JSON serializable)
+            snapshot = {
+                'timestamp': datetime.now().isoformat(),
+                'positions': {k: convert_to_json_serializable(v.copy()) for k, v in self.active_positions.items()}
+            }
+            
+            # Añadir a historial y guardar en archivo
+            self.position_history.append(snapshot)
+            
+            # Guardar en archivo cada 5 actualizaciones para no sobrecargar el sistema
+            if len(self.position_history) % 5 == 0:
+                history_dir = Path("data/live_data/position_monitoring")
+                history_dir.mkdir(parents=True, exist_ok=True)
+                
+                filename = history_dir / f"positions_{datetime.now().strftime('%Y%m%d')}.json"
+                with open(filename, 'w') as f:
+                    # Convertir position_history a JSON serializable antes de guardar
+                    serializable_history = [convert_to_json_serializable(pos) for pos in self.position_history[-20:]]
+                    json.dump(serializable_history, f, indent=2)  # Guardar últimas 20 actualizaciones
+        
+        except Exception as e:
+            logger.error(f"Error guardando actualizaciones de posiciones: {e}")
+
     def _cleanup_trading(self):
         """
         Limpia y guarda el estado final del trading.
         """
         logger.info("Realizando limpieza final...")
+
+        # Detener monitoreo de posiciones
+        self.stop_position_monitoring()
 
         # Cerrar todas las posiciones abiertas
         for ticket in list(self.active_positions.keys()):

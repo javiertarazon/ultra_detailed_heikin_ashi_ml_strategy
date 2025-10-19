@@ -47,7 +47,7 @@ import time
 # Import pesado diferido: se hará dentro de run_backtest para evitar bloqueos
 RUN_ORCHESTRATOR_LAZILY = True
 
-def validate_system(dashboard_only: bool = False):
+def validate_system(dashboard_only: bool = False, mode: str = 'backtest'):
     """
     Validación automática del sistema antes de ejecutar operaciones
     """
@@ -60,21 +60,61 @@ def validate_system(dashboard_only: bool = False):
         config = load_config_from_yaml()
         print(" Configuración cargada correctamente")
 
-        # 2. Verificar estrategias activas
+        # 2. Verificar estrategias activas (inspección ligera sin cargar orquestadores pesados)
+        # Dependiendo del modo de ejecución, solo importaremos los módulos necesarios.
+        # - Si mode indica backtest => podemos importar el orquestador de backtest para cargar estrategias
+        # - Si mode indica live_* => evitamos importar orquestador de backtest para no cargar módulos pesados
+        # Esto previene que el orquestador de backtest aparezca en logs cuando iniciamos en modo live.
         if dashboard_only:
             print(" Modo dashboard-only: se omite import de estrategias para acelerar")
         else:
-            print(" Importando orquestador para cargar estrategias...")
+            print(" Verificando estrategias configuradas desde config...")
             try:
-                from backtesting.backtesting_orchestrator import load_strategies_from_config
-                strategies = load_strategies_from_config(config)
+                # Intentar obtener lista de estrategias desde config (varias formas soportadas)
+                strategies_cfg = None
+                if hasattr(config, 'strategies'):
+                    strategies_cfg = config.strategies
+                elif hasattr(config, 'backtesting') and hasattr(config.backtesting, 'strategies'):
+                    strategies_cfg = config.backtesting.strategies
+                elif hasattr(config, 'strategy_paths'):
+                    strategies_cfg = config.strategy_paths
+
+                # Si estamos en modo backtest, permitimos cargar el orquestador para una verificación completa
+                if mode.startswith('backtest'):
+                    # Import seguro del orquestador de backtest
+                    try:
+                        from backtesting.backtesting_orchestrator import load_strategies_from_config
+                        strategies = load_strategies_from_config(config)
+                        if not strategies:
+                            print("  No hay estrategias activas configuradas")
+                            return False
+                        print(f"  {len(strategies)} estrategias activas: {list(strategies.keys())}")
+                    except Exception as imp_err:
+                        print(f"  Error importando orquestador de backtest durante validación: {imp_err}")
+                        return False
+                else:
+                    # En modo live/dashboard: no cargar orquestadores pesados. Solo listar desde config
+                    if strategies_cfg is None:
+                        print("  ⚠️ No se encontró sección de estrategias en config; validación ligera aplicada")
+                        keys = []
+                    else:
+                        if isinstance(strategies_cfg, dict):
+                            keys = list(strategies_cfg.keys())
+                        elif isinstance(strategies_cfg, (list, tuple)):
+                            keys = list(strategies_cfg)
+                        else:
+                            try:
+                                keys = list(vars(strategies_cfg).keys())
+                            except Exception:
+                                keys = [str(strategies_cfg)]
+
+                    if not keys:
+                        print("  No hay estrategias activas configuradas (config detectada vacía)")
+                    else:
+                        print(f"  {len(keys)} estrategias activas: {keys}")
             except Exception as imp_err:
-                print(f" Error importando orquestador/estrategias: {imp_err}")
+                print(f" Error verificando estrategias en config: {imp_err}")
                 return False
-            if not strategies:
-                print(" No hay estrategias activas configuradas")
-                return False
-            print(f" {len(strategies)} estrategias activas: {list(strategies.keys())}")
 
         # 3. Verificar entorno virtual y dependencias (importaciones seguras)
         print(" Verificando entorno Python...")
@@ -1016,7 +1056,7 @@ def main():
 
     # 1. VALIDACIÓN AUTOMÁTICA (a menos que se omita o sea modo data-audit)
     if not args.skip_validation and not args.data_audit:
-        if not validate_system(dashboard_only=args.dashboard_only):
+        if not validate_system(dashboard_only=args.dashboard_only, mode=mode):
             print("\n❌ VALIDACIÓN FALLIDA - Abortando ejecución")
             sys.exit(1)
     else:

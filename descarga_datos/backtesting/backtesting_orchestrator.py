@@ -6,24 +6,21 @@ Contiene toda la lógica de backtesting, carga dinámica de estrategias y ejecuc
 import asyncio
 import os
 import sys
-print('[ORCHESTRATOR] Módulo backtesting_orchestrator cargando (inicio top-level)')
-# Agregar el directorio padre al path para importar módulos
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# Agregar el directorio actual para importar módulos locales
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Evitar side-effects durante import: no ejecutar prints al importar el módulo.
+# Añadir rutas al path solo si no están ya presentes
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
 from config.config_loader import load_config_from_yaml
-print('[ORCHESTRATOR] Config loader importado')
 from core.downloader import AdvancedDataDownloader
-print('[ORCHESTRATOR] Downloader importado')
-#from strategies.ut_bot_psar import UTBotPSARStrategy  # No utilizado actualmente
-#from strategies.ut_bot_psar_conservative import UTBotPSARConservativeStrategy  # Eliminado módulo faltante
 # NOTA: Evitamos imports ansiosos de estrategias para reducir tiempo/bloqueos en validación inicial.
 # Las estrategias se importan dinámicamente en load_strategies_from_config() usando __import__.
 from backtesting.backtester import AdvancedBacktester
-print('[ORCHESTRATOR] AdvancedBacktester importado')
 from utils.logger import setup_logging, get_logger
-print('[ORCHESTRATOR] Logger utilities importadas')
 
 # Variable global para las estrategias disponibles
 # 🎯 SISTEMA COMPLETO - Estrategia principal con ML real + estrategia de pruebas

@@ -529,8 +529,11 @@ def validate_config_strategies(config: Config) -> bool:
     try:
         from backtesting.backtesting_orchestrator import STRATEGY_CLASSES
     except ImportError:
-        logger.error("No se pudo importar STRATEGY_CLASSES desde backtesting_orchestrator")
-        return False
+        # No forzamos fallo completo de la validación por una importación pesada.
+        # En entornos live es preferible continuar con una comprobación ligera
+        # basada en la configuración y evitar cargar el orquestador de backtest.
+        logger.warning("No se pudo importar STRATEGY_CLASSES desde backtesting_orchestrator - usando fallback ligero (no se cargarán orquestadores pesados en validación)")
+        STRATEGY_CLASSES = {}
 
     for strategy_name in enabled_strategies:
         try:

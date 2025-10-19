@@ -18,7 +18,7 @@ import asyncio
 # Intentar cargar variables de entorno desde .env (opcional)
 try:
     from dotenv import load_dotenv  # type: ignore
-    load_dotenv()
+    load_dotenv('descarga_datos/.env')
 except ImportError:
     # Si python-dotenv no está disponible, continuar sin él
     # Las variables de entorno pueden estar configuradas directamente
@@ -113,6 +113,9 @@ class CCXTLiveDataProvider:
                 'sandbox': sandbox_mode,
                 'timeout': exchange_config.get('timeout', 30000),
                 'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot',  # Forzar spot trading en lugar de futures
+                },
             })
 
             # Configurar exchange asíncrono
@@ -123,6 +126,9 @@ class CCXTLiveDataProvider:
                 'sandbox': sandbox_mode,
                 'timeout': exchange_config.get('timeout', 30000),
                 'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot',  # Forzar spot trading en lugar de futures
+                },
             })
 
             self.logger.info(f"Exchange {self.exchange_name} inicializado correctamente")
@@ -188,14 +194,41 @@ class CCXTLiveDataProvider:
 
     def is_connected(self) -> bool:
         """
-        Verifica si el proveedor está conectado al exchange.
+        Verifica si hay conexión activa con el exchange
 
         Returns:
             bool: True si está conectado
         """
         return self.connected and self.exchange is not None
 
-    def get_historical_data(self, symbol: str, timeframe: str, limit: int = 100) -> Optional[pd.DataFrame]:
+    def get_last_price(self, symbol: str) -> Optional[float]:
+        """
+        Obtiene el último precio (precio actual) para un símbolo.
+        
+        Args:
+            symbol: Símbolo del par (ej: 'BTC/USDT')
+            
+        Returns:
+            float: Precio actual o None si hay error
+        """
+        if not self.is_connected():
+            self.logger.error("No conectado al exchange")
+            return None
+        
+        try:
+            ticker = self.exchange.fetch_ticker(symbol)
+            # Preferir 'last' price, si no está disponible usar 'close'
+            last_price = ticker.get('last') or ticker.get('close')
+            if last_price:
+                return float(last_price)
+            else:
+                self.logger.warning(f"No se pudo obtener precio para {symbol}")
+                return None
+        except Exception as e:
+            self.logger.error(f"Error obteniendo precio para {symbol}: {e}")
+            return None
+
+    def get_historical_data(self, symbol: str, timeframe: str, limit: int = 100, with_indicators: bool = True) -> Optional[pd.DataFrame]:
         """
         Obtiene datos históricos OHLCV para un símbolo y timeframe específico.
         Si no hay suficientes barras disponibles, usa timeframe más bajo y agrupa.
@@ -204,15 +237,16 @@ class CCXTLiveDataProvider:
             symbol: Símbolo del par (ej: 'BTC/USDT')
             timeframe: Timeframe (ej: '1h', '4h', '1d')
             limit: Número de barras a obtener
+            with_indicators: Si es True, calcula indicadores técnicos
 
         Returns:
-            DataFrame con datos OHLCV o None si hay error
+            DataFrame con datos OHLCV e indicadores técnicos o None si hay error
         """
         if not self.is_connected():
             self.logger.error("No conectado al exchange")
             return None
 
-        cache_key = f"{symbol}_{timeframe}"
+        cache_key = f"{symbol}_{timeframe}_{with_indicators}"
         try:
             # Verificar cache primero
             if cache_key in self.data_cache:
@@ -220,6 +254,21 @@ class CCXTLiveDataProvider:
                 # Si los datos son recientes (menos de 5 minutos), devolver cache
                 if (datetime.now() - cached_data['timestamp']).seconds < 300:
                     return cached_data['data']
+
+            # PARA TIMEFRAMES CORTOS, SIEMPRE USAR AGRUPACIÓN PARA OBTENER MÁS DATOS HISTÓRICOS
+            if timeframe in ['15m', '5m']:
+                self.logger.info(f"Usando agrupación para {timeframe} para obtener más datos históricos...")
+                df = self._get_data_with_aggregation_enhanced(symbol, timeframe, limit)
+                if df is not None and len(df) >= (limit * 0.8):  # Aceptar al menos 80% de las barras mínimas
+                    # Cachear datos agrupados
+                    self.data_cache[cache_key] = {
+                        'data': df.copy(),
+                        'timestamp': datetime.now()
+                    }
+                    # GUARDAR DATOS EN VIVO AUTOMÁTICAMENTE
+                    self._save_live_data(symbol, timeframe, df)
+                    self.logger.info(f"Datos históricos agrupados obtenidos: {symbol} {timeframe} - {len(df)} barras")
+                    return df
 
             # INTENTAR OBTENER DATOS EN TIMEFRAME SOLICITADO
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
@@ -247,9 +296,25 @@ class CCXTLiveDataProvider:
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
+            # Añadir columna 'timestamp' además del índice para compatibilidad
+            # con las utilidades que esperan una columna llamada 'timestamp'.
+            df['timestamp'] = df.index
 
             # Normalizar nombres de columnas
             df.rename(columns={'volume': 'volume'}, inplace=True)
+            
+            # Calcular indicadores técnicos si se solicitan
+            if with_indicators:
+                try:
+                    from indicators.technical_indicators import TechnicalIndicators
+                    from config.config_loader import load_config_from_yaml
+                    
+                    config = load_config_from_yaml()
+                    indicators = TechnicalIndicators(config)
+                    df = indicators.calculate_all_indicators_unified(df)
+                    self.logger.info(f"✅ Indicadores técnicos calculados para {symbol} {timeframe}")
+                except Exception as ind_error:
+                    self.logger.error(f"Error calculando indicadores para {symbol} {timeframe}: {ind_error}")
 
             # Cachear datos
             self.data_cache[cache_key] = {
@@ -376,6 +441,7 @@ class CCXTLiveDataProvider:
     def _save_live_data(self, symbol: str, timeframe: str, data: pd.DataFrame) -> None:
         """
         Guarda los datos recolectados en live en la carpeta live_data
+        Calcula indicadores técnicos antes de guardar para compatibilidad con backtest
         """
         try:
             # Crear nombre de archivo seguro
@@ -383,9 +449,31 @@ class CCXTLiveDataProvider:
             filename = f"{safe_symbol}_{timeframe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             filepath = self.data_path / filename
 
-            # Guardar datos
-            data.to_csv(filepath)
-            self.logger.debug(f"✅ Datos live guardados: {filepath}")
+            # Importar los indicadores técnicos
+            from indicators.technical_indicators import TechnicalIndicators
+            from config.config_loader import load_config_from_yaml
+            
+            # Copiar los datos para no modificar los originales
+            df_with_indicators = data.copy()
+            
+            # Calcular todos los indicadores técnicos
+            try:
+                config = load_config_from_yaml()
+                indicators = TechnicalIndicators(config)
+                df_with_indicators = indicators.calculate_all_indicators_unified(df_with_indicators)
+                self.logger.info(f"✅ Indicadores técnicos calculados para {symbol} {timeframe}")
+            except Exception as ind_error:
+                self.logger.error(f"Error calculando indicadores para {symbol} {timeframe}: {ind_error}")
+            
+            # Guardar datos con indicadores
+            df_with_indicators.to_csv(filepath)
+            self.logger.debug(f"✅ Datos live guardados con indicadores: {filepath}")
+            
+            # También guardamos en carpeta live_data_with_indicators para mejor organización
+            indicators_data_path = Path(os.path.dirname(os.path.abspath(__file__))) / ".." / "data" / "live_data_with_indicators"
+            indicators_data_path.mkdir(exist_ok=True, parents=True)
+            indicators_filepath = indicators_data_path / filename
+            df_with_indicators.to_csv(indicators_filepath)
 
         except Exception as e:
             self.logger.error(f"Error guardando datos live para {symbol} {timeframe}: {e}")
@@ -461,10 +549,91 @@ class CCXTLiveDataProvider:
             result_df = pd.DataFrame(grouped_data)
             result_df['timestamp'] = pd.to_datetime(result_df['timestamp'])
             result_df.set_index('timestamp', inplace=True)
+            # Mantener copia de la columna 'timestamp' además del índice
+            result_df['timestamp'] = result_df.index
 
             self.logger.info(f"✅ Datos agrupados exitosamente: {len(result_df)} barras de {target_timeframe} desde {source_timeframe}")
             return result_df
 
         except Exception as e:
             self.logger.error(f"Error en agrupación de datos para {symbol} {target_timeframe}: {e}")
+            return None
+
+    def _get_data_with_aggregation_enhanced(self, symbol: str, target_timeframe: str, limit: int) -> Optional[pd.DataFrame]:
+        """
+        Versión mejorada de agrupación que obtiene más datos históricos para timeframes cortos.
+        Usa timeframe fuente más bajo y multiplica por un factor para tener suficientes datos.
+
+        Args:
+            symbol: Símbolo del par
+            target_timeframe: Timeframe objetivo (ej: '15m')
+            limit: Número mínimo de barras objetivo
+
+        Returns:
+            DataFrame con más datos agrupados o None si hay error
+        """
+        try:
+            # CONFIGURACIÓN MEJORADA PARA TIMEFRAMES CORTOS
+            enhanced_config = {
+                '15m': ('5m', 3, 5),   # 15m = 3 barras de 5m, multiplicar x5 para más datos (antes x10)
+                '5m': ('1m', 5, 8),    # 5m = 5 barras de 1m, multiplicar x8 para más datos
+            }
+
+            if target_timeframe not in enhanced_config:
+                # Fallback a la función original
+                return self._get_data_with_aggregation(symbol, target_timeframe, limit)
+
+            source_timeframe, bars_per_group, multiplier = enhanced_config[target_timeframe]
+
+            # Calcular barras fuente necesarias (multiplicar para tener más datos históricos)
+            enhanced_limit = limit * multiplier  # Más barras objetivo
+            source_limit = enhanced_limit * bars_per_group
+
+            self.logger.info(f"Obteniendo {source_limit} barras de {source_timeframe} para crear {enhanced_limit} barras de {target_timeframe} (multiplicador x{multiplier})")
+
+            # Obtener datos del timeframe fuente
+            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe=source_timeframe, limit=source_limit)
+
+            if not ohlcv or len(ohlcv) < (source_limit * 0.5):  # Permitir 50% de los datos para más flexibilidad
+                self.logger.warning(f"Insuficientes datos fuente: {len(ohlcv) if ohlcv else 0}/{source_limit} barras de {source_timeframe}")
+                return None
+
+            # Convertir a DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+
+            # AGRUPAR DATOS: Combinar 'bars_per_group' barras en una
+            grouped_data = []
+
+            for i in range(0, len(df), bars_per_group):
+                group = df.iloc[i:i+bars_per_group]
+                if len(group) == bars_per_group:  # Solo grupos completos
+                    # Crear barra agrupada
+                    aggregated_bar = {
+                        'timestamp': group.index[0],  # Timestamp del inicio del grupo
+                        'open': group['open'].iloc[0],  # Open del primer precio
+                        'high': group['high'].max(),   # Máximo high del grupo
+                        'low': group['low'].min(),     # Mínimo low del grupo
+                        'close': group['close'].iloc[-1],  # Close del último precio
+                        'volume': group['volume'].sum()    # Suma de volúmenes
+                    }
+                    grouped_data.append(aggregated_bar)
+
+            if len(grouped_data) < (limit * 0.8):  # Aceptar al menos 80% de las barras objetivo mínimas
+                self.logger.warning(f"Agrupación incompleta: {len(grouped_data)}/{limit} barras mínimas")
+                return None
+
+            # Crear DataFrame final
+            result_df = pd.DataFrame(grouped_data)
+            result_df['timestamp'] = pd.to_datetime(result_df['timestamp'])
+            result_df.set_index('timestamp', inplace=True)
+            # Mantener copia de la columna 'timestamp' además del índice
+            result_df['timestamp'] = result_df.index
+
+            self.logger.info(f"✅ Datos agrupados mejorados: {len(result_df)} barras de {target_timeframe} desde {source_timeframe}")
+            return result_df
+
+        except Exception as e:
+            self.logger.error(f"Error en agrupación mejorada para {symbol} {target_timeframe}: {e}")
             return None

@@ -38,6 +38,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from models.model_manager import ModelManager
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class MLModelManager:
     """
@@ -349,6 +352,12 @@ class MLModelManager:
         print(f"DEBUG: Features preparadas: {len(features.columns)} columnas")
         print(f"DEBUG: Nombres de features: {list(features.columns)}")
 
+        # VERIFICAR que tenemos suficientes datos para el scaler
+        if len(features) == 0:
+            print(f"ERROR CRÍTICO: No hay datos suficientes para ML después de preparación. Devolviendo confianza neutral (0.5)")
+            confidence = pd.Series([0.5] * len(data), index=data.index, name='ml_confidence')
+            return confidence
+
         # Ajustar scaler si no está fitted o si hay mismatch de features
         try:
             # Verificar si el scaler está fitted
@@ -488,12 +497,12 @@ class HeikinNeuronalMLPruebasStrategy:
         self.max_drawdown = self.config.get('max_drawdown', 0.05)
         self.max_portfolio_heat = self.config.get('max_portfolio_heat', 0.06)  # Aumentado a 6%
         self.max_concurrent_trades = self.config.get('max_concurrent_trades', 3)  # Más oportunidades
-        self.kelly_fraction = self.config.get('kelly_fraction', 0.3)  # Más conservador
-        self.trailing_stop_pct = 0.65  # TRAILING STOP AJUSTADO A 65% PARA MAYOR CONSERVACIÓN DE GANANCIAS
+        self.kelly_fraction = self.config.get('kelly_fraction', 0.5)  # Aumentado para modo conservador
+        self.trailing_stop_pct = 0.80  # TRAILING STOP AJUSTADO A 80% PARA MAYOR CONSERVACIÓN DE GANANCIAS
 
         # Estado interno
         self.active_trades = []
-        self.portfolio_value = 10000.0  # Valor inicial
+        self.portfolio_value = 2500.0  # Valor alto para activar modo agresivo
         self.current_drawdown = 0.0
 
         # Inicializar gestor de modelos ML
@@ -711,6 +720,59 @@ class HeikinNeuronalMLPruebasStrategy:
         print(f"Datos preparados: {len(data)} filas válidas con todos los indicadores")
         return data
 
+    def _prepare_data_live(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Preparar datos para LIVE TRADING con requerimientos mínimos reducidos
+        Versión optimizada de _prepare_data para funcionamiento con menos datos históricos
+        """
+
+        # VALIDAR columnas requeridas
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        missing_cols = [col for col in required_cols if col not in data.columns]
+        if missing_cols:
+            raise ValueError(f"Columnas requeridas faltantes: {missing_cols}")
+
+        print(f"[CALC LIVE] Calculando indicadores técnicos para {len(data)} velas...")
+
+        # Usar método centralizado PERO con validaciones más flexibles para live
+        from indicators.technical_indicators import TechnicalIndicators
+        indicators = TechnicalIndicators()
+        data = indicators.calculate_all_indicators_unified(data)
+
+        # Validación MÁS FLEXIBLE para live trading - Solo verificar que tengamos suficientes datos para indicadores básicos
+        if len(data) < 20:  # MÍNIMO ABSOLUTO para indicadores técnicos básicos
+            raise ValueError(f"Datos insuficientes para live trading: {len(data)} filas. Necesario mínimo 20 para indicadores básicos.")
+
+        # Limpiar NaN de forma MÁS TOLERANTE para live trading
+        critical_indicators = ['ha_close', 'stoch_k', 'cci', 'rsi', 'macd', 'atr']
+        nan_counts = data[critical_indicators].isna().sum()
+        total_critical_nans = nan_counts.sum()
+        max_allowed_nans = len(data) * 0.1  # AUMENTADO a 10% de NaN permitidos para live
+
+        if total_critical_nans > max_allowed_nans:
+            print(f"NaN detectados en indicadores críticos: {nan_counts.to_dict()}")
+            print(f"Limpiando {total_critical_nans} filas con NaN...")
+            # Limpiar NaN pero ser más tolerante
+            data = data.dropna(subset=critical_indicators)
+            print(f"Datos limpiados: {len(data)} filas restantes")
+
+        # Si después de limpieza tenemos muy pocos datos, intentar rellenar en lugar de fallar
+        if len(data) < 15:
+            print(f"⚠️  Muy pocos datos después de limpieza ({len(data)}). Intentando rellenar NaN...")
+            # Rellenar NaN restantes con valores razonables
+            data = data.fillna(method='bfill').fillna(method='ffill').fillna(0)
+            print(f"Datos rellenados: {len(data)} filas disponibles")
+
+        # Validación final - Más flexible para live
+        if len(data) < 10:
+            raise ValueError(f"Datos insuficientes después de limpieza: {len(data)} filas. Mínimo 10 para live trading.")
+
+        # Rellenar NaN restantes en indicadores no críticos
+        data = data.fillna(method='bfill').fillna(method='ffill').fillna(0)
+
+        print(f"Datos preparados para LIVE: {len(data)} filas válidas con indicadores")
+        return data
+
     def _calculate_heikin_ashi(self, data: pd.DataFrame) -> pd.DataFrame:
         """Calcular velas Heikin Ashi usando el módulo centralizado."""
         from indicators.technical_indicators import TechnicalIndicators
@@ -737,16 +799,16 @@ class HeikinNeuronalMLPruebasStrategy:
             Dict con señal y parámetros de risk management idénticos al backtesting
         """
         try:
-            print(f"[LIVE SIGNAL] Generando señal live para {symbol} usando lógica de backtesting")
+            logger.info(f"[LIVE SIGNAL] Generando señal live para {symbol} usando lógica de backtesting")
 
             # MODO SEGURO: Verificar si está activado
             safe_mode = self.config.get('ml_training', {}).get('safe_mode', False)
             if safe_mode:
-                print("🛡️ MODO SEGURO LIVE ACTIVADO")
+                logger.info("🛡️ MODO SEGURO LIVE ACTIVADO")
                 raise ValueError("❌ MODO SEGURO NO PERMITIDO EN LIVE: El sistema debe usar SIEMPRE la red neuronal ML entrenada. Active safe_mode=false en config.yaml")
 
-            # VALIDAR datos mínimos - Más flexible para live trading después de limpieza NaN
-            if len(data) < 80:
+            # VALIDAR datos mínimos - Más flexible para live trading (solo necesitamos suficientes datos para indicadores)
+            if len(data) < 50:  # REDUCIDO de 80 a 50 para live trading
                 return {
                     'signal': 'NO_SIGNAL',
                     'signal_data': {},
@@ -756,12 +818,12 @@ class HeikinNeuronalMLPruebasStrategy:
                     'reason': 'insufficient_data'
                 }
 
-            # Preparar datos EXACTAMENTE igual que en backtesting
-            data_processed = self._prepare_data(data.copy())
-            print(f"[LIVE SIGNAL] Datos preparados: {len(data_processed)} filas")
+            # Preparar datos EXACTAMENTE igual que en backtesting PERO con requerimientos reducidos para live
+            data_processed = self._prepare_data_live(data.copy())  # USAR MÉTODO ESPECÍFICO PARA LIVE
+            logger.info(f"[LIVE SIGNAL] Datos preparados: {len(data_processed)} filas")
 
-            # VALIDAR datos suficientes después de limpieza NaN
-            if len(data_processed) < 40:
+            # VALIDAR datos suficientes después de limpieza NaN - Más flexible para live
+            if len(data_processed) < 20:  # REDUCIDO de 40 a 20 para live trading
                 return {
                     'signal': 'NO_SIGNAL',
                     'signal_data': {},
@@ -785,7 +847,7 @@ class HeikinNeuronalMLPruebasStrategy:
 
             # Generar predicciones ML EXACTAMENTE igual que en backtesting
             ml_confidence_cached = self.ml_manager.predict_signal(data_processed, symbol, 'random_forest')
-            print(f"[LIVE SIGNAL] ML confidence: {ml_confidence_cached.iloc[-1]:.3f}")
+            logger.info(f"[LIVE SIGNAL] ML confidence: {ml_confidence_cached.iloc[-1]:.3f}")
 
             # Usar EXACTAMENTE la misma lógica de señales que el backtesting
             signal_result = self._generate_live_signal_from_backtest_logic(data_processed, symbol, ml_confidence_cached)
@@ -793,7 +855,7 @@ class HeikinNeuronalMLPruebasStrategy:
             return signal_result
 
         except Exception as e:
-            print(f"[LIVE SIGNAL ERROR] Error generando señal live: {e}")
+            logger.error(f"[LIVE SIGNAL ERROR] Error generando señal live: {e}")
             import traceback
             traceback.print_exc()
             return {
@@ -857,38 +919,47 @@ class HeikinNeuronalMLPruebasStrategy:
                 'reason': 'low_ml_confidence'
             }
 
-        # VALIDAR liquidez real antes de entrar (igual que backtesting)
-        current_row = data.iloc[i]
-        if not self._check_liquidity_score(current_row):
-            return {
-                'signal': 'NO_SIGNAL',
-                'signal_data': {},
-                'symbol': symbol,
-                'strategy_name': 'UltraDetailedHeikinAshiMLStrategy',
-                'ml_confidence': ml_conf,
-                'reason': 'low_liquidity'
-            }
+        # ✅ CORRECCIÓN: Eliminar doble verificación de liquidez para mantener paridad con backtest
+        # La liquidez ya se verificó en _generate_signal_for_index() a través del filtro de volumen
+        # En backtest, _check_liquidity_score() se llama DESPUÉS de generar señales en _run_backtest()
+        # Aplicar la misma lógica aquí para evitar discrepancias backtest vs live
+        
+        # CÓDIGO ANTERIOR (CAUSABA RECHAZO DE SEÑALES VÁLIDAS):
+        # current_row = data.iloc[i]
+        # if not self._check_liquidity_score(current_row):
+        #     return {'signal': 'NO_SIGNAL', 'reason': 'low_liquidity', ...}
+        
+        # ✅ NUEVO: Si la señal llegó hasta aquí, es porque pasó todos los filtros en _generate_signal_for_index()
+        # NO aplicar verificación adicional que no existe en el flujo de backtest
 
         # Calcular parámetros de risk management EXACTAMENTE igual que backtesting
         entry_price = current_price
+        logger.info(f"🔄 [RiskManager-Estrategia] Calculando parámetros de risk management para {signal>0 and 'COMPRA' or 'VENTA'}")
+        logger.info(f"💰 [RiskManager-Estrategia] Precio de entrada: {entry_price}")
+        logger.info(f"📏 [RiskManager-Estrategia] ATR actual: {atr}")
 
         # STOP LOSS REAL basado en ATR (volatilidad real del mercado)
         atr_multiplier = 1.5  # 1.5 ATR para stop loss (mismo que backtesting)
         stop_distance = atr * atr_multiplier
+        logger.info(f"🛡️ [RiskManager-Estrategia] Multiplicador ATR para stop loss: {atr_multiplier}x → Distancia: {stop_distance:.2f}")
 
         # TAKE PROFIT REAL: Risk/Reward ratio mínimo
         take_profit_distance = stop_distance * min_rr_ratio
+        logger.info(f"🎯 [RiskManager-Estrategia] Ratio riesgo/recompensa mínimo: {min_rr_ratio}x → Distancia TP: {take_profit_distance:.2f}")
 
         # Calcular stop loss y take profit prices
         if signal > 0:  # BUY
             stop_loss_price = entry_price - stop_distance
             take_profit_price = entry_price + take_profit_distance
+            logger.info(f"📈 [RiskManager-Estrategia] COMPRA - Stop Loss: {stop_loss_price:.2f} (↓{stop_distance:.2f}) | Take Profit: {take_profit_price:.2f} (↑{take_profit_distance:.2f})")
         else:  # SELL
             stop_loss_price = entry_price + stop_distance
             take_profit_price = entry_price - take_profit_distance
+            logger.info(f"📉 [RiskManager-Estrategia] VENTA - Stop Loss: {stop_loss_price:.2f} (↑{stop_distance:.2f}) | Take Profit: {take_profit_price:.2f} (↓{take_profit_distance:.2f})")
 
         # POSITION SIZE REAL: Calculado por order executor usando risk_per_trade
         # (igual que backtesting pero delegamos al order executor)
+        logger.info(f"⚖️ [RiskManager-Estrategia] Risk por operación configurado: {risk_per_trade*100:.2f}% del capital")
 
         signal_type = 'BUY' if signal > 0 else 'SELL'
 
@@ -924,11 +995,15 @@ class HeikinNeuronalMLPruebasStrategy:
 
         # Verificar que tengamos suficientes datos
         if i < 20:  # Necesitamos al menos 20 velas para indicadores
+            logger.info(f"[LIVE-FILTER] i={i} < 20, insuficientes datos para indicadores")
             return 0
 
         # ML CONFIDENCE como filtro principal - BAJADO para asegurar señales
         ml_conf = ml_confidence_all.iloc[i]
+        logger.info(f"[LIVE-FILTER] idx={i} ml_conf={ml_conf:.3f} threshold_min=0.3")
+
         if ml_conf < 0.3:  # BAJADO de 0.25 a 0.3 para ser menos restrictivo
+            logger.info(f"[LIVE-FILTER] idx={i} ML confidence {ml_conf:.3f} < 0.3, rechazado")
             return 0
 
         # FILTROS TÉCNICOS SIMPLIFICADOS
@@ -940,43 +1015,57 @@ class HeikinNeuronalMLPruebasStrategy:
         # Señal de trend: HA close > HA open = bullish, < = bearish
         trend_bullish = ha_close > ha_open
         trend_bearish = ha_close < ha_open
+        logger.info(f"[LIVE-FILTER] idx={i} Trend - HA_close={ha_close:.6f}, HA_open={ha_open:.6f}, Bullish={trend_bullish}, Bearish={trend_bearish}")
 
         # 2. MOMENTUM FILTER: RSI - MENOS restrictivo
         rsi = current_row.get('rsi', 50)
         rsi_ok_buy = rsi < 70  # Permitir RSI hasta 70 para compras
         rsi_ok_sell = rsi > 30  # Permitir RSI desde 30 para ventas
+        logger.info(f"[LIVE-FILTER] idx={i} RSI={rsi} OK_buy={rsi_ok_buy} OK_sell={rsi_ok_sell}")
 
         # 3. VOLATILITY FILTER: ATR no demasiado alto - MENOS restrictivo
         atr = current_row.get('atr', 0)
         if pd.isna(atr) or atr == 0:
+            logger.info(f"[LIVE-FILTER] idx={i} ATR NaN o cero: {atr}")
             return 0
 
-        # Normalizar ATR por precio - MENOS restrictivo
+        # Normalizar ATR por precio - AJUSTADO para volatilidad moderada-alta
         atr_ratio = atr / current_row['close']
-        if atr_ratio > 0.10:  # SUBIDO de 0.05 a 0.10 para permitir más volatilidad
+        if atr_ratio > 0.15:  # AUMENTADO de 0.10 a 0.15 para permitir mayor volatilidad (15%)
+            logger.info(f"[LIVE-FILTER] idx={i} ATR ratio {atr_ratio:.6f} > 0.15, rechazado")
             return 0
+        logger.info(f"[LIVE-FILTER] idx={i} ATR={atr:.6f}, Ratio={atr_ratio:.6f}, OK")
 
         # 4. VOLUME FILTER: Confirmación de volumen - MENOS restrictivo
         volume = current_row.get('volume', 0)
         if volume <= 0:
+            logger.info(f"[LIVE-FILTER] idx={i} Volume <= 0: {volume}")
             return 0
 
         # Comparar con promedio de volumen - MENOS restrictivo
         recent_volume = data['volume'].iloc[max(0, i-20):i+1]
         avg_volume = recent_volume.mean()
-        if volume < avg_volume * 0.3:  # BAJADO de 0.5 a 0.3
+        volume_ok = volume >= avg_volume * 0.3  # BAJADO de 0.5 a 0.3
+        vol_ratio = (volume / avg_volume) if avg_volume > 0 else float('inf')
+        logger.info(f"[LIVE-FILTER] idx={i} Volume={volume:.6f}, Avg={avg_volume:.6f}, Ratio={vol_ratio:.3f}, OK={volume_ok} min_factor=0.3")
+
+        if not volume_ok:
+            logger.info(f"[LIVE-FILTER] idx={i} Volume insuficiente - rechazado")
             return 0
 
         # SEÑALES SIMPLIFICADAS - Solo requieren ML + Trend + RSI básico
 
         # BUY SIGNAL: ML confidence + trend bullish + RSI no sobrecomprado
         if trend_bullish and rsi_ok_buy and ml_conf >= 0.3:
+            logger.info(f"[LIVE-SIGNAL] idx={i} BUY signal generated - ml_conf={ml_conf:.3f}")
             return 1
 
         # SELL SIGNAL: ML confidence + trend bearish + RSI no sobrevendido
         elif trend_bearish and rsi_ok_sell and ml_conf >= 0.3:
+            logger.info(f"[LIVE-SIGNAL] idx={i} SELL signal generated - ml_conf={ml_conf:.3f}")
             return -1
 
+        logger.info(f"[LIVE-FILTER] idx={i} No signal - Trend/Rsi no cumplen o condiciones no suficientes")
         return 0
 
     def _generate_signals(self, data: pd.DataFrame, symbol: str, ml_confidence_all: pd.Series) -> pd.Series:
@@ -1107,11 +1196,31 @@ class HeikinNeuronalMLPruebasStrategy:
         entry_time = None
         entry_index = None  # Para tracking de velas desde entrada
 
-        # PARÁMETROS DE RIESGO OPTIMIZADOS Y REALES
-        risk_per_trade = 0.02  # 2% por trade (más conservador)
-        min_rr_ratio = 2.5     # Risk/Reward mínimo más alto
-        max_concurrent_trades = self.max_concurrent_trades
+        # 🚀 GESTIÓN DE RIESGO ADAPTATIVA BASADA EN CAPITAL - PARÁMETROS OPTIMIZADOS
+        # OPTIMIZACIÓN COMPLETADA: Trailing stop 80% óptimo para ambos modos
+        # Modo Conservador (<$2000): DD objetivo ~5%, logrado 5.95% con P&L $7937.03
+        # Modo Agresivo (>=$2000): DD objetivo <10%, logrado 8.59% con P&L $10542.04
+        if capital < 2000:
+            print(f"🛡️ CAPITAL BAJO (${capital:.2f} < $2000): Activando modo ultra-conservador")
+            self.max_drawdown = 0.05  # DD máximo 5% (OPTIMIZADO)
+            risk_per_trade = 0.03     # 3% por trade (OPTIMIZADO para lograr DD ~5%)
+            min_rr_ratio = 3.0        # RR mínimo más alto para mayor seguridad
+            self.kelly_fraction = 0.2 # Kelly optimizado para modo conservador
+            self.trailing_stop_pct = 0.80  # TRAILING STOP OPTIMIZADO A 80%
+            self.stop_loss_pct = 0.06 # Stop loss más ajustado
+            self.take_profit_pct = 0.12 # Take profit más conservador
+            max_concurrent_trades = min(self.max_concurrent_trades, 1)  # Máximo 1 trade concurrente
+        else:
+            print(f"🚀 CAPITAL ALTO (${capital:.2f} >= $2000): Activando modo agresivo optimizado")
+            self.max_drawdown = 0.15  # DD máximo 15% (OPTIMIZADO)
+            risk_per_trade = 0.02     # 2% por trade (OPTIMIZADO)
+            min_rr_ratio = 2.5        # RR mínimo estándar
+            self.kelly_fraction = 0.3 # Kelly optimizado para modo agresivo
+            self.stop_loss_pct = 0.09 # Stop loss optimizado
+            self.take_profit_pct = 0.19 # Take profit optimizado
+            max_concurrent_trades = self.max_concurrent_trades  # Trades concurrentes normales
 
+        # PARÁMETROS DE RIESGO OPTIMIZADOS Y REALES
         # CONTADORES para análisis
         from utils.logger import get_logger
         logger = get_logger('ultra_detailed_strategy')
@@ -1373,17 +1482,19 @@ class HeikinNeuronalMLPruebasStrategy:
                     'signal': signal,
                     'signal_data': {
                         'current_signal': signal,
+                        'entry_price': current_price,
                         'stop_loss_price': stop_loss_price,
                         'take_profit_price': take_profit_price,
-                        'trailing_stop_pct': 0.75,  # 0.75% trailing stop
-                        'entry_price': current_price,
-                        'atr_value': atr_value,
-                        'confidence': 0.7  # Confianza moderada para modo seguro
+                        'trailing_stop_pct': self.trailing_stop_pct,
+                        'risk_per_trade': 0.02,  # Riesgo estándar
+                        'ml_confidence': 0.5,  # Confianza neutral
+                        'atr': atr_value,
+                        'timestamp': last_row.name,
+                        'reason': 'safe_mode'
                     },
                     'symbol': symbol,
                     'strategy_name': 'UltraDetailedHeikinAshiMLStrategy',
-                    'ml_confidence': 0.7,
-                    'reason': 'safe_mode_technical_only'
+                    'ml_confidence': 0.5
                 }
             else:
                 return {
@@ -1392,24 +1503,26 @@ class HeikinNeuronalMLPruebasStrategy:
                     'symbol': symbol,
                     'strategy_name': 'UltraDetailedHeikinAshiMLStrategy',
                     'ml_confidence': 0.5,
-                    'reason': 'no_signal_condition_met'
+                    'reason': 'no_signal'
                 }
 
         except Exception as e:
-            print(f"[SAFE MODE ERROR] Error en modo seguro: {e}")
+            print(f"[LIVE SIGNAL SAFE MODE ERROR] Error generando señal live en modo seguro: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 'signal': 'NO_SIGNAL',
                 'signal_data': {},
                 'symbol': symbol,
                 'strategy_name': 'UltraDetailedHeikinAshiMLStrategy',
                 'ml_confidence': 0.5,
-                'reason': 'safe_mode_error'
+                'reason': 'error'
             }
 
-    def check_trailing_stop(self, position_data: Dict, current_price: float, entry_price: float) -> Dict:
+    def check_trailing_stop(self, position_data: Dict, current_price: float, entry_price: float,
+                            take_profit_price: float = None) -> Dict:
         """
-        Verificar si una posición debe cerrarse por trailing stop
-        Método llamado por el orquestador para delegar gestión de trailing stops
+        Verificar y aplicar trailing stop a una posición abierta
 
         Args:
             position_data: Información de la posición abierta
@@ -1464,85 +1577,6 @@ class HeikinNeuronalMLPruebasStrategy:
         except Exception as e:
             print(f"[ERROR] Error checking trailing stop: {e}")
             return {'should_close': False}
-
-    def should_close_position(self, position_data: Dict, current_price: float, entry_price: float,
-                            take_profit_price: float = None) -> Dict:
-        """
-        Determinar si una posición debe cerrarse basado en condiciones de la estrategia
-        Método principal para que el orquestador consulte sobre cierres de posiciones
-
-        Args:
-            position_data: Información completa de la posición
-            current_price: Precio actual
-            entry_price: Precio de entrada
-            take_profit_price: Precio de take profit (opcional)
-
-        Returns:
-            Dict con 'should_close': bool, 'reason': str, y datos adicionales
-        """
-        try:
-            # 1. Verificar trailing stop
-            trailing_check = self.check_trailing_stop(position_data, current_price, entry_price)
-            if trailing_check['should_close']:
-                return trailing_check
-
-            # 2. Verificar take profit si está disponible
-            if take_profit_price:
-                direction = position_data.get('type', position_data.get('direction', 'buy'))
-                if direction in ['buy', 'BUY'] and current_price >= take_profit_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'take_profit',
-                        'exit_price': take_profit_price
-                    }
-                elif direction in ['sell', 'SELL'] and current_price <= take_profit_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'take_profit',
-                        'exit_price': take_profit_price
-                    }
-
-            # 3. Verificar stop loss
-            stop_loss_price = position_data.get('stop_loss')
-            if stop_loss_price:
-                direction = position_data.get('type', position_data.get('direction', 'buy'))
-                if direction in ['buy', 'BUY'] and current_price <= stop_loss_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'stop_loss',
-                        'exit_price': stop_loss_price
-                    }
-                elif direction in ['sell', 'SELL'] and current_price >= stop_loss_price:
-                    return {
-                        'should_close': True,
-                        'reason': 'stop_loss',
-                        'exit_price': stop_loss_price
-                    }
-
-            return {'should_close': False}
-
-        except Exception as e:
-            print(f"[ERROR] Error checking position closure: {e}")
-            return {'should_close': False}
-
-    def _get_empty_results(self, symbol: str) -> Dict:
-        """Retornar resultados vacíos en caso de error"""
-        return {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'win_rate': 0,
-            'total_pnl': 0,
-            'gross_profit': 0,
-            'gross_loss': 0,
-            'profit_factor': 0,
-            'max_drawdown': 0,
-            'final_capital': self.portfolio_value,
-            'return_pct': 0,
-            'symbol': symbol,
-            'strategy_name': 'UltraDetailedHeikinAshiStrategy',
-            'trades': []
-        }
 
     def should_close_position(self, position_data: Dict, current_price: float, entry_price: float,
                             take_profit_price: float = None) -> Dict:

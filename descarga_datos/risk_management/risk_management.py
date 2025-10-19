@@ -118,6 +118,68 @@ class AdvancedRiskManager:
         
         return kelly_final
     
+    def calculate_position_risk(self, entry_price: float, current_price: float, 
+                               stop_loss: float, position_size: float, direction: str) -> Dict[str, Any]:
+        """
+        Calcula métricas de riesgo para una posición específica.
+        
+        Args:
+            entry_price: Precio de entrada
+            current_price: Precio actual
+            stop_loss: Precio de stop loss
+            position_size: Tamaño de la posición
+            direction: Dirección ('buy' o 'sell')
+            
+        Returns:
+            Diccionario con métricas de riesgo
+        """
+        try:
+            # Calcular P&L actual
+            if direction.lower() == 'buy':
+                current_pnl_pct = (current_price / entry_price - 1) * 100
+                unrealized_pnl = position_size * (current_price - entry_price)
+            else:  # sell
+                current_pnl_pct = (entry_price / current_price - 1) * 100
+                unrealized_pnl = position_size * (entry_price - current_price)
+            
+            # Calcular riesgo restante (distancia al stop loss)
+            if direction.lower() == 'buy':
+                risk_distance = abs(current_price - stop_loss) / current_price * 100
+                risk_amount = position_size * abs(current_price - stop_loss)
+            else:  # sell
+                risk_distance = abs(stop_loss - current_price) / current_price * 100
+                risk_amount = position_size * abs(stop_loss - current_price)
+            
+            # Calcular ratio riesgo/recompensa actual
+            if direction.lower() == 'buy':
+                potential_reward = abs(current_price - entry_price) if current_price > entry_price else 0
+            else:  # sell
+                potential_reward = abs(entry_price - current_price) if current_price < entry_price else 0
+                
+            risk_reward_ratio = potential_reward / abs(current_price - stop_loss) if abs(current_price - stop_loss) > 0 else 0
+            
+            return {
+                'current_pnl_pct': current_pnl_pct,
+                'unrealized_pnl': unrealized_pnl,
+                'risk_distance_pct': risk_distance,
+                'risk_amount': risk_amount,
+                'risk_reward_ratio': risk_reward_ratio,
+                'position_exposure': position_size * current_price,
+                'stop_distance_pct': abs(stop_loss - entry_price) / entry_price * 100
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error calculando riesgo de posición: {e}")
+            return {
+                'current_pnl_pct': 0.0,
+                'unrealized_pnl': 0.0,
+                'risk_distance_pct': 0.0,
+                'risk_amount': 0.0,
+                'risk_reward_ratio': 0.0,
+                'position_exposure': 0.0,
+                'stop_distance_pct': 0.0
+            }
+    
     def update_trade_history(self, pnl: float, success: bool):
         """Actualiza el historial de trades para el cálculo de Kelly"""
         self.trade_history.append({
@@ -179,36 +241,107 @@ def apply_risk_management(signal: Dict[str, Any],
     Returns:
         Señal modificada con tamaño de posición, stop loss y take profit ajustados
     """
-    logger.info(f"Aplicando gestión de riesgo a señal: {signal}")
+    logger.info(f"🔄 Iniciando aplicación de gestión de riesgo a señal: {signal['signal'] if 'signal' in signal else 'UNKNOWN'} en {signal.get('symbol', 'UNKNOWN')}")
+    logger.debug(f"📊 Detalles completos de la señal: {signal}")
     
     # Obtener gestor de riesgo
     rm = get_risk_manager()
     
+    # Verificar balance de cuenta
+    logger.info(f"💰 Balance de cuenta disponible: {account_balance}")
+    if account_balance <= 0:
+        logger.error(f"❌ Balance de cuenta insuficiente: {account_balance}")
+        signal['rejected'] = True
+        signal['rejection_reason'] = "Balance insuficiente"
+        return signal
+    
+    # Extraer y validar datos críticos
+    entry_price = signal.get('price', 0.0)
+    stop_loss_price = signal.get('stop_loss', 0.0)
+    direction = signal.get('direction', 'buy')
+    symbol = signal.get('symbol', '')
+    
+    logger.info(f"💹 Dirección: {direction}, Precio entrada: {entry_price}, Stop Loss: {stop_loss_price}")
+    
+    # Validar datos de entrada
+    if entry_price <= 0 or stop_loss_price <= 0:
+        logger.error(f"❌ Precios inválidos - Entrada: {entry_price}, Stop Loss: {stop_loss_price}")
+        signal['rejected'] = True
+        signal['rejection_reason'] = "Precios inválidos"
+        return signal
+    
+    # Calcular distancia del stop loss
+    if direction.lower() == 'buy':
+        stop_distance_pct = abs(entry_price - stop_loss_price) / entry_price * 100
+    else:
+        stop_distance_pct = abs(stop_loss_price - entry_price) / entry_price * 100
+    
+    logger.info(f"🛑 Distancia Stop Loss: {stop_distance_pct:.2f}% ({abs(entry_price - stop_loss_price):.2f} puntos)")
+    
     # Calcular tamaño de posición
     risk_percent = config.get('risk_percent', 1.0)
+    logger.info(f"⚖️ Riesgo porcentual configurado: {risk_percent}%")
+    
     position_size = rm.calculate_position_size(
-        direction=signal.get('direction', 'buy'),
-        entry_price=signal.get('price', 0.0),
-        stop_loss_price=signal.get('stop_loss', 0.0),
+        direction=direction,
+        entry_price=entry_price,
+        stop_loss_price=stop_loss_price,
         account_balance=account_balance,
         risk_percent=risk_percent,
-        symbol=signal.get('symbol', ''),
+        symbol=symbol,
         symbol_info=symbol_info
     )
     
+    # Calcular valor monetario en riesgo
+    risk_amount = account_balance * risk_percent / 100
+    logger.info(f"💲 Monto en riesgo: {risk_amount:.2f} ({risk_percent}% del capital)")
+    logger.info(f"📏 Tamaño posición calculado: {position_size}")
+    
+    # Verificar límites de exposición
+    max_position_size = config.get('max_position_size', 0.25)
+    max_position_value = account_balance * max_position_size
+    position_value = position_size * entry_price
+    
+    if position_value > max_position_value:
+        logger.warning(f"⚠️ Tamaño ajustado por límite de exposición - Original: {position_size}, Nuevo: {max_position_value/entry_price}")
+        position_size = max_position_value / entry_price
+    
     # Verificar límites de drawdown
     max_drawdown = config.get('max_drawdown_limit', 20.0)
-    if rm.current_drawdown > max_drawdown:
-        logger.warning(f"Señal rechazada - Drawdown ({rm.current_drawdown}%) excede límite ({max_drawdown}%)")
+    current_drawdown = rm.current_drawdown
+    logger.info(f"📉 Drawdown actual: {current_drawdown:.2f}%, Límite: {max_drawdown:.2f}%")
+    
+    if current_drawdown > max_drawdown:
+        logger.warning(f"❌ Señal rechazada - Drawdown ({current_drawdown:.2f}%) excede límite ({max_drawdown:.2f}%)")
         signal['rejected'] = True
-        signal['rejection_reason'] = f"Drawdown excede límite: {rm.current_drawdown}%"
+        signal['rejection_reason'] = f"Drawdown excede límite: {current_drawdown:.2f}%"
         return signal
-        
+    
+    # Verificar correlaciones para diversificación
+    correlated_exposure = rm.get_correlated_exposure(symbol)
+    logger.info(f"🔄 Exposición a activos correlacionados: {correlated_exposure:.2f}%")
+    
+    # Generar métricas detalladas de riesgo para esta operación
+    risk_metrics = {
+        'capital': account_balance,
+        'position_size': position_size,
+        'position_value': position_size * entry_price,
+        'risk_amount': risk_amount,
+        'risk_percent': risk_percent,
+        'stop_distance_pct': stop_distance_pct,
+        'max_loss': -risk_amount,
+        'exposure_percent': (position_size * entry_price) / account_balance * 100,
+        'correlated_exposure': correlated_exposure,
+        'current_drawdown': current_drawdown
+    }
+    
     # Aplicar ajustes a la señal
     signal['position_size'] = position_size
     signal['risk_applied'] = True
     signal['max_risk_percent'] = risk_percent
+    signal['risk_amount'] = risk_amount
+    signal['risk_metrics'] = risk_metrics
     
-    logger.info(f"Gestión de riesgo aplicada: size={position_size}, risk={risk_percent}%")
+    logger.info(f"✅ Gestión de riesgo aplicada: size={position_size}, riesgo={risk_amount:.2f} ({risk_percent}%)")
     
     return signal

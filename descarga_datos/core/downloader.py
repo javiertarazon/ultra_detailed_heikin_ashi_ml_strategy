@@ -5,7 +5,7 @@ Soporta CCXT (criptomonedas) y MT5 (acciones) con paralelización,
 manejo de errores, normalización y almacenamiento múltiple.
 """
 import ccxt
-import ccxt.async_support as ccxt_async
+# import ccxt.async_support as ccxt_async  # Import lazy para evitar problemas de compatibilidad
 import asyncio  # necesario para capturar asyncio.CancelledError en shutdown
 import pandas as pd
 import numpy as np

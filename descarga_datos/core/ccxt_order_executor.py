@@ -107,6 +107,44 @@ class CCXTOrderExecutor:
         """Inicializa la conexión con el exchange CCXT"""
         try:
             exchange_config = self.config.get(self.exchange_name, {})
+            # Intentar cargar .env local si está presente (fallback seguro)
+            try:
+                from dotenv import load_dotenv
+                import os
+                # Buscar .env en múltiples ubicaciones
+                possible_paths = [
+                    Path(__file__).parent.parent / '.env',  # descarga_datos/.env
+                    Path(__file__).parent.parent.parent / '.env',  # raíz/.env
+                    Path.cwd() / '.env',  # directorio actual
+                    Path.cwd() / 'descarga_datos' / '.env',  # descarga_datos desde cwd
+                ]
+                
+                dotenv_loaded = False
+                for dotenv_path in possible_paths:
+                    if dotenv_path.exists():
+                        load_dotenv(dotenv_path)
+                        self.logger.info(f".env cargado desde: {dotenv_path}")
+                        dotenv_loaded = True
+                        break
+                
+                if not dotenv_loaded:
+                    self.logger.warning("No se encontró archivo .env en las rutas esperadas")
+                    
+            except Exception as e:
+                self.logger.error(f"Error cargando .env: {e}")
+                # no hay dotenv o falla la carga, continuar
+
+            # Priorizar claves en config.yaml, si no existen, usar variables de entorno
+            env_api_key = os.getenv(f"{self.exchange_name.upper()}_API_KEY") or os.getenv('BINANCE_API_KEY') or os.getenv('BYBIT_API_KEY')
+            env_api_secret = os.getenv(f"{self.exchange_name.upper()}_API_SECRET") or os.getenv('BINANCE_API_SECRET') or os.getenv('BYBIT_API_SECRET')
+            api_key = exchange_config.get('api_key') or env_api_key or ''
+            api_secret = exchange_config.get('api_secret') or env_api_secret or ''
+            
+            # Logging para debug
+            self.logger.info(f"Exchange {self.exchange_name} - API key desde config: {'***' if exchange_config.get('api_key') else 'VACÍA'}")
+            self.logger.info(f"Exchange {self.exchange_name} - API key desde env: {'***' if env_api_key else 'VACÍA'}")
+            self.logger.info(f"Exchange {self.exchange_name} - Usando API key: {'***' if api_key else 'VACÍA'}")
+            
             if not exchange_config.get('enabled', False):
                 self.logger.warning(f"Exchange {self.exchange_name} no está habilitado en configuración")
                 return False
@@ -114,21 +152,27 @@ class CCXTOrderExecutor:
             # Configurar exchange síncrono
             exchange_class = getattr(ccxt, self.exchange_name)
             self.exchange = exchange_class({
-                'apiKey': exchange_config.get('api_key', ''),
-                'secret': exchange_config.get('api_secret', ''),
+                'apiKey': api_key,
+                'secret': api_secret,
                 'sandbox': exchange_config.get('sandbox', False),
                 'timeout': exchange_config.get('timeout', 30000),
                 'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot',  # Forzar spot trading en lugar de futures
+                },
             })
 
             # Configurar exchange asíncrono
             async_exchange_class = getattr(ccxt_async, self.exchange_name)
             self.async_exchange = async_exchange_class({
-                'apiKey': exchange_config.get('api_key', ''),
-                'secret': exchange_config.get('api_secret', ''),
+                'apiKey': api_key,
+                'secret': api_secret,
                 'sandbox': exchange_config.get('sandbox', False),
                 'timeout': exchange_config.get('timeout', 30000),
                 'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot',  # Forzar spot trading en lugar de futures
+                },
             })
 
             self.logger.info(f"Exchange {self.exchange_name} inicializado correctamente")
@@ -266,7 +310,46 @@ class CCXTOrderExecutor:
                 raise ValueError("Stop loss inválido")
 
             risk_amount = total_balance * risk_pct
+
+            # Aplicar factor de reducción SOLO cuando NO viene de estrategia (para mantener consistencia con backtest)
+            if risk_per_trade is not None:
+                # Cuando viene de estrategia, usar cálculo idéntico al backtest (sin reducción)
+                risk_reduction_factor = 1.0
+                max_risk_amount = total_balance * risk_pct  # No limitar, usar exactamente risk_pct
+            else:
+                # Valores por defecto cuando no viene de estrategia
+                risk_reduction_factor = 0.5
+                max_risk_amount = total_balance * 0.02
+
+            risk_amount = risk_amount * risk_reduction_factor
+            risk_amount = min(risk_amount, max_risk_amount)
+            
             quantity = risk_amount / risk_distance
+            
+            # Ajustar a la precisión del mercado
+            try:
+                market_info = self.exchange.market(symbol)
+                precision = market_info.get('precision', {}).get('amount')
+                if precision is not None:
+                    # Si precision es numérico (decimales), usarlo directamente
+                    if isinstance(precision, (int, float)):
+                        if precision >= 1:
+                            # Precision entera (decimales)
+                            quantity = round(quantity, int(precision))
+                        else:
+                            # Precision como step size (ej: 0.001)
+                            quantity = round(quantity / precision) * precision
+                    else:
+                        # Fallback si precision tiene formato inesperado
+                        quantity = float(f"{quantity:.8f}")
+                
+                # Verificar límites de cantidad mínima
+                min_amount = market_info.get('limits', {}).get('amount', {}).get('min')
+                if min_amount and quantity < min_amount:
+                    self.logger.warning(f"Cantidad calculada {quantity} menor que el mínimo {min_amount}")
+                    quantity = min_amount
+            except Exception as e:
+                self.logger.warning(f"Error ajustando precisión: {e}")
 
             return {
                 'quantity': quantity,
@@ -334,11 +417,78 @@ class CCXTOrderExecutor:
                 return None
 
             # Crear orden
+            
+            # Verificar balance disponible antes de crear la orden
+            try:
+                # Determinar qué moneda necesitamos según el tipo de orden
+                if order_type == OrderType.BUY:
+                    # Para BUY necesitamos la moneda de cotización (USDT)
+                    currency = symbol.split('/')[1]  # USDT para BTC/USDT
+                    balance_info = self.exchange.fetch_balance()
+                    available_balance = balance_info.get('free', {}).get(currency, 0)
+                    
+                    # Calcular costo aproximado de la orden (quantity * price)
+                    estimated_cost = quantity * price
+                    estimated_cost_with_fees = estimated_cost * 1.01
+                    
+                    if available_balance < estimated_cost_with_fees:
+                        self.logger.error(f"Saldo insuficiente: {available_balance} {currency}, necesario ~{estimated_cost_with_fees} {currency}")
+                        self.logger.warning("Reduciendo cantidad para ajustar al saldo disponible")
+                        
+                        # Reducir la cantidad al 90% del saldo disponible para dejar margen
+                        safe_quantity = (available_balance * 0.9) / price
+                        
+                        # Validar con los límites del mercado
+                        market_info = self.exchange.market(symbol)
+                        min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 0)
+                        
+                        if safe_quantity < min_amount:
+                            self.logger.error(f"No hay saldo suficiente para una orden mínima: {safe_quantity} < {min_amount}")
+                            return None
+                        
+                        quantity = safe_quantity
+                        self.logger.info(f"Cantidad ajustada a {quantity} para operar con el saldo disponible")
+                
+                else:  # SELL
+                    # Para SELL necesitamos la moneda base (BTC)
+                    currency = symbol.split('/')[0]  # BTC para BTC/USDT
+                    balance_info = self.exchange.fetch_balance()
+                    available_balance = balance_info.get('free', {}).get(currency, 0)
+                    
+                    # Para SELL, la cantidad es directamente en la moneda base
+                    if available_balance < quantity:
+                        self.logger.error(f"Saldo insuficiente: {available_balance} {currency}, necesario {quantity} {currency}")
+                        self.logger.warning("Reduciendo cantidad para ajustar al saldo disponible")
+                        
+                        # Validar con los límites del mercado
+                        market_info = self.exchange.market(symbol)
+                        min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 0)
+                        
+                        safe_quantity = available_balance * 0.9  # 90% del saldo disponible
+                        
+                        if safe_quantity < min_amount:
+                            self.logger.error(f"No hay saldo suficiente para una orden mínima: {safe_quantity} < {min_amount}")
+                            return None
+                        
+                        quantity = safe_quantity
+                        self.logger.info(f"Cantidad ajustada a {quantity} para operar con el saldo disponible")
+                        
+            except Exception as e:
+                self.logger.warning(f"Error verificando balance: {e}")
+            
+            # Determinar el tipo de orden correcto para CCXT
+            ccxt_order_type = 'market'  # Por defecto usar órdenes de mercado
+            if price is not None and order_type in [OrderType.LIMIT_BUY, OrderType.LIMIT_SELL]:
+                ccxt_order_type = 'limit'
+            
+            # Determinar el lado de la orden
+            ccxt_side = 'buy' if order_type in [OrderType.BUY, OrderType.LIMIT_BUY, OrderType.STOP_BUY] else 'sell'
+            
             order_params = {
                 'symbol': symbol,
-                'type': 'market' if price is None else 'limit',
-                'side': order_type.value,
-                'amount': quantity,
+                'type': ccxt_order_type,  # 'market' o 'limit'
+                'side': ccxt_side,        # 'buy' o 'sell'
+                'amount': quantity
             }
 
             if price is not None:
@@ -354,6 +504,7 @@ class CCXTOrderExecutor:
                 'symbol': symbol,
                 'type': order_type.value,
                 'quantity': quantity,
+                'size': quantity,  # Alias para compatibilidad
                 'entry_price': order.get('price', price),
                 'stop_loss': stop_loss_price,
                 'take_profit': take_profit_price,

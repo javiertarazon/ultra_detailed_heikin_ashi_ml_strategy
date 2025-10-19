@@ -51,6 +51,113 @@ This is a modular trading system with centralized entry via `descarga_datos/main
 - **Async Shutdown Handling**: Manage `asyncio.CancelledError` and close connections properly.
 - **Avoid Synthetic Data**: Never use or generate synthetic data; all operations must use real downloaded or live data.
 
+## Critical Error Prevention - v4.0 Lessons Learned
+
+### **🚨 JSON Serialization Errors - PREVENIR SIEMPRE**
+**Problema v3.5**: Objetos `datetime` no serializables causaban errores recurrentes al guardar historial de posiciones.
+**Lección**: NUNCA guardar objetos datetime directamente en estructuras que serán serializadas a JSON.
+**Regla de Oro**:
+```
+✅ SIEMPRE usar convert_to_json_serializable() antes de json.dump()
+✅ Convertir datetime.now() a datetime.now().isoformat() inmediatamente
+✅ Validar tipos antes de serialización
+✅ Implementar try/catch en todas las operaciones de guardado
+```
+
+**Código Problemático (NUNCA REPETIR)**:
+```python
+# ❌ MAL - Causó errores cada 5 minutos
+position['open_time'] = datetime.now()  # Objeto datetime
+json.dump(position_history, file)       # ERROR: not JSON serializable
+
+# ✅ BIEN - Implementado en v4.0
+position['open_time'] = datetime.now().isoformat()  # String
+serializable_data = [convert_to_json_serializable(pos) for pos in position_history]
+json.dump(serializable_data, file)
+```
+
+### **🚨 Missing Method Errors - IMPLEMENTAR INTERFACES COMPLETAS**
+**Problema v3.5**: Método `calculate_position_risk` faltante causaba errores cada 60 segundos.
+**Lección**: NUNCA dejar métodos abstractos o interfaces sin implementar.
+**Regla de Oro**:
+```
+✅ Verificar TODOS los métodos requeridos antes de commits
+✅ Implementar interfaces 100% completas
+✅ Usar @abstractmethod para forzar implementación
+✅ Validar llamadas existentes antes de cambios
+```
+
+**Prevención**:
+```python
+# ✅ REQUERIDO - Verificación antes de commits
+def validate_implementation(self):
+    required_methods = ['calculate_position_risk', 'validate_position', 'update_stops']
+    for method in required_methods:
+        if not hasattr(self, method):
+            raise NotImplementedError(f"Método requerido faltante: {method}")
+```
+
+### **🚨 Resource Leak Errors - SHUTDOWN GRACEFUL OBLIGATORIO**
+**Problema v3.5**: Conexiones no cerradas causaban memory leaks y warnings.
+**Lección**: NUNCA omitir manejo de recursos en shutdown.
+**Regla de Oro**:
+```
+✅ try/except/finally en TODOS los shutdown
+✅ await close() en conexiones async
+✅ Manejar asyncio.CancelledError explícitamente
+✅ Liberar recursos en finally block
+```
+
+**Patrón Correcto**:
+```python
+async def shutdown(self):
+    try:
+        # Operaciones de cierre
+        await self.connection.close()
+    except asyncio.CancelledError:
+        pass  # Graceful cancellation
+    except Exception as e:
+        self.logger.error(f"Shutdown error: {e}")
+    finally:
+        # ✅ SIEMPRE ejecutar - liberación de recursos
+        self.resources = None
+        self.logger.info("Shutdown completo")
+```
+
+### **🚨 Data Type Errors - VALIDACIÓN ESTRICTA**
+**Problema v3.5**: Tipos inconsistentes causaban operaciones erróneas.
+**Lección**: NUNCA asumir tipos de datos sin validación.
+**Regla de Oro**:
+```
+✅ Validar tipos antes de operaciones numéricas
+✅ Normalizar None a valores por defecto
+✅ Usar type hints estrictos
+✅ Implementar validación de entrada en métodos públicos
+```
+
+**Validación Requerida**:
+```python
+def validate_numeric_input(self, value: Any, default: float = 0.0) -> float:
+    """Valida entrada numérica, retorna default si inválido."""
+    try:
+        result = float(value) if value is not None else default
+        return result if not (math.isnan(result) or math.isinf(result)) else default
+    except (TypeError, ValueError):
+        return default
+```
+
+### **🚨 Live Trading Stability - VALIDACIÓN OBLIGATORIA**
+**Problema v3.5**: Sistema funcional pero con errores recurrentes.
+**Lección**: NUNCA desplegar sin validación completa de estabilidad.
+**Regla de Oro**:
+```
+✅ 24h testing mínimo antes de producción
+✅ Validar sin errores JSON en logs
+✅ Verificar shutdown graceful
+✅ Confirmar integridad de datos
+✅ Monitoreo de recursos sin leaks
+```
+
 ## Data Integrity Rules
 - **Real Data Only**: All metrics, results, and strategy executions must derive from real downloaded or live data. No artificial alterations, improvements, or synthetic enhancements.
 - **Result Authenticity**: Metrics and results must be the direct outcome of strategy execution on real data, without manipulation or optimization beyond parameter tuning.

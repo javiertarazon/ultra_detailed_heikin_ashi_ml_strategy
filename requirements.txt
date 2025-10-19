@@ -1,12 +1,13 @@
-# 🤖 Bot Trader Copilot - Sistema Centralizado v3.0
+# 🤖 Bot Trader Copilot - Sistema Centralizado v4.0
 # 📦 Dependencias Python para el sistema de trading automatizado
-# 📅 Actualizado: 13 de Octubre de 2025
-# 🎯 Versión: 3.0 - Sistema Limpio y Optimizado
+# 📅 Actualizado: 19 de Octubre de 2025
+# 🎯 Versión: 4.0 - Sistema Live Trading Estabilizado y Optimizado
 
 pandas>=2.0.0
 numpy>=1.24.0
 ccxt>=4.0.0
 PyYAML>=6.0
+python-dotenv>=1.0.0
 # Indicadores técnicos - implementaciones propias (sin dependencias externas problemáticas)
 # pandas-ta>=0.4.71  # Removido por problemas de compatibilidad con Python 3.13
 MetaTrader5>=5.0.45
@@ -33,7 +34,7 @@ ipykernel>=6.25.0
 # Data validation
 pydantic>=2.5.0
 
-# Enhanced logging (v3.0 - Live Trading Mejorado)
+# Enhanced logging (v4.0 - Live Trading Mejorado)
 colorlog>=6.8.0
 
 # Visualization

@@ -138,11 +138,6 @@ def setup_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_t
     Returns:
         Un logger configurado
     """
-    # Crear directorio de logs si no existe
-    log_dir = os.path.dirname(log_file)
-    if log_dir and not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
     # Configurar el nivel de logging
     level = getattr(logging, log_level.upper(), logging.INFO)
 
@@ -150,8 +145,22 @@ def setup_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_t
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
+    # Si el logger root ya está configurado (tiene handlers), no agregar handlers propios
+    # para evitar duplicación. Los mensajes se propagarán al root automáticamente.
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        # Logger root configurado - usar propagación
+        logger.propagate = True
+        return logger
+
+    # Si no hay configuración root, configurar handlers locales (legacy compatibility)
     # Verificar si ya tiene handlers para evitar duplicados
     if not logger.handlers:
+        # Crear directorio de logs si no existe
+        log_dir = os.path.dirname(log_file)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+            
         # Crear formatter seguro
         formatter = SafeFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -164,6 +173,9 @@ def setup_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_t
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
+        
+        # No propagar si tiene handlers propios
+        logger.propagate = False
 
     return logger
 

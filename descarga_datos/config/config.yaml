@@ -3,19 +3,19 @@ backtesting:
   commission: 0.1
   data_quality: null
   end_date: '2025-10-16'
-  initial_capital: 500
+  initial_capital: 100
   optimized_parameters:
     BTC_USDT:
       atr_period: 17
       cci_threshold: 100
       ema_trend_period: 50
-      kelly_fraction: 0.25
-      max_concurrent_trades: 10
-      max_drawdown: 0.11
-      max_portfolio_heat: 0.14
-      ml_threshold: 0.35
-      ml_threshold_min: 0.4
+      kelly_fraction: 0.1
+      max_concurrent_trades: 1
+      max_drawdown: 0.03
+      max_portfolio_heat: 0.05
+      ml_threshold: 0.45
       ml_threshold_max: 0.75
+      ml_threshold_min: 0.5
       sar_acceleration: 0.04
       sar_maximum: 0.26
       stoch_overbought: 75
@@ -23,15 +23,21 @@ backtesting:
       stop_loss_atr_multiplier: 2.25
       take_profit_atr_multiplier: 3.75
       volume_ratio_min: 0.3
+    atr_period: 14
+    liquidity_score_min: 5
+    max_concurrent_trades: 3
+    min_rr_ratio: 2.5
+    ml_threshold_max: 0.8
+    ml_threshold_min: 0.45
+    risk_per_trade: 0.025
+    stop_loss_atr_multiplier: 1.2
+    take_profit_atr_multiplier: 2.5
   slippage: 0.05
   start_date: '2025-01-01'
   strategies:
-    UltraDetailedHeikinAshiML: false  # Estrategia principal (bloqueada) - DESACTIVADA
-    HeikinNeuronalMLPruebas: true     # Estrategia de pruebas - ACTIVADA para desarrollo
+    HeikinNeuronalMLPruebas: true
+    UltraDetailedHeikinAshiML: false
   strategy_paths:
-    UltraDetailedHeikinAshiML:
-    - strategies.ultra_detailed_heikin_ashi_ml_strategy
-    - UltraDetailedHeikinAshiMLStrategy
     HeikinNeuronalMLPruebas:
     - strategies.heikin_neuronal_ml_pruebas
     - HeikinNeuronalMLPruebasStrategy
@@ -50,7 +56,7 @@ compensation_strategy:
   size_multiplier: 3.0
   tp_percent: 0.5
 data:
-  limit_per_request: 1000
+  limit_per_request: 2000
   max_retries: 3
   retry_delay: 5
   use_ccxt_for_crypto: true
@@ -97,22 +103,19 @@ indicators:
     period: 14
 live_trading:
   account_type: DEMO
-  active_strategy: Solana4HRiskManaged
+  active_strategy: HeikinNeuronalMLPruebasStrategy
   active_symbol: BTC/USDT
   apply_risk_management: true
-  ccxt_exchange: bybit
+  ccxt_exchange: binance
   ccxt_symbols:
   - BTC/USDT
-  - ETH/USDT
-  - SOL/USDT
   ccxt_timeframes:
-  - 1h
-  - 4h
-  enabled: false
-  initial_history_bars: 1000
-  max_positions: 5
+  - 15m
+  enabled: true
+  initial_history_bars: 500
+  max_positions: 1
   max_positions_per_symbol: 1
-  mode: MT5
+  mode: CCXT
   mt5_symbols:
   - EURUSD
   - USDJPY
@@ -121,9 +124,9 @@ live_trading:
   - 1h
   - 4h
   - 1d
-  risk_per_trade: 0.01
+  risk_per_trade: 0.002
   strategy_mapping: {}
-  update_interval_seconds: 5
+  update_interval_seconds: 900
   validation: {}
 ml_training:
   enabled_models:
@@ -135,18 +138,18 @@ ml_training:
       n_jobs: 1
       random_state: 42
   optimization:
+    constraints:
+      max_drawdown_limit: 0.08
     enabled: true
     n_trials: 150
     opt_end: '2025-10-16'
     opt_start: '2025-07-01'
     study_name: btc_ml_optimization_drawdown_focused_v1
-    constraints:
-      max_drawdown_limit: 0.08
   safe_mode: false
   training:
     min_samples: 500
     train_end: '2022-12-31'
-    train_start: '2020-01-01'
+    train_start: '2019-01-01'
     val_end: '2023-12-31'
     val_start: '2023-01-01'
 mt5:
@@ -167,6 +170,9 @@ risk:
   risk_percent: 0.5
   sl_atr_multiplier: 1.5
   tp_atr_multiplier: 2.0
+risk_management:
+  max_position_size_pct: 0.01
+  risk_per_trade: 0.002
 storage:
   cache_enabled: true
   csv_enabled: true

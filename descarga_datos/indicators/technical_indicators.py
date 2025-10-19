@@ -26,7 +26,16 @@ try:
 except ImportError:
     TALIB_AVAILABLE = False
     logger.warning("talib wrapper no disponible, usando implementaciones propias")
-from utils.normalization import DataNormalizer
+
+# Importar DataNormalizer de forma opcional (lazy import para evitar problemas en live trading)
+try:
+    from utils.normalization import DataNormalizer
+    NORMALIZER_AVAILABLE = True
+except ImportError as e:
+    NORMALIZER_AVAILABLE = False
+    DataNormalizer = None  # Placeholder
+    logger.warning(f"DataNormalizer no disponible: {e}, algunas funciones estarán limitadas")
+
 from config.config import NormalizationConfig
 from utils.storage import save_to_csv, DataStorage
 
@@ -69,7 +78,14 @@ class TechnicalIndicators:
     def __init__(self, config=None):
         self.config = config
         self.logger = get_logger(__name__)
-        self.normalizer = DataNormalizer()
+        
+        # Inicializar normalizer de forma opcional
+        if NORMALIZER_AVAILABLE and DataNormalizer:
+            self.normalizer = DataNormalizer()
+        else:
+            self.normalizer = None
+        
+        # Extraer parámetros de configuración con valores por defecto seguros
         
         # Extraer parámetros de configuración con valores por defecto seguros
         try:
@@ -563,9 +579,13 @@ class TechnicalIndicators:
         # Create a copy and normalize only indicator columns
         normalized_df = df.copy()
         
-        # Create normalizer with specified method
-        config = NormalizationConfig(method=method)
-        normalizer = DataNormalizer(config)
+        # Create normalizer with specified method (solo si está disponible)
+        if NORMALIZER_AVAILABLE and DataNormalizer:
+            config = NormalizationConfig(method=method)
+            normalizer = DataNormalizer(config)
+        else:
+            self.logger.warning("DataNormalizer no disponible, saltando normalización")
+            return df
         
         # Fit and transform indicator columns
         indicator_data = df[indicator_cols]

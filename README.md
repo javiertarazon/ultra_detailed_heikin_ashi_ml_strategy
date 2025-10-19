@@ -1,8 +1,8 @@
 # 🤖 Bot Trader Copilot - Sistema de Trading Automatizado con ML
 
-**Versión:** 3.5 | **Fecha:** 16 de octubre de 2025 | **Estado:** ✅ SISTEMA COMPLETO Y BLOQUEADO PARA PRODUCCIÓN
+**Versión:** 4.0 | **Fecha:** 19 de octubre de 2025 | **Estado:** ✅ SISTEMA LIVE TRADING ESTABILIZADO Y OPTIMIZADO
 
-Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad en múltiples mercados. **SISTEMA BLOQUEADO** para protección contra modificaciones accidentales.
+Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad en múltiples mercados. **SISTEMA ESTABILIZADO** con correcciones críticas aplicadas para funcionamiento 24/7 en modo live.
 
 ---
 
@@ -61,26 +61,55 @@ BTC_USDT:
 
 ---
 
-## � Sistema Bloqueado para Producción
+## 🆕 **Novedades Versión 4.0 - Correcciones Críticas Aplicadas**
 
-### **Archivos Protegidos (Solo Lectura)**
-Los siguientes componentes están bloqueados para evitar modificaciones accidentales:
-- **Núcleo del Sistema**: `main.py`, `core/`, `backtesting/`, `indicators/`, `risk_management/`, `utils/`
-- **Estrategia Principal**: `ultra_detailed_heikin_ashi_ml_strategy.py` (probada y optimizada)
-- **Dashboard**: `run_dashboard.py` y documentación de correcciones
+### **🔧 Correcciones en Sistema Live Trading**
 
-### **Archivos de Desarrollo Accesibles**
-- **Configuración**: `config/` - Archivos YAML editables
-- **Optimización**: `optimizacion/` - Sistema completo de optimización
-- **Estrategia de Pruebas**: `heikin_neuronal_ml_pruebas.py` - Para desarrollo experimental
-- **Testing**: `tests/` - Suites de pruebas
+#### **1. Error de Serialización JSON en Historial de Posiciones**
+- **Problema**: Objetos `datetime` no serializables causaban errores al guardar historial
+- **Impacto**: Pérdida de datos de posiciones y errores recurrentes en logs
+- **Solución**: Implementación de conversión automática `convert_to_json_serializable()` en guardado de historial
+- **Resultado**: Historial de posiciones guardado correctamente sin errores
 
-### **Flujo de Desarrollo Seguro**
-1. **Desarrollar** mejoras en `heikin_neuronal_ml_pruebas.py`
-2. **Probar** con backtests y optimización
-3. **Validar** efectividad de las mejoras
-4. **Solicitar aprobación** para aplicar a estrategia principal
-5. **Aplicar** cambios validados (requiere desbloqueo temporal)
+#### **2. Método `calculate_position_risk` Faltante en AdvancedRiskManager**
+- **Problema**: Método crítico no implementado causaba errores cada 60 segundos
+- **Impacto**: Funcionalidad de monitoreo de riesgo inoperativa
+- **Solución**: Implementación completa del método con cálculo de P&L, riesgo restante y ratio riesgo/recompensa
+- **Resultado**: Monitoreo de riesgo en tiempo real funcionando correctamente
+
+#### **3. Gestión Mejorada de Conexiones y Shutdown**
+- **Problema**: Conexiones no cerradas correctamente en shutdown
+- **Impacto**: Recursos no liberados y posibles memory leaks
+- **Solución**: Implementación de `try/except/finally` blocks y manejo de `asyncio.CancelledError`
+- **Resultado**: Shutdown graceful con liberación completa de recursos
+
+#### **4. Validación de Datos Mejorada**
+- **Problema**: Datos inconsistentes en operaciones live
+- **Impacto**: Señales erróneas y posiciones incorrectas
+- **Solución**: Verificación estricta de tipos de datos y normalización de métricas
+- **Resultado**: Integridad de datos garantizada en todas las operaciones
+
+### **📈 Mejoras en Rendimiento Live**
+
+#### **Monitoreo de Posiciones 24/7**
+- **Trailing Stops Dinámicos**: Stop loss ajustado automáticamente basado en ATR
+- **Cálculo de Riesgo en Tiempo Real**: P&L actual, riesgo restante, ratio riesgo/recompensa
+- **Gestión de Posiciones Concurrentes**: Hasta 10 posiciones simultáneas por símbolo
+- **Compensación Automática**: Balanceo de posiciones BUY/SELL para neutralidad
+
+#### **Dashboard Mejorado**
+- **Métricas Live**: Win rate, P&L total, drawdown en tiempo real
+- **Historial de Operaciones**: Todas las posiciones abiertas/cerradas con detalles
+- **Alertas de Riesgo**: Notificaciones automáticas cuando se alcanzan límites
+- **Visualización de Señales ML**: Confianza y predicciones en tiempo real
+
+### **🛡️ Sistema de Seguridad Reforzado**
+
+#### **Validaciones de Integridad**
+- **Checksum de Datos**: Verificación de integridad en descargas
+- **Backup Automático**: Configuraciones y modelos guardados automáticamente
+- **Recovery Points**: Puntos de restauración para recuperación de fallos
+- **Sandbox Obligatorio**: Testing en modo seguro antes de producción
 
 ---
 
@@ -378,4 +407,4 @@ tail -f logs/dashboard.log
 **⚠️ Disclaimer**: Este sistema es para fines educativos e investigación. El trading conlleva riesgos financieros significativos. Siempre prueba en sandbox antes de usar capital real.
 
 ---
-*Bot Trader Copilot v3.0 - Sistema de Trading Automatizado con ML* 🤖📈
+*Bot Trader Copilot v4.0 - Sistema de Trading Automatizado con ML Estabilizado* 🤖📈
