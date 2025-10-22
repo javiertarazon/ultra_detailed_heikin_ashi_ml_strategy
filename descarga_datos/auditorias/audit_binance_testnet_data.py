@@ -50,7 +50,7 @@ from utils.logger import initialize_system_logging, get_logger
 # Inicializar logging
 initialize_system_logging({
     'level': 'INFO',
-    'file': 'logs/binance_testnet_audit.log'
+    'file': '../logs/binance_testnet_audit.log'
 })
 
 logger = get_logger('binance_testnet_audit')

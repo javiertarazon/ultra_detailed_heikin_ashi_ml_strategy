@@ -1004,7 +1004,7 @@ def main():
     # INICIALIZAR LOGGING CENTRALIZADO PRIMERO
     initialize_system_logging({
         'level': 'INFO',
-        'file': 'logs/bot_trader.log'
+        'file': '../logs/bot_trader.log'
     })
     
     # Obtener logger principal del sistema
@@ -1109,10 +1109,10 @@ def main():
         if success:
             print("\n[OK] TEST DE BINANCE SANDBOX COMPLETADO EXITOSAMENTE")
             print("[STATS] Resultados guardados en: tests/test_results/")
-            print("📋 Revisa logs en: logs/binance_sandbox_test.log")
+            print("📋 Revisa logs en: ../logs/binance_sandbox_test.log")
         else:
             print("\n[ERROR] TEST DE BINANCE SANDBOX FALLÓ")
-            print("📋 Revisa logs en: logs/binance_sandbox_test.log")
+            print("📋 Revisa logs en: ../logs/binance_sandbox_test.log")
             sys.exit(1)
 
     elif mode == "live_mt5":

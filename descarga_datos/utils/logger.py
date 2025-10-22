@@ -81,7 +81,7 @@ class SafeFormatter(logging.Formatter):
 
         return super().format(record)
 
-def setup_logging(log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> None:
+def setup_logging(log_level: str = "INFO", log_file: str = "../logs/bot_trader.log") -> None:
     """
     Configura el sistema de logging con parámetros simples.
     FUNCIÓN PRINCIPAL para inicializar el sistema de logging global.
@@ -126,7 +126,7 @@ def setup_logging(log_level: str = "INFO", log_file: str = "logs/bot_trader.log"
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
-def setup_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> logging.Logger:
+def setup_logger(name: str, log_level: str = "INFO", log_file: str = "../logs/bot_trader.log") -> logging.Logger:
     """
     Configura un logger específico con un nombre para un componente.
 
@@ -179,7 +179,7 @@ def setup_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_t
 
     return logger
 
-def get_logger(name: str, log_level: str = "INFO", log_file: str = "logs/bot_trader.log") -> logging.Logger:
+def get_logger(name: str, log_level: str = "INFO", log_file: str = "../logs/bot_trader.log") -> logging.Logger:
     """
     Obtiene un logger con el nombre especificado.
     Esta función es un alias para setup_logger y debe usarse en todo el sistema.
@@ -202,13 +202,13 @@ def initialize_system_logging(config: Optional[Dict[str, Any]] = None) -> None:
 
     Args:
         config: Configuración de logging. Si es None, se usará la configuración por defecto.
-               Formato esperado: {'level': 'INFO', 'file': 'logs/bot_trader.log'}
+               Formato esperado: {'level': 'INFO', 'file': '../logs/bot_trader.log'}
     """
     if config is None:
-        config = {'level': 'INFO', 'file': 'logs/bot_trader.log'}
+        config = {'level': 'INFO', 'file': '../logs/bot_trader.log'}
     
     log_level = config.get('level', 'INFO').upper()
-    log_file = config.get('file', 'logs/bot_trader.log')
+    log_file = config.get('file', '../logs/bot_trader.log')
     
     # Verificar si el directorio de logs existe, si no, crearlo
     log_dir = os.path.dirname(log_file)

@@ -226,7 +226,7 @@ def adaptar_datos_live_para_backtest():
 
 if __name__ == "__main__":
     # Configurar logging
-    setup_logging(log_level="DEBUG", log_file="logs/adaptar_datos_live.log")
+    setup_logging(log_level="DEBUG", log_file="../logs/adaptar_datos_live.log")
     
     success = adaptar_datos_live_para_backtest()
     

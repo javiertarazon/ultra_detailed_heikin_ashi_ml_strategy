@@ -263,7 +263,7 @@ def display_simplified_status(data):
 
 def main():
     """Función principal"""
-    log_path = "logs/bot_trader.log"
+    log_path = "../logs/bot_trader.log"
 
     # Verificar si existe el archivo de log
     if not os.path.exists(log_path):

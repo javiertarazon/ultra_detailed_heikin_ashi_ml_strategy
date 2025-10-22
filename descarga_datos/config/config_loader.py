@@ -169,7 +169,7 @@ class SystemConfig:
     name: str = "Bot Trader Copilot"
     version: str = "1.0"
     log_level: str = "INFO"
-    log_file: str = "logs/bot_trader.log"
+    log_file: str = "../logs/bot_trader.log"
     auto_launch_dashboard: bool = True
 
 

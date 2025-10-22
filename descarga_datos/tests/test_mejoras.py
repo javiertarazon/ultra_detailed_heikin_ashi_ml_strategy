@@ -246,7 +246,7 @@ def verificar_estructura_y_proponer_soluciones():
 
 if __name__ == "__main__":
     # Configurar logging
-    setup_logging(log_level="DEBUG", log_file="logs/analisis_estructura_datos.log")
+    setup_logging(log_level="DEBUG", log_file="../logs/analisis_estructura_datos.log")
     
     logger.info("=" * 80)
     logger.info("INICIANDO ANÁLISIS DE ESTRUCTURA DE DATOS Y GENERACIÓN DE SEÑALES")

@@ -219,7 +219,7 @@ async def run_backtest_with_live_data():
 
 if __name__ == "__main__":
     # Configurar logging
-    setup_logging("DEBUG", log_file="logs/backtest_live_data.log")
+    setup_logging("DEBUG", log_file="../logs/backtest_live_data.log")
     
     # Ejecutar backtest
     success = asyncio.run(run_backtest_with_live_data())

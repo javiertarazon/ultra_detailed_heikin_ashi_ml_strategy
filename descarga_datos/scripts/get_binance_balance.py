@@ -124,7 +124,7 @@ print("=" * 70)
 
 # Leer log local
 try:
-    with open('logs/bot_trader.log', 'r', encoding='utf-8') as f:
+    with open('../logs/bot_trader.log', 'r', encoding='utf-8') as f:
         content = f.read()
     
     # Buscar operaciones cerradas

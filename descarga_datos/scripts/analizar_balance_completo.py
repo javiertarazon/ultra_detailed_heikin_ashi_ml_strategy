@@ -128,7 +128,7 @@ print("\n\n4️⃣  OPERACIONES EJECUTADAS (DESDE LOG)")
 print("-" * 80)
 
 try:
-    with open('logs/bot_trader.log', 'r', encoding='utf-8') as f:
+    with open('../logs/bot_trader.log', 'r', encoding='utf-8') as f:
         content = f.read()
     
     # Extraer P&L finales
@@ -176,7 +176,7 @@ print("\n\n5️⃣  POSICIONES ABIERTAS SEGÚN LOG")
 print("-" * 80)
 
 try:
-    with open('logs/bot_trader.log', 'r', encoding='utf-8') as f:
+    with open('../logs/bot_trader.log', 'r', encoding='utf-8') as f:
         lines = f.readlines()
     
     # Buscar apertura y cierre de operaciones

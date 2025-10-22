@@ -191,7 +191,7 @@ def main():
     # Ejecutar test
     if run_test(args.test):
         print("\n🎉 Test completado exitosamente!")
-        print("📊 Revisa los logs en 'logs/binance_sandbox_test.log'")
+        print("📊 Revisa los logs en '../logs/binance_sandbox_test.log'")
         print("📈 Resultados guardados en 'tests/test_results/'")
     else:
         print("\n❌ Test falló. Revisa los logs para más detalles.")
