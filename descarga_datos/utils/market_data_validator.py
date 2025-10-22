@@ -7,6 +7,8 @@ son del mercado real y no sintéticos/generados artificialmente.
 import numpy as np
 import pandas as pd
 import hashlib
+import sqlite3
+from typing import Dict, Any, List, Optional, Tuple
 from utils.logger import get_logger
 
 logger = get_logger("__name__")
