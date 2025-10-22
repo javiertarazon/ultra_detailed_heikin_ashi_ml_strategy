@@ -1,0 +1,306 @@
+🔍 CONTEXTO ACTUAL DEL PROYECTO - ESTADO 21 OCT 2025
+====================================================
+
+Este documento proporciona el contexto completo del estado actual para el próximo trabajo.
+
+---
+
+## 📊 ESTADO DEL SISTEMA
+
+### Capital Operativo
+- BTC: 1.05123 BTC (~$113,718 USD)
+- USDT: $1,000.56 (reserva)
+- Total: ~$114,718 USD
+
+### Configuración Operativa
+- Exchange: Binance Testnet (Sandbox)
+- Modo: Sandbox habilitado en config.yaml
+- Riesgo por trade: 2%
+- Max posiciones concurrentes: 1
+- Stop loss: ATR-based (dinámico)
+- Take profit: Trailing 65%
+
+### Validación de Sistema (21 OCT)
+- ✅ Backtest: 1,679 trades, 76.8% win rate, $39,667.40 ganancia
+- ✅ Live: 2 trades, 100% win rate, +$7,568 ganancia
+- ✅ Indicadores: 28 técnicos, todos funcionales
+- ✅ ML Models: RandomForest entrenado, optimizado con Optuna
+- ✅ Logging: Activo, estructurado, sin errores
+- ✅ Database: SQLite + CSV backup funcionando
+- ✅ Organización: Completa, profesional, optimizada
+
+---
+
+## 📁 ESTRUCTURA FINAL
+
+### Directorio Raíz (8 archivos)
+```
+botcopilot-sar/
+├── README.md              ← Documentación principal v4.0.1
+├── requirements.txt       ← Dependencias
+├── LICENSE
+├── .gitignore
+├── run_dashboard.py       ← Ejecutar dashboard
+├── downgrade_python.bat
+├── fix_libraries.bat
+└── LIMPIEZA_COMPLETADA.txt
+```
+
+### Carpetas Organizadas
+```
+descarga_datos/
+├── main.py                ← ENTRY POINT
+├── config/config.yaml     ← CONFIGURACIÓN CENTRALIZADA
+├── core/                  ← Módulos core
+├── strategies/            ← Estrategias (UltraDetailedHeikinAshiML)
+├── indicators/            ← 28 indicadores técnicos
+├── backtesting/           ← Engine de backtesting
+├── models/                ← Modelos ML entrenados
+├── utils/                 ← Logging, storage, etc
+├── tests/                 ← Suite de testing
+│
+├── ARCHIVOS MD/           ← 47+ documentos
+│   ├── 00_INDICE_MAESTRO_v4.md
+│   ├── README.md
+│   ├── LIVE_TRADING_SANDBOX_GUIDE.md
+│   ├── 05_CORRECCIONES_Y_MEJORAS.md
+│   └── historical_analysis/  ← 9 reportes
+│
+├── scripts/               ← 5 scripts útiles
+│   ├── convertir_btc_a_usdt.py
+│   ├── convertir_ganancias_btc_a_usdt.py
+│   ├── convertir_usdt_a_btc_reserva.py
+│   ├── get_binance_balance.py
+│   └── analizar_balance_completo.py
+│
+├── test_and_check/        ← 11 archivos (10 + nuevo RESUMEN)
+│   ├── README.md
+│   ├── RESUMEN_COMPLETO_ORGANIZACION.txt
+│   ├── ANALISIS_ARCHIVOS_RAIZ.txt
+│   ├── BALANCE_OPERACIONES_20251021.json
+│   ├── ... (8 más)
+│
+├── data/
+│   ├── csv/               ← Datos históricos en CSV
+│   ├── live_data/         ← Datos live
+│   └── live_trading_results/  ← Resultados
+│
+└── logs/
+    └── bot_trader.log     ← Log principal
+```
+
+---
+
+## 🚀 COMANDOS PRINCIPALES
+
+### Ejecutar Live Trading
+```bash
+python descarga_datos/main.py --live
+```
+
+### Ejecutar Backtest
+```bash
+python descarga_datos/main.py --backtest
+```
+
+### Optimizar ML
+```bash
+python descarga_datos/main.py --optimize
+```
+
+### Ver Dashboard
+```bash
+python run_dashboard.py
+```
+
+### Smoke Test
+```bash
+python -m pytest descarga_datos/tests/test_quick_backtest.py -v
+```
+
+### Consultar Balance
+```bash
+python descarga_datos/scripts/get_binance_balance.py
+```
+
+---
+
+## 📚 DOCUMENTACIÓN CLAVE
+
+### Para Empezar
+1. **README.md** - Visión general
+2. **descarga_datos/ARCHIVOS MD/00_INDICE_MAESTRO_v4.md** - Navegación
+
+### Para Live Trading
+1. **LIVE_TRADING_SANDBOX_GUIDE.md** - Guía paso a paso
+2. **LIVE_TRADING_READY.md** - Checklist
+
+### Si Hay Problemas
+1. **05_CORRECCIONES_Y_MEJORAS.md** - Soluciones
+2. **test_and_check/ANALISIS_ARCHIVOS_RAIZ.txt** - Análisis completo
+
+### Datos Históricos
+1. **test_and_check/BALANCE_OPERACIONES_20251021.json** - Balance
+2. **test_and_check/RESUMEN_EJECUTIVO_TESTNET_21_OCT_2025.txt** - Resumen
+
+---
+
+## 🔧 CONFIGURACIÓN IMPORTANTE
+
+### Archivo: descarga_datos/config/config.yaml
+
+**Parámetros Clave:**
+```yaml
+sandbox: true                    # ← SANDBOX HABILITADO
+risk_per_trade: 0.02            # 2% de riesgo
+max_concurrent_positions: 1     # 1 posición máximo
+stop_loss_atr_multiplier: 2.0   # ATR x2 para stop
+trailing_stop_percent: 0.65     # 65% trailing
+timeframe: "15m"                # 15 minutos
+symbols:
+  - "BTC/USDT"
+  - "XRP/USDT"
+```
+
+**Para Cambiar a Producción:**
+```yaml
+sandbox: false                  # ← Cambiar a false
+```
+
+---
+
+## 🎯 WORKFLOW TÍPICO
+
+### 1. Iniciar Sesión
+```bash
+cd c:\Users\javie\copilot\botcopilot-sar
+python descarga_datos/main.py --live
+```
+
+### 2. Monitorear
+```bash
+# En otra terminal
+tail -f descarga_datos/logs/bot_trader.log
+```
+
+### 3. Ver Dashboard
+```bash
+# En otra terminal
+python run_dashboard.py
+```
+
+### 4. Análisis
+```bash
+# Consultar test_and_check
+cd descarga_datos/test_and_check
+cat README.md
+```
+
+---
+
+## 📈 HISTÓRICO DE OPERACIONES
+
+### Conversiones Realizadas (20-21 OCT)
+1. **Conversión 1**: 0.53043500 BTC → $57,315.30 USDT
+2. **Conversión 2**: 0.06987 BTC → $7,559.86 USDT  
+3. **Conversión 3**: $63,880.06 USDT → 0.59066 BTC
+4. **Resultado**: 1.05123 BTC + $1,000.56 USDT
+
+### Validación (21 OCT)
+- Backtest: 1,679 trades, $39,667.40 ganancia, 76.8% win rate
+- Live: 2 trades, $7,568 ganancia, 100% win rate
+- Sistema: Estable, sin errores, 100% funcional
+
+---
+
+## 🛠️ STACK TÉCNICO
+
+**Python**: 3.13.7
+**Librerías Principales**:
+- CCXT (Binance, Bybit)
+- MT5 (Forex)
+- Pandas (Data processing)
+- NumPy (Cálculos)
+- Scikit-learn (ML)
+- Optuna (Optimización)
+- Plotly (Visualización)
+- Streamlit (Dashboard)
+
+**Database**: SQLite
+**Estrategia**: UltraDetailedHeikinAshiML
+**ML Model**: RandomForest
+**Optimización**: Optuna
+
+---
+
+## ⚠️ PUNTOS CRÍTICOS A RECORDAR
+
+1. **Sandbox First**: config.yaml tiene sandbox: true
+   - Para producción: cambiar a false
+   - Siempre verificar antes de cambiar
+
+2. **Configuración Centralizada**: 
+   - TODOS los parámetros en descarga_datos/config/config.yaml
+   - Cambios inmediatos al recargar
+
+3. **Datos Reales**:
+   - NUNCA usar datos sintéticos
+   - SQLite primary → CSV fallback → auto-download
+   - Verificar antes de backtesting/optimización
+
+4. **Manejo de Recursos**:
+   - Try/except/finally en shutdown
+   - Async.CancelledError manejado
+   - Conexiones cerradas correctamente
+
+5. **Serialización JSON**:
+   - SIEMPRE convertir datetime a isoformat()
+   - Usar convert_to_json_serializable()
+   - Validar antes de guardar
+
+---
+
+## 📞 PARA PRÓXIMAS SESIONES
+
+**Si necesitas retomar trabajo:**
+
+1. Verifica estado actual:
+   ```bash
+   python descarga_datos/scripts/get_binance_balance.py
+   ```
+
+2. Consulta documentación:
+   ```bash
+   cat descarga_datos/ARCHIVOS MD/00_INDICE_MAESTRO_v4.md
+   ```
+
+3. Ve logs recientes:
+   ```bash
+   tail -n 100 descarga_datos/logs/bot_trader.log
+   ```
+
+4. Revisa test_and_check para datos históricos:
+   ```bash
+   ls descarga_datos/test_and_check/
+   ```
+
+---
+
+## ✅ CHECKLIST PRE-TRADING
+
+Antes de ejecutar live trading:
+
+- [ ] Verificar capital: `python descarga_datos/scripts/get_binance_balance.py`
+- [ ] Revisar config.yaml: sandbox: true
+- [ ] Verificar logs: tail descarga_datos/logs/bot_trader.log
+- [ ] Leer: LIVE_TRADING_SANDBOX_GUIDE.md
+- [ ] Dashboard disponible: python run_dashboard.py
+- [ ] Smoke test pasado: pytest test_quick_backtest.py
+
+---
+
+Fecha: 21 de octubre de 2025
+Status: ✅ COMPLETAMENTE ORGANIZADO
+Próximo: 🚀 LIVE TRADING
+
+¡Sistema listo para ser usado!

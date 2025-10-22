@@ -95,7 +95,7 @@ def validate_system(dashboard_only: bool = False, mode: str = 'backtest'):
                 else:
                     # En modo live/dashboard: no cargar orquestadores pesados. Solo listar desde config
                     if strategies_cfg is None:
-                        print("  ⚠️ No se encontró sección de estrategias en config; validación ligera aplicada")
+                        print("  [WARN] No se encontró sección de estrategias en config; validación ligera aplicada")
                         keys = []
                     else:
                         if isinstance(strategies_cfg, dict):
@@ -166,7 +166,7 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
     Returns:
         dict: Estado de datos por símbolo
     """
-    print("\n🔍 VERIFICACIÓN CENTRALIZADA DE DATOS")
+    print("\n[SEARCH] VERIFICACIÓN CENTRALIZADA DE DATOS")
     print("=" * 50)
     
     symbols = symbols or config.backtesting.symbols
@@ -174,7 +174,7 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
     start_date = start_date or config.backtesting.start_date
     end_date = end_date or config.backtesting.end_date
     
-    print(f"📊 Símbolos requeridos: {symbols}")
+    print(f"[STATS] Símbolos requeridos: {symbols}")
     print(f"📅 Período: {start_date} a {end_date} ({timeframe})")
     
     data_status = {}
@@ -183,7 +183,7 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
         from utils.storage import ensure_data_availability
         
         for symbol in symbols:
-            print(f"\n🔍 Verificando {symbol}...")
+            print(f"\n[SEARCH] Verificando {symbol}...")
             
             try:
                 # USAR FUNCIÓN CENTRALIZADA ensure_data_availability
@@ -195,33 +195,33 @@ async def verify_data_availability(config, symbols=None, timeframe=None, start_d
                     expected_rows = _calculate_expected_candles(start_date, end_date, timeframe)
                     completeness = (rows / expected_rows) * 100
                     
-                    print(f"  ✅ Datos asegurados: {rows} registros ({completeness:.1f}% completo)")
+                    print(f"  [OK] Datos asegurados: {rows} registros ({completeness:.1f}% completo)")
                     data_status[symbol] = {'source': 'ensured', 'rows': rows, 'status': 'ok', 'completeness': completeness}
                 else:
-                    print(f"  ❌ No se pudieron asegurar datos")
+                    print(f"  [ERROR] No se pudieron asegurar datos")
                     data_status[symbol] = {'source': 'none', 'rows': 0, 'status': 'error', 'completeness': 0}
                     
             except Exception as e:
-                print(f"  ❌ Error asegurando datos: {e}")
+                print(f"  [ERROR] Error asegurando datos: {e}")
                 data_status[symbol] = {'source': 'none', 'rows': 0, 'status': 'error', 'completeness': 0}
     
     except Exception as e:
-        print(f"❌ Error general en verificación de datos: {e}")
+        print(f"[ERROR] Error general en verificación de datos: {e}")
         # Retornar estado de error para todos los símbolos
         for symbol in symbols:
             data_status[symbol] = {'source': 'none', 'rows': 0, 'status': 'error', 'completeness': 0}
     
     # Resumen final
-    print(f"\n📊 RESUMEN DE DATOS:")
+    print(f"\n[STATS] RESUMEN DE DATOS:")
     total_symbols = len(symbols)
     ok_symbols = len([s for s in data_status.values() if s['status'] == 'ok'])
     
     for symbol, status in data_status.items():
         completeness = status.get('completeness', 0)
-        status_icon = '✅' if status['status'] == 'ok' else '❌'
+        status_icon = '[OK]' if status['status'] == 'ok' else '[ERROR]'
         print(f"  {status_icon} {symbol}: {status['rows']} registros ({completeness:.1f}% completo)")
     
-    print(f"\n✅ Datos disponibles: {ok_symbols}/{total_symbols} símbolos")
+    print(f"\n[OK] Datos disponibles: {ok_symbols}/{total_symbols} símbolos")
     
     return data_status
     
@@ -243,7 +243,7 @@ async def verify_real_data_integrity(symbols: list, timeframe: str) -> dict:
     """
     try:
         # NOTA TEMPORAL: Deshabilitar verificación para evitar error en backtesting
-        print("✅ Verificación de autenticidad temporalmente simplificada para pruebas")
+        print("[OK] Verificación de autenticidad temporalmente simplificada para pruebas")
         return {
             'status': True,
             'message': "Verificación temporal habilitada para pruebas"
@@ -281,54 +281,54 @@ def run_live_mt5():
     """
     Ejecutar trading en vivo con MT5 (forex/acciones)
     """
-    print("\n🔴 EJECUTANDO LIVE TRADING - MT5 (FOREX/ACCIONES)")
+    print("\n[RED] EJECUTANDO LIVE TRADING - MT5 (FOREX/ACCIONES)")
     print("=" * 50)
 
     # Verificar configuración de seguridad
     config = load_config_from_yaml()
     if config.live_trading.enabled:
-        print(" ⚠️  ADVERTENCIA: Live trading está HABILITADO en configuración")
+        print(" [WARN]  ADVERTENCIA: Live trading está HABILITADO en configuración")
         if config.live_trading.account_type == "REAL":
-            print(" 🚨 PELIGRO: Cuenta configurada como REAL - Operaciones con DINERO REAL")
+            print(" [DANGER] PELIGRO: Cuenta configurada como REAL - Operaciones con DINERO REAL")
             print(" Para pruebas seguras, cambiar account_type a 'DEMO' en config.yaml")
             return False
         else:
-            print(" ✅ Cuenta configurada como DEMO - Modo seguro para pruebas")
+            print(" [OK] Cuenta configurada como DEMO - Modo seguro para pruebas")
     else:
-        print(" ✅ Live trading DESHABILITADO - Modo seguro")
+        print(" [OK] Live trading DESHABILITADO - Modo seguro")
 
     try:
         from core.live_trading_orchestrator import run_live_trading
-        print(" 🚀 Iniciando TRADING EN VIVO MT5 (cuenta demo)...")
-        print(" 💡 Presione Ctrl+C para detener el trading")
+        print(" [START] Iniciando TRADING EN VIVO MT5 (cuenta demo)...")
+        print(" [INFO] Presione Ctrl+C para detener el trading")
 
         # Para pruebas, limitar a 2 minutos
         run_live_trading(duration_minutes=2)
-        print(" ✅ Trading en vivo MT5 completado")
+        print(" [OK] Trading en vivo MT5 completado")
         return True
     except Exception as e:
-        print(f" ❌ Error en trading en vivo MT5: {e}")
+        print(f" [ERROR] Error en trading en vivo MT5: {e}")
         return False
 
 def run_live_ccxt():
     """
     Ejecutar trading en vivo con CCXT (criptomonedas)
     """
-    print("\n🟡 EJECUTANDO LIVE TRADING - CCXT (CRIPTOMONEDAS)")
+    print("\n[*] EJECUTANDO LIVE TRADING - CCXT (CRIPTOMONEDAS)")
     print("=" * 50)
 
     # Verificar configuración de seguridad
     config = load_config_from_yaml()
     if config.live_trading.enabled:
-        print(" ⚠️  ADVERTENCIA: Live trading está HABILITADO en configuración")
+        print(" [WARN]  ADVERTENCIA: Live trading está HABILITADO en configuración")
         if config.live_trading.account_type == "REAL":
-            print(" 🚨 PELIGRO: Cuenta configurada como REAL - Operaciones con DINERO REAL")
+            print(" [DANGER] PELIGRO: Cuenta configurada como REAL - Operaciones con DINERO REAL")
             print(" Para pruebas seguras, cambiar account_type a 'DEMO' en config.yaml")
             return False
         else:
-            print(" ✅ Cuenta configurada como DEMO - Modo seguro para pruebas")
+            print(" [OK] Cuenta configurada como DEMO - Modo seguro para pruebas")
     else:
-        print(" ✅ Live trading DESHABILITADO - Modo seguro")
+        print(" [OK] Live trading DESHABILITADO - Modo seguro")
 
     try:
         from core.ccxt_live_trading_orchestrator import run_crypto_live_trading
@@ -344,9 +344,9 @@ def run_live_ccxt():
         except:
             sandbox_mode = "TESTNET"  # Por defecto asumimos testnet para seguridad
         
-        print(f" 🚀 Iniciando TRADING EN VIVO con {active_exchange.upper()} ({sandbox_mode})...")
-        print(" 💡 Presione Ctrl+C para detener el trading")
-        print(f" 🔥 MODO: Trading real en cuenta {sandbox_mode.lower()}")
+        print(f" [START] Iniciando TRADING EN VIVO con {active_exchange.upper()} ({sandbox_mode})...")
+        print(" [INFO] Presione Ctrl+C para detener el trading")
+        print(f" [LIVE] MODO: Trading real en cuenta {sandbox_mode.lower()}")
 
         # Para pruebas, ejecutar con timeout de seguridad
         import threading
@@ -375,14 +375,14 @@ def run_live_ccxt():
             return True
 
         if exception[0]:
-            print(f" ❌ Error en trading en vivo: {exception[0]}")
+            print(f" [ERROR] Error en trading en vivo: {exception[0]}")
             return False
         else:
-            print(" ✅ Trading en vivo completado")
+            print(" [OK] Trading en vivo completado")
             return True
 
     except Exception as e:
-        print(f" ❌ Error en trading en vivo: {e}")
+        print(f" [ERROR] Error en trading en vivo: {e}")
         return False
 
 def run_binance_sandbox_test():
@@ -402,12 +402,12 @@ def run_binance_sandbox_test():
         bool: True si el test se completa exitosamente
     """
     try:
-        print(" 🚀 Iniciando test de Binance Sandbox...")
+        print(" [START] Iniciando test de Binance Sandbox...")
 
         # Verificar que el archivo de test existe
         test_file = Path("tests/test_binance_sandbox_live.py")
         if not test_file.exists():
-            print(f" ❌ Archivo de test no encontrado: {test_file}")
+            print(f" [ERROR] Archivo de test no encontrado: {test_file}")
             return False
 
         # Ejecutar el test usando subprocess
@@ -422,19 +422,19 @@ def run_binance_sandbox_test():
             print(result.stdout)
 
         if result.stderr:
-            print(" ⚠️  Errores del test:")
+            print(" [WARN]  Errores del test:")
             print(result.stderr)
 
         # Verificar resultado
         if result.returncode == 0:
-            print(" ✅ Test de Binance Sandbox completado exitosamente")
+            print(" [OK] Test de Binance Sandbox completado exitosamente")
             return True
         else:
-            print(f" ❌ Test de Binance Sandbox falló (código: {result.returncode})")
+            print(f" [ERROR] Test de Binance Sandbox falló (código: {result.returncode})")
             return False
 
     except Exception as e:
-        print(f" ❌ Error ejecutando test de Binance Sandbox: {e}")
+        print(f" [ERROR] Error ejecutando test de Binance Sandbox: {e}")
         return False
 
 async def run_backtest():
@@ -447,13 +447,13 @@ async def run_backtest():
     3. Ejecutar backtest con datos validados
     4. Generar resultados para dashboard
     """
-    print("\n🚀 EJECUTANDO BACKTESTING COMPLETO")
+    print("\n[START] EJECUTANDO BACKTESTING COMPLETO")
     print("=" * 50)
 
     try:
         # PASO 1: Cargar configuración centralizada
         config = load_config_from_yaml()
-        print("✅ Configuración centralizada cargada")
+        print("[OK] Configuración centralizada cargada")
         
         # PASO 2: Verificar y asegurar disponibilidad de datos
         # Leer overrides de CLI si existen
@@ -480,23 +480,23 @@ async def run_backtest():
         # Validar que tengamos datos para al menos un símbolo
         available_symbols = [symbol for symbol, status in data_status.items() if status['status'] == 'ok']
         if not available_symbols:
-            print("❌ Error: No hay datos disponibles para ningún símbolo")
+            print("[ERROR] Error: No hay datos disponibles para ningún símbolo")
             return False
         
-        print(f"✅ Datos disponibles para {len(available_symbols)} símbolos")
+        print(f"[OK] Datos disponibles para {len(available_symbols)} símbolos")
         
         # PASO 2.1: VERIFICACIÓN OBLIGATORIA DE DATOS REALES
-        print("\n🔍 VERIFICACIÓN OBLIGATORIA DE AUTENTICIDAD DE DATOS")
+        print("\n[SEARCH] VERIFICACIÓN OBLIGATORIA DE AUTENTICIDAD DE DATOS")
         print("=" * 50)
         
         data_integrity_check = await verify_real_data_integrity(available_symbols, config.backtesting.timeframe)
         if not data_integrity_check['status']:
-            print(f"❌ ERROR CRÍTICO: {data_integrity_check['message']}")
+            print(f"[ERROR] ERROR CRÍTICO: {data_integrity_check['message']}")
             print("\nEl backtest ha sido cancelado por seguridad.")
             print("Por favor, revise los logs y asegúrese de usar solo datos reales.")
             return False
             
-        print(f"✅ Verificación de autenticidad superada: {data_integrity_check['message']}")
+        print(f"[OK] Verificación de autenticidad superada: {data_integrity_check['message']}")
         
         # PASO 3: Ejecutar backtest con orquestador
         if RUN_ORCHESTRATOR_LAZILY:
@@ -505,16 +505,16 @@ async def run_backtest():
             print(" Iniciando backtesting con datos centralizados...")
         
         await run_full_backtesting_with_batches()
-        print("✅ Backtesting completado exitosamente")
+        print("[OK] Backtesting completado exitosamente")
         return True
     except KeyboardInterrupt:
         # Si se interrumpe justo al final (ej. durante shutdown) consideramos éxito si ya existen resultados
         results_dir = Path(__file__).parent / 'data' / 'dashboard_results'
         result_files = list(results_dir.glob('*_results.json')) if results_dir.exists() else []
         if result_files:
-            print(f" ⚠️ Interrupción durante el apagado, pero se detectaron {len(result_files)} archivos de resultados. Marcando como éxito.")
+            print(f" [WARN] Interrupción durante el apagado, pero se detectaron {len(result_files)} archivos de resultados. Marcando como éxito.")
             return True
-        print(" ❌ Interrupción antes de generar resultados válidos.")
+        print(" [ERROR] Interrupción antes de generar resultados válidos.")
         return False
     except Exception as e:
         print(f" Error en backtesting: {e}")
@@ -550,7 +550,7 @@ async def train_ml_models():
 
         # Acceder a la configuración ML del objeto Config
         if not hasattr(config, 'ml_training'):
-            print("❌ Configuración ml_training no encontrada en config")
+            print("[ERROR] Configuración ml_training no encontrada en config")
             return False
 
         ml_config = config.ml_training
@@ -571,7 +571,7 @@ async def train_ml_models():
         timeframe = config.backtesting.timeframe
 
         for symbol in symbols:
-            print(f"\n🎯 Entrenando modelos para {symbol}...")
+            print(f"\n[TARGET] Entrenando modelos para {symbol}...")
             trainer = MLTrainer(symbol, timeframe)
             
             # download_data() ya verifica cache y descarga automáticamente si es necesario
@@ -579,28 +579,28 @@ async def train_ml_models():
             data = await trainer.download_data()
             
             if data is None or len(data) < 100:
-                print(f"❌ No se pudieron obtener datos suficientes para {symbol}")
+                print(f"[ERROR] No se pudieron obtener datos suficientes para {symbol}")
                 continue
             
-            print(f"✅ Datos disponibles: {len(data)} velas")
+            print(f"[OK] Datos disponibles: {len(data)} velas")
             
             # Entrenar modelos
-            print(f"🔄 Entrenando modelos ML...")
+            print(f"[SYNC] Entrenando modelos ML...")
             try:
                 results, best_model = await trainer.run()
-                print(f"✅ Modelos entrenados para {symbol}")
+                print(f"[OK] Modelos entrenados para {symbol}")
                 if results:
                     for model_name, metrics in results.items():
-                        print(f"   📊 {model_name}: Accuracy={metrics.get('accuracy', 0):.4f}, AUC={metrics.get('auc', 0):.4f}")
+                        print(f"   [STATS] {model_name}: Accuracy={metrics.get('accuracy', 0):.4f}, AUC={metrics.get('auc', 0):.4f}")
             except Exception as e:
-                print(f"⚠️ No se pudieron entrenar modelos para {symbol}: {e}")
+                print(f"[WARN] No se pudieron entrenar modelos para {symbol}: {e}")
                 print("   Continuando con el siguiente símbolo...")
                 continue
         
         return True
     
     except Exception as e:
-        print(f"❌ Error entrenando modelos ML: {e}")
+        print(f"[ERROR] Error entrenando modelos ML: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -622,28 +622,28 @@ async def run_optimization_pipeline():
         config = load_config_from_yaml()
         
         if not hasattr(config, 'ml_training'):
-            print("⚠️  Configuración ml_training no encontrada en config.yaml")
+            print("[WARN]  Configuración ml_training no encontrada en config.yaml")
             return False
         
         ml_config = config.ml_training
         
         # Verificar si optimización está habilitada
         if not ml_config.optimization.get('enabled', False):
-            print("⚠️  Optimización deshabilitada en config.yaml")
-            print("💡 Para habilitar, cambiar ml_training.optimization.enabled: true")
+            print("[WARN]  Optimización deshabilitada en config.yaml")
+            print("[INFO] Para habilitar, cambiar ml_training.optimization.enabled: true")
             return False
         
         # PASO 2: Verificar y asegurar disponibilidad de datos
-        print("🔍 Verificando datos para optimización...")
+        print("[SEARCH] Verificando datos para optimización...")
         data_status = await verify_data_availability(config)
         
         # Validar que tengamos datos disponibles
         available_symbols = [symbol for symbol, status in data_status.items() if status['status'] == 'ok']
         if not available_symbols:
-            print("❌ Error: No hay datos disponibles para optimización")
+            print("[ERROR] Error: No hay datos disponibles para optimización")
             return False
         
-        print(f"✅ Datos validados para optimización: {len(available_symbols)} símbolos")
+        print(f"[OK] Datos validados para optimización: {len(available_symbols)} símbolos")
         
         # Obtener configuración de períodos
         train_start = ml_config.training.get('train_start', '2023-01-01')
@@ -668,7 +668,7 @@ async def run_optimization_pipeline():
         symbols = config.backtesting.symbols if hasattr(config, 'backtesting') else ['BTC/USDT']
         timeframe = config.backtesting.timeframe if hasattr(config, 'backtesting') else '4h'
         
-        print(f"\n🎯 Símbolos a procesar: {symbols}")
+        print(f"\n[TARGET] Símbolos a procesar: {symbols}")
         print(f"⏰ Timeframe: {timeframe}")
         
         pipeline = OptimizationPipeline(
@@ -684,26 +684,26 @@ async def run_optimization_pipeline():
         )
         
         # Ejecutar pipeline completo (incluye descarga automática)
-        print(f"\n🚀 Iniciando pipeline de optimización...")
+        print(f"\n[START] Iniciando pipeline de optimización...")
         results = await pipeline.run_complete_pipeline()
         
-        print("\n✅ PIPELINE DE OPTIMIZACIÓN COMPLETADO")
-        print(f"📊 Resultados guardados en data/optimization_results/")
+        print("\n[OK] PIPELINE DE OPTIMIZACIÓN COMPLETADO")
+        print(f"[STATS] Resultados guardados en data/optimization_results/")
         
         if results:
-            print(f"\n📈 Resumen de resultados:")
+            print(f"\n[UP] Resumen de resultados:")
             for symbol, result in results.items():
-                print(f"   🎯 {symbol}:")
+                print(f"   [TARGET] {symbol}:")
                 if 'backtest_results' in result:
                     br = result['backtest_results']
-                    print(f"      💰 P&L: ${br.get('total_pnl', 0):.2f}")
-                    print(f"      📊 Win Rate: {br.get('win_rate', 0)*100:.2f}%")
-                    print(f"      📉 Max DD: {br.get('max_drawdown', 0):.2f}%")
+                    print(f"      [BALANCE] P&L: ${br.get('total_pnl', 0):.2f}")
+                    print(f"      [STATS] Win Rate: {br.get('win_rate', 0)*100:.2f}%")
+                    print(f"      [DOWN] Max DD: {br.get('max_drawdown', 0):.2f}%")
         
         return True
     
     except Exception as e:
-        print(f"❌ Error en pipeline de optimización: {e}")
+        print(f"[ERROR] Error en pipeline de optimización: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -713,7 +713,7 @@ def check_data_status():
     """
     Verificar rápidamente el estado de datos disponibles sin descargar
     """
-    print("🔍 VERIFICACIÓN RÁPIDA DE ESTADO DE DATOS")
+    print("[SEARCH] VERIFICACIÓN RÁPIDA DE ESTADO DE DATOS")
     print("=" * 50)
 
     try:
@@ -726,7 +726,7 @@ def check_data_status():
         symbols = config.backtesting.symbols
         timeframe = config.backtesting.timeframe
 
-        print(f"📊 Verificando {len(symbols)} símbolos configurados")
+        print(f"[STATS] Verificando {len(symbols)} símbolos configurados")
         print(f"⏰ Timeframe: {timeframe}")
         print()
 
@@ -743,13 +743,13 @@ def check_data_status():
                 sample_data = storage_manager.get_data(symbol, timeframe, '2024-01-01', '2024-01-31')
                 if sample_data is not None and len(sample_data) > 0:
                     sqlite_available[symbol] = len(sample_data)
-                    print(f"  ✅ {symbol:<12} | SQLite: {len(sample_data):>6} registros (muestra)")
+                    print(f"  [OK] {symbol:<12} | SQLite: {len(sample_data):>6} registros (muestra)")
                 else:
                     sqlite_available[symbol] = 0
-                    print(f"  ❌ {symbol:<12} | SQLite: Sin datos")
+                    print(f"  [ERROR] {symbol:<12} | SQLite: Sin datos")
             except:
                 sqlite_available[symbol] = 0
-                print(f"  ❌ {symbol:<12} | SQLite: Error")
+                print(f"  [ERROR] {symbol:<12} | SQLite: Error")
 
         # Verificar CSV
         print("\n📄 Verificando archivos CSV...")
@@ -767,13 +767,13 @@ def check_data_status():
                             lines = f.readlines()
                             count = len(lines) - 1  # Restar header
                             csv_available[symbol] = count
-                            print(f"  ✅ {symbol:<12} | CSV: {count:>6} registros")
+                            print(f"  [OK] {symbol:<12} | CSV: {count:>6} registros")
                     except:
                         csv_available[symbol] = 0
-                        print(f"  ⚠️  {symbol:<12} | CSV: Error al leer")
+                        print(f"  [WARN]  {symbol:<12} | CSV: Error al leer")
                 else:
                     csv_available[symbol] = 0
-                    print(f"  ❌ {symbol:<12} | CSV: No encontrado")
+                    print(f"  [ERROR] {symbol:<12} | CSV: No encontrado")
 
         # Resumen
         print("\n📋 RESUMEN DE DATOS:")
@@ -793,18 +793,18 @@ def check_data_status():
                 no_data_symbols.append(symbol)
 
         if no_data_symbols:
-            print(f"\n⚠️  Símbolos sin datos ({len(no_data_symbols)}):")
+            print(f"\n[WARN]  Símbolos sin datos ({len(no_data_symbols)}):")
             for symbol in no_data_symbols:
                 print(f"  - {symbol}")
-            print("\n💡 Ejecuta: python main.py --data-audit")
+            print("\n[INFO] Ejecuta: python main.py --data-audit")
             print("   para descargar datos automáticamente")
         else:
-            print("\n✅ ¡Todos los símbolos tienen datos!")
-            print("💡 Puedes ejecutar backtesting selectivo:")
+            print("\n[OK] ¡Todos los símbolos tienen datos!")
+            print("[INFO] Puedes ejecutar backtesting selectivo:")
             print("   python main.py --backtest-selective")
 
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        print(f"[ERROR] Error: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -826,44 +826,44 @@ def show_symbol_selection():
             print("Criptomonedas CCXT:")
             ccxt_symbols = ['SOL/USDT', 'ETH/USDT']
             for symbol in ccxt_symbols:
-                status = "✅" if symbol_selection.get(symbol, False) else "❌"
+                status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
                 print(f"  {status} {symbol}")
 
             print("\nCriptomonedas MT5:")
             mt5_crypto = ['BTC/USD', 'ADA/USD', 'DOT/USD', 'MATIC/USD', 'XRP/USD', 'LTC/USD', 'DOGE/USD']
             for symbol in mt5_crypto:
-                status = "✅" if symbol_selection.get(symbol, False) else "❌"
+                status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
                 print(f"  {status} {symbol}")
 
             print("\nAcciones MT5:")
             stocks = ['TSLA/US', 'NVDA/US', 'AAPL/US', 'MSFT/US', 'GOOGL/US', 'AMZN/US']
             for symbol in stocks:
-                status = "✅" if symbol_selection.get(symbol, False) else "❌"
+                status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
                 print(f"  {status} {symbol}")
 
             print("\nForex MT5:")
             forex = ['EUR/USD', 'USD/JPY', 'GBP/USD']
             for symbol in forex:
-                status = "✅" if symbol_selection.get(symbol, False) else "❌"
+                status = "[OK]" if symbol_selection.get(symbol, False) else "[ERROR]"
                 print(f"  {status} {symbol}")
 
             selected_count = sum(1 for enabled in symbol_selection.values() if enabled)
             total_count = len(symbol_selection)
-            print(f"\n📊 Total: {selected_count}/{total_count} símbolos seleccionados")
+            print(f"\n[STATS] Total: {selected_count}/{total_count} símbolos seleccionados")
 
         else:
-            print("❌ Sección 'symbol_selection' no encontrada en config.yaml")
-            print("💡 Verifica que la configuración esté correcta")
+            print("[ERROR] Sección 'symbol_selection' no encontrada en config.yaml")
+            print("[INFO] Verifica que la configuración esté correcta")
 
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        print(f"[ERROR] Error: {str(e)}")
 
 
 async def run_selective_backtest():
     """
     Ejecutar backtesting solo con símbolos seleccionados en config.yaml
     """
-    print("🎯 BACKTESTING SELECTIVO DE SÍMBOLOS")
+    print("[TARGET] BACKTESTING SELECTIVO DE SÍMBOLOS")
     print("=" * 50)
 
     try:
@@ -878,13 +878,13 @@ async def run_selective_backtest():
             selected_symbols = [symbol for symbol, enabled in symbol_selection.items() if enabled]
 
             if not selected_symbols:
-                print("❌ No hay símbolos seleccionados para backtesting")
-                print("💡 Edita config.yaml sección 'symbol_selection' para habilitar símbolos")
+                print("[ERROR] No hay símbolos seleccionados para backtesting")
+                print("[INFO] Edita config.yaml sección 'symbol_selection' para habilitar símbolos")
                 return False
 
-            print(f"📊 Símbolos seleccionados: {len(selected_symbols)}")
+            print(f"[STATS] Símbolos seleccionados: {len(selected_symbols)}")
             for symbol in selected_symbols:
-                print(f"  ✅ {symbol}")
+                print(f"  [OK] {symbol}")
 
             # Configurar override de símbolos para backtesting
             os.environ['BT_OVERRIDE_SYMBOLS'] = ','.join(selected_symbols)
@@ -893,21 +893,21 @@ async def run_selective_backtest():
             success = await run_backtest()
 
             if success:
-                print("\n✅ BACKTESTING SELECTIVO COMPLETADO")
-                print("💡 Resultados guardados en data/dashboard_results/")
-                print("💡 Ejecuta: python main.py --dashboard-only")
+                print("\n[OK] BACKTESTING SELECTIVO COMPLETADO")
+                print("[INFO] Resultados guardados en data/dashboard_results/")
+                print("[INFO] Ejecuta: python main.py --dashboard-only")
             else:
-                print("\n❌ BACKTESTING SELECTIVO FALLÓ")
+                print("\n[ERROR] BACKTESTING SELECTIVO FALLÓ")
 
             return success
 
         else:
-            print("❌ Configuración 'symbol_selection' no encontrada en config.yaml")
-            print("💡 Agrega la sección 'symbol_selection' en config.yaml")
+            print("[ERROR] Configuración 'symbol_selection' no encontrada en config.yaml")
+            print("[INFO] Agrega la sección 'symbol_selection' en config.yaml")
             return False
 
     except Exception as e:
-        print(f"❌ Error en backtesting selectivo: {str(e)}")
+        print(f"[ERROR] Error en backtesting selectivo: {str(e)}")
         import traceback
         traceback.print_exc()
         return False
@@ -920,7 +920,7 @@ def launch_dashboard(wait_for_completion=False, preferred_port: int = 8519):
         wait_for_completion: Si True, espera a que el dashboard termine (modo --dashboard-only)
                            Si False, lanza en background y continúa (modo automático)
     """
-    print("\n📊 LANZANDO DASHBOARD")
+    print("\n[STATS] LANZANDO DASHBOARD")
     print("=" * 30)
 
     try:
@@ -932,7 +932,7 @@ def launch_dashboard(wait_for_completion=False, preferred_port: int = 8519):
 
         port = _find_free_port(preferred_port, max_tries=12)
         if port != preferred_port:
-            print(f" ⚠️ Puerto {preferred_port} en uso, usando alternativo {port}")
+            print(f" [WARN] Puerto {preferred_port} en uso, usando alternativo {port}")
 
         cmd = [sys.executable, "-m", "streamlit", "run", dashboard_path, "--server.port", str(port)]
 
@@ -944,7 +944,7 @@ def launch_dashboard(wait_for_completion=False, preferred_port: int = 8519):
             subprocess.run(cmd, cwd=current_dir)
         else:
             # Modo automático: lanzar en background independiente
-            print(f"🚀 Iniciando dashboard en background en puerto {port}...")
+            print(f"[START] Iniciando dashboard en background en puerto {port}...")
             try:
                 if os.name == 'nt' and CREATE_NEW_CONSOLE is not None:  # Windows
                     # En Windows, usar CREATE_NEW_CONSOLE para que sobreviva al proceso padre
@@ -955,7 +955,7 @@ def launch_dashboard(wait_for_completion=False, preferred_port: int = 8519):
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
                     )
-                    print(f"✅ Dashboard iniciado en nueva consola (PID: {process.pid})")
+                    print(f"[OK] Dashboard iniciado en nueva consola (PID: {process.pid})")
                 else:
                     # En Unix/Linux/Mac, usar nohup o similar
                     process = subprocess.Popen(
@@ -965,29 +965,29 @@ def launch_dashboard(wait_for_completion=False, preferred_port: int = 8519):
                         stderr=subprocess.DEVNULL,
                         preexec_fn=os.setsid if hasattr(os, 'setsid') else None
                     )
-                    print(f"✅ Dashboard iniciado en background (PID: {process.pid})")
+                    print(f"[OK] Dashboard iniciado en background (PID: {process.pid})")
                 
                 # Verificar que el proceso se inició correctamente
                 time.sleep(1)  # Pequeña pausa para verificar
                 if process.poll() is None:  # Proceso aún ejecutándose
                     print(f"🌐 Dashboard disponible en: http://localhost:{port}")
-                    print("💡 El dashboard se está ejecutando en background")
+                    print("[INFO] El dashboard se está ejecutando en background")
                 else:
-                    print(f"⚠️ El dashboard terminó inmediatamente (código: {process.returncode})")
+                    print(f"[WARN] El dashboard terminó inmediatamente (código: {process.returncode})")
                     
             except Exception as bg_error:
-                print(f"❌ Error iniciando dashboard en background: {bg_error}")
+                print(f"[ERROR] Error iniciando dashboard en background: {bg_error}")
                 # Fallback: intentar ejecutar en foreground por 5 segundos
-                print("🔄 Intentando fallback: ejecutar dashboard por 5 segundos...")
+                print("[SYNC] Intentando fallback: ejecutar dashboard por 5 segundos...")
                 try:
                     process = subprocess.Popen(cmd, cwd=current_dir)
                     time.sleep(5)
                     if process.poll() is None:
-                        print("✅ Dashboard ejecutándose (cierra manualmente)")
+                        print("[OK] Dashboard ejecutándose (cierra manualmente)")
                     else:
-                        print("❌ Dashboard terminó durante fallback")
+                        print("[ERROR] Dashboard terminó durante fallback")
                 except Exception as fallback_error:
-                    print(f"❌ Fallback también falló: {fallback_error}")
+                    print(f"[ERROR] Fallback también falló: {fallback_error}")
 
             print(" Dashboard ejecutándose en background...")
             print(" El programa principal ha terminado. El dashboard permanece activo.")
@@ -1057,7 +1057,7 @@ def main():
     # 1. VALIDACIÓN AUTOMÁTICA (a menos que se omita o sea modo data-audit)
     if not args.skip_validation and not args.data_audit:
         if not validate_system(dashboard_only=args.dashboard_only, mode=mode):
-            print("\n❌ VALIDACIÓN FALLIDA - Abortando ejecución")
+            print("\n[ERROR] VALIDACIÓN FALLIDA - Abortando ejecución")
             sys.exit(1)
     else:
         if args.skip_validation:
@@ -1071,31 +1071,31 @@ def main():
         print("\n🧪 MODO DE PRUEBA: Simulación segura de live trading MT5")
         success = run_live_mt5()
         if success:
-            print("\n✅ PRUEBA MT5 COMPLETADA EXITOSAMENTE")
+            print("\n[OK] PRUEBA MT5 COMPLETADA EXITOSAMENTE")
         else:
-            print("\n❌ PRUEBA MT5 FALLÓ")
+            print("\n[ERROR] PRUEBA MT5 FALLÓ")
             sys.exit(1)
 
     elif mode == "test_live_ccxt":
         # Prueba de trading en vivo CCXT en testnet
-        print("\n🔥 MODO: Trading en vivo REAL en cuenta TESTNET")
-        print("📊 Exchange: Binance Testnet (sandbox)")
-        print("💰 Capital: 10,000 USDT de prueba")
-        print("⚠️  Operaciones reales pero sin riesgo de dinero real\n")
+        print("\n[LIVE] MODO: Trading en vivo REAL en cuenta TESTNET")
+        print("[STATS] Exchange: Binance Testnet (sandbox)")
+        print("[BALANCE] Capital: 10,000 USDT de prueba")
+        print("[WARN]  Operaciones reales pero sin riesgo de dinero real\n")
         
         success = run_live_ccxt()
         if success:
-            print("\n✅ TRADING EN VIVO EJECUTADO CORRECTAMENTE")
+            print("\n[OK] TRADING EN VIVO EJECUTADO CORRECTAMENTE")
         else:
-            print("\n❌ PRUEBA CCXT FALLÓ")
+            print("\n[ERROR] PRUEBA CCXT FALLÓ")
             sys.exit(1)
 
     elif mode == "test_binance_sandbox":
         # Test completo de live trading con Binance Sandbox
         print("\n🧪 MODO: TEST COMPLETO DE LIVE TRADING CON BINANCE SANDBOX")
-        print("📊 Exchange: Binance Testnet (Sandbox)")
-        print("💰 Capital: 1,000 USDT de prueba")
-        print("⚡ Funciones probadas:")
+        print("[STATS] Exchange: Binance Testnet (Sandbox)")
+        print("[BALANCE] Capital: 1,000 USDT de prueba")
+        print("[FAST] Funciones probadas:")
         print("   • Conexión y autenticación")
         print("   • Recopilación de datos en tiempo real")
         print("   • Cálculo de indicadores técnicos")
@@ -1103,15 +1103,15 @@ def main():
         print("   • Stop Loss y Take Profit")
         print("   • Cierre de posiciones")
         print("   • Escenario completo de trading")
-        print("⚠️  Operaciones 100% reales en entorno de prueba\n")
+        print("[WARN]  Operaciones 100% reales en entorno de prueba\n")
 
         success = run_binance_sandbox_test()
         if success:
-            print("\n✅ TEST DE BINANCE SANDBOX COMPLETADO EXITOSAMENTE")
-            print("📊 Resultados guardados en: tests/test_results/")
+            print("\n[OK] TEST DE BINANCE SANDBOX COMPLETADO EXITOSAMENTE")
+            print("[STATS] Resultados guardados en: tests/test_results/")
             print("📋 Revisa logs en: logs/binance_sandbox_test.log")
         else:
-            print("\n❌ TEST DE BINANCE SANDBOX FALLÓ")
+            print("\n[ERROR] TEST DE BINANCE SANDBOX FALLÓ")
             print("📋 Revisa logs en: logs/binance_sandbox_test.log")
             sys.exit(1)
 
@@ -1119,14 +1119,14 @@ def main():
         # Live trading con MT5
         success = run_live_mt5()
         if not success:
-            print("\n❌ LIVE TRADING MT5 FALLÓ")
+            print("\n[ERROR] LIVE TRADING MT5 FALLÓ")
             sys.exit(1)
 
     elif mode == "live_ccxt":
         # Live trading con CCXT
         success = run_live_ccxt()
         if not success:
-            print("\n❌ LIVE TRADING CCXT FALLÓ")
+            print("\n[ERROR] LIVE TRADING CCXT FALLÓ")
             sys.exit(1)
 
     else:  # backtest
@@ -1136,11 +1136,11 @@ def main():
             print("=" * 60)
             success = asyncio.run(run_optimization_pipeline())
             if success:
-                print("\n✅ OPTIMIZACIÓN COMPLETADA")
-                print("💡 Resultados guardados en data/optimization_results/")
-                print("💡 Para backtest con parámetros optimizados, ejecuta: python main.py --backtest-only")
+                print("\n[OK] OPTIMIZACIÓN COMPLETADA")
+                print("[INFO] Resultados guardados en data/optimization_results/")
+                print("[INFO] Para backtest con parámetros optimizados, ejecuta: python main.py --backtest-only")
             else:
-                print("\n❌ OPTIMIZACIÓN FALLÓ")
+                print("\n[ERROR] OPTIMIZACIÓN FALLÓ")
                 sys.exit(1)
         elif args.train_ml:
             # Solo entrenamiento de modelos ML (ASYNC)
@@ -1148,10 +1148,10 @@ def main():
             print("=" * 60)
             success = asyncio.run(train_ml_models())
             if success:
-                print("\n✅ MODELOS ML ENTRENADOS EXITOSAMENTE")
-                print("💡 Modelos guardados en models/")
+                print("\n[OK] MODELOS ML ENTRENADOS EXITOSAMENTE")
+                print("[INFO] Modelos guardados en models/")
             else:
-                print("\n❌ ENTRENAMIENTO ML FALLÓ")
+                print("\n[ERROR] ENTRENAMIENTO ML FALLÓ")
                 sys.exit(1)
         elif args.dashboard_only:
             # Solo dashboard
@@ -1163,10 +1163,10 @@ def main():
                 os.environ['BT_OVERRIDE_TIMEFRAME'] = args.timeframe or ''
             success = asyncio.run(run_backtest())
             if success:
-                print("\n✅ BACKTESTING COMPLETADO")
-                print("💡 Para ver resultados, ejecuta: python main.py --dashboard-only")
+                print("\n[OK] BACKTESTING COMPLETADO")
+                print("[INFO] Para ver resultados, ejecuta: python main.py --dashboard-only")
             else:
-                print("\n❌ BACKTESTING FALLÓ")
+                print("\n[ERROR] BACKTESTING FALLÓ")
                 sys.exit(1)
         elif args.data_audit:
             # Auditoría de datos sin ejecutar backtesting
@@ -1182,7 +1182,7 @@ def main():
                 if args.symbols:
                     audit_symbols = [s.strip() for s in args.symbols.split(',') if s.strip()]
                 audit_timeframe = args.timeframe if args.timeframe else '4h'
-                print("\n🔍 Ejecutando auditoría de datos...")
+                print("\n[SEARCH] Ejecutando auditoría de datos...")
                 if args.data_audit_skip_download:
                     report = run_data_audit(
                         cfg,
@@ -1223,12 +1223,12 @@ def main():
             # Backtesting selectivo
             success = asyncio.run(run_selective_backtest())
             if success:
-                print("\n✅ BACKTESTING SELECTIVO COMPLETADO")
-                print("💡 Resultados guardados en data/dashboard_results/")
-                print("💡 Para ver resultados, ejecuta: python main.py --dashboard-only")
+                print("\n[OK] BACKTESTING SELECTIVO COMPLETADO")
+                print("[INFO] Resultados guardados en data/dashboard_results/")
+                print("[INFO] Para ver resultados, ejecuta: python main.py --dashboard-only")
                 launch_dashboard(wait_for_completion=False)
             else:
-                print("\n❌ BACKTESTING SELECTIVO FALLÓ")
+                print("\n[ERROR] BACKTESTING SELECTIVO FALLÓ")
                 sys.exit(1)
         else:
             # Flujo completo centralizado: backtest + dashboard (ASYNC)
@@ -1241,14 +1241,14 @@ def main():
                 results_dir = Path(__file__).parent / 'data' / 'dashboard_results'
                 result_files = list(results_dir.glob('*_results.json')) if results_dir.exists() else []
                 if result_files:
-                    print(f" ⚠️ Backtest reportó fallo/interrupción pero existen {len(result_files)} archivos de resultados. Lanzando dashboard igualmente.")
+                    print(f" [WARN] Backtest reportó fallo/interrupción pero existen {len(result_files)} archivos de resultados. Lanzando dashboard igualmente.")
                     success = True
             if success:
-                print("\n✅ SISTEMA COMPLETO EJECUTADO EXITOSAMENTE")
+                print("\n[OK] SISTEMA COMPLETO EJECUTADO EXITOSAMENTE")
                 print(" Lanzando dashboard (modo background)...")
                 launch_dashboard(wait_for_completion=False)
             else:
-                print("\n❌ BACKTESTING FALLÓ - No se lanza dashboard (no se encontraron resultados válidos)")
+                print("\n[ERROR] BACKTESTING FALLÓ - No se lanza dashboard (no se encontraron resultados válidos)")
                 sys.exit(1)
     
     # Registrar tiempo total de ejecución

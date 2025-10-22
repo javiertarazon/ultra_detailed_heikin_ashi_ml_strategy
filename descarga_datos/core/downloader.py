@@ -5,7 +5,6 @@ Soporta CCXT (criptomonedas) y MT5 (acciones) con paralelización,
 manejo de errores, normalización y almacenamiento múltiple.
 """
 import ccxt
-# import ccxt.async_support as ccxt_async  # Import lazy para evitar problemas de compatibilidad
 import asyncio  # necesario para capturar asyncio.CancelledError en shutdown
 import pandas as pd
 import numpy as np
@@ -231,7 +230,7 @@ class AdvancedDataDownloader:
             # Configurar Bybit
             if 'bybit' in self.config.exchanges and self.config.exchanges['bybit'].enabled:
                 exchange_config = self.config.exchanges['bybit']
-                self.ccxt_exchanges['bybit'] = ccxt_async.bybit({
+                self.ccxt_exchanges['bybit'] = ccxt.bybit({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,
@@ -243,7 +242,7 @@ class AdvancedDataDownloader:
             # Configurar Binance
             if 'binance' in self.config.exchanges and self.config.exchanges['binance'].enabled:
                 exchange_config = self.config.exchanges['binance']
-                self.ccxt_exchanges['binance'] = ccxt_async.binance({
+                self.ccxt_exchanges['binance'] = ccxt.binance({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,
@@ -255,7 +254,7 @@ class AdvancedDataDownloader:
             # Configurar KuCoin
             if 'kucoin' in self.config.exchanges and self.config.exchanges['kucoin'].enabled:
                 exchange_config = self.config.exchanges['kucoin']
-                self.ccxt_exchanges['kucoin'] = ccxt_async.kucoin({
+                self.ccxt_exchanges['kucoin'] = ccxt.kucoin({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,
@@ -267,7 +266,7 @@ class AdvancedDataDownloader:
             # Configurar OKX
             if 'okx' in self.config.exchanges and self.config.exchanges['okx'].enabled:
                 exchange_config = self.config.exchanges['okx']
-                self.ccxt_exchanges['okx'] = ccxt_async.okx({
+                self.ccxt_exchanges['okx'] = ccxt.okx({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,

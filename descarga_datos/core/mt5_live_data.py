@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+C:\Users\javie\copilot\botcopilot-sar\descarga_datos\models#!/usr/bin/env python3
 """
 MT5 Live Data Provider - Componente para obtener datos en tiempo real de MetaTrader 5
 para operaciones de trading en vivo con actualización continua.

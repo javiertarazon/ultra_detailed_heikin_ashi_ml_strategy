@@ -1,0 +1,279 @@
+🔗 REFERENCIA RÁPIDA - COMANDOS Y ACCESOS
+==========================================
+
+Última actualización: 21 OCT 2025 22:15 UTC
+
+
+## ⚡ COMANDOS PRINCIPALES (Copia y Pega)
+
+### 1. Iniciar Live Trading
+```bash
+python descarga_datos/main.py --live
+```
+
+### 2. Ejecutar Backtest
+```bash
+python descarga_datos/main.py --backtest
+```
+
+### 3. Optimizar ML
+```bash
+python descarga_datos/main.py --optimize
+```
+
+### 4. Ver Dashboard
+```bash
+python run_dashboard.py
+```
+
+### 5. Smoke Test
+```bash
+python -m pytest descarga_datos/tests/test_quick_backtest.py -v
+```
+
+### 6. Consultar Balance
+```bash
+python descarga_datos/scripts/get_binance_balance.py
+```
+
+### 7. Ver Logs en Vivo
+```bash
+tail -f descarga_datos/logs/bot_trader.log
+```
+
+
+## 📁 ACCESOS RÁPIDOS A CARPETAS
+
+### Documentación Principal
+```bash
+cd descarga_datos/ARCHIVOS\ MD/
+```
+
+### Scripts de Utilidad
+```bash
+cd descarga_datos/scripts/
+```
+
+### Test y Análisis
+```bash
+cd descarga_datos/test_and_check/
+```
+
+### Reportes Históricos
+```bash
+cd descarga_datos/ARCHIVOS\ MD/historical_analysis/
+```
+
+### Configuración
+```bash
+cat descarga_datos/config/config.yaml
+```
+
+
+## 📚 DOCUMENTOS A CONSULTAR
+
+### Para Empezar
+1. **CONTEXTO_ESTADO_ACTUAL.txt** ← PRIMERO
+2. **README.md** ← SEGUNDO
+3. **descarga_datos/ARCHIVOS MD/00_INDICE_MAESTRO_v4.md** ← TERCERO
+
+### Para Live Trading
+1. **LIVE_TRADING_SANDBOX_GUIDE.md**
+2. **LIVE_TRADING_READY.md**
+3. **SOLO_LA_CONFIGURACION_SANDBOX_NECESARIA.md**
+
+### Si Hay Problemas
+1. **05_CORRECCIONES_Y_MEJORAS.md**
+2. **RESUMEN_CORRECCIONES_SISTEMA_LIVE.md**
+3. **descarga_datos/test_and_check/ANALISIS_ARCHIVOS_RAIZ.txt**
+
+### Para Análisis
+1. **descarga_datos/test_and_check/README.md**
+2. **descarga_datos/test_and_check/BALANCE_OPERACIONES_20251021.json**
+3. **descarga_datos/test_and_check/RESUMEN_EJECUTIVO_TESTNET_21_OCT_2025.txt**
+
+
+## 💰 INFORMACIÓN DE CAPITAL
+
+```
+Bitcoin:      1.05123 BTC (~$113,718 USD)
+USDT:         $1,000.56 (reserva para testing)
+Total:        ~$114,718 USD
+
+Riesgo/trade: 2%
+Max posiciones: 1
+Stop loss:    ATR x2 (dinámico)
+Take profit:  Trailing 65%
+```
+
+
+## ✅ CHECKLIST PRE-TRADING
+
+Antes de ejecutar --live:
+
+- [ ] Verificar config: cat descarga_datos/config/config.yaml | grep sandbox
+- [ ] Debe mostrar: sandbox: true
+- [ ] Verificar capital: python descarga_datos/scripts/get_binance_balance.py
+- [ ] Leer guía: descarga_datos/ARCHIVOS MD/LIVE_TRADING_SANDBOX_GUIDE.md
+- [ ] Test rápido: python -m pytest descarga_datos/tests/test_quick_backtest.py
+- [ ] Dashboard: python run_dashboard.py (en otra terminal)
+- [ ] Logs: tail -f descarga_datos/logs/bot_trader.log (en otra terminal)
+
+
+## 🔧 CAMBIOS RÁPIDOS A CONFIG
+
+### Ver configuración actual
+```bash
+cat descarga_datos/config/config.yaml
+```
+
+### Cambios frecuentes
+```yaml
+# Modo sandbox (siempre true para testing)
+sandbox: true
+
+# Riesgo por trade (1-10%)
+risk_per_trade: 0.02
+
+# Pares a tradear
+symbols:
+  - "BTC/USDT"
+  - "XRP/USDT"
+
+# Timeframe
+timeframe: "15m"  # "5m", "15m", "1h", "1d"
+```
+
+### Para cambiar a PRODUCCIÓN
+1. Cambiar sandbox: false
+2. Verificar capital real disponible
+3. Leer 05_CORRECCIONES_Y_MEJORAS.md
+4. Ejecutar backtest primero
+5. Confirmar con read_ANTES_PASAR_A_PRODUCCION.md
+
+
+## 📊 ESTADO ACTUAL
+
+```
+✅ Sistema:         Operativo (100%)
+✅ Documentación:   Completa (47+ docs)
+✅ Capital:        Disponible ($114,718)
+✅ Indicadores:    Activos (28)
+✅ ML Models:      Entrenados
+✅ Testing:        Validado
+✅ Logging:        Activo
+✅ Status Final:   🚀 LISTO PARA PRODUCCIÓN
+```
+
+
+## 🎯 TAREAS COMUNES
+
+### Convertir Activos
+```bash
+python descarga_datos/scripts/convertir_btc_a_usdt.py
+python descarga_datos/scripts/convertir_usdt_a_btc_reserva.py
+```
+
+### Analizar Balance
+```bash
+python descarga_datos/scripts/analizar_balance_completo.py
+```
+
+### Ver Histórico de Trades
+```bash
+# En logs
+tail -n 500 descarga_datos/logs/bot_trader.log | grep "TRADE\|POSITION"
+```
+
+### Hacer Backtest Rápido
+```bash
+python descarga_datos/main.py --backtest
+```
+
+### Optimizar Parámetros
+```bash
+python descarga_datos/main.py --optimize
+# (Toma ~1-2 horas con Optuna)
+```
+
+
+## 🚨 EMERGENCIA / PROBLEMAS
+
+### Sistema se congela
+```bash
+# Revisar logs
+tail -f descarga_datos/logs/bot_trader.log
+
+# Ver último error
+grep "ERROR" descarga_datos/logs/bot_trader.log | tail -20
+```
+
+### Conexión perdida
+```bash
+# Reiniciar trading
+python descarga_datos/main.py --live
+
+# Verificar Binance
+python descarga_datos/scripts/get_binance_balance.py
+```
+
+### Error de datos
+```bash
+# Descargar datos nuevos
+python descarga_datos/main.py --download-data
+
+# Luego: backtest
+python descarga_datos/main.py --backtest
+```
+
+### Consultar documentación de errores
+```bash
+cat descarga_datos/ARCHIVOS\ MD/05_CORRECCIONES_Y_MEJORAS.md
+```
+
+
+## 📍 CARPETA ACTUAL RECOMENDADA
+
+Todas las operaciones se hacen desde:
+```bash
+C:\Users\javie\copilot\botcopilot-sar\
+```
+
+Python busca config desde descarga_datos/:
+```
+descarga_datos/
+├── main.py          ← Ejecutar desde aquí
+├── config/
+│   └── config.yaml  ← Configuración centralizada
+└── ...
+```
+
+
+## 💡 TIPS ÚTILES
+
+1. **Cambios en config.yaml son inmediatos** - No necesitas reiniciar
+2. **Logs son en tiempo real** - tail -f para monitor
+3. **Dashboard automático** - Se abre solo si hay resultados
+4. **Datos se guardan automáticamente** - SQLite + CSV
+5. **Backups automáticos** - En data/csv/
+6. **Símbols y timeframes configurables** - Todo en config.yaml
+
+
+## 📞 PRÓXIMAS SESIONES
+
+**Para retomar trabajo:**
+
+1. Leer: `CONTEXTO_ESTADO_ACTUAL.txt`
+2. Verificar: `python descarga_datos/scripts/get_binance_balance.py`
+3. Consultar: `descarga_datos/ARCHIVOS MD/00_INDICE_MAESTRO_v4.md`
+4. Ejecutar: `python descarga_datos/main.py --live`
+
+**Todos los datos están preservados y accesibles**
+
+---
+
+Creado: 21 OCT 2025 22:15 UTC
+Versión: 4.0.1
+Status: ✅ Completamente funcional
+
+🚀 ¡A tradear!

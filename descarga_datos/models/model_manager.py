@@ -20,7 +20,16 @@ class ModelManager:
             base_dir: Directorio base para almacenar modelos
         """
         if base_dir is None:
-            base_dir = os.path.join(os.getcwd(), 'models')
+            # Verificar si estamos ejecutando desde descarga_datos/
+            current_dir = os.getcwd()
+            if 'descarga_datos' in current_dir or os.path.exists(os.path.join(current_dir, 'descarga_datos')):
+                # Si estamos en descarga_datos o el directorio padre lo contiene
+                if os.path.basename(current_dir) == 'descarga_datos':
+                    base_dir = os.path.join(current_dir, 'models')
+                else:
+                    base_dir = os.path.join(current_dir, 'descarga_datos', 'models')
+            else:
+                base_dir = os.path.join(current_dir, 'models')
 
         self.base_dir = base_dir
         self.model_dir = base_dir  # Agregar atributo model_dir para compatibilidad
@@ -96,22 +105,46 @@ class ModelManager:
         """
         try:
             if symbol:
+                # Primero intentar con .pkl
                 model_path = self.get_model_path(symbol, model_name)
+                if not os.path.exists(model_path):
+                    # Si no existe .pkl, intentar con .joblib
+                    model_path_joblib = model_path.replace('.pkl', '.joblib')
+                    if os.path.exists(model_path_joblib):
+                        model_path = model_path_joblib
+                    else:
+                        self.logger.warning(f"Modelo {model_name} no encontrado en {model_path} ni en {model_path_joblib}")
+                        return None
             else:
                 model_path = os.path.join(self.base_dir, f"{model_name}.pkl")
+                if not os.path.exists(model_path):
+                    model_path_joblib = model_path.replace('.pkl', '.joblib')
+                    if os.path.exists(model_path_joblib):
+                        model_path = model_path_joblib
 
             if not os.path.exists(model_path):
                 self.logger.warning(f"Modelo {model_name} no encontrado en {model_path}")
                 return None
 
-            with open(model_path, 'rb') as f:
-                data = pickle.load(f)
+            # Cargar según el tipo de archivo
+            if model_path.endswith('.joblib'):
+                try:
+                    model = joblib.load(model_path)
+                    self.logger.info(f"Modelo {model_name} cargado desde {model_path} (joblib)")
+                    return model
+                except Exception as e:
+                    self.logger.error(f"Error cargando modelo joblib {model_name}: {e}")
+                    return None
+            else:
+                # Cargar con pickle
+                with open(model_path, 'rb') as f:
+                    data = pickle.load(f)
 
-            model = data.get('model')
-            metadata = data.get('metadata', {})
+                model = data.get('model')
+                metadata = data.get('metadata', {})
 
-            self.logger.info(f"Modelo {model_name} cargado desde {model_path}")
-            return model
+                self.logger.info(f"Modelo {model_name} cargado desde {model_path} (pickle)")
+                return model
 
         except Exception as e:
             self.logger.error(f"Error cargando modelo {model_name}: {e}")
@@ -125,8 +158,17 @@ class ModelManager:
             Lista de nombres de modelos
         """
         try:
-            files = os.listdir(self.base_dir)
-            models = [f.replace('.pkl', '') for f in files if f.endswith('.pkl')]
+            models = []
+            for root, dirs, files in os.walk(self.base_dir):
+                for file in files:
+                    if file.endswith('.pkl') or file.endswith('.joblib'):
+                        # Obtener nombre relativo al base_dir
+                        rel_path = os.path.relpath(root, self.base_dir)
+                        if rel_path == '.':
+                            model_name = file.replace('.pkl', '').replace('.joblib', '')
+                        else:
+                            model_name = f"{rel_path}/{file.replace('.pkl', '').replace('.joblib', '')}"
+                        models.append(model_name)
             return models
         except Exception as e:
             self.logger.error(f"Error listando modelos: {e}")

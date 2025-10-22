@@ -260,6 +260,20 @@ class CCXTLiveDataProvider:
                 self.logger.info(f"Usando agrupación para {timeframe} para obtener más datos históricos...")
                 df = self._get_data_with_aggregation_enhanced(symbol, timeframe, limit)
                 if df is not None and len(df) >= (limit * 0.8):  # Aceptar al menos 80% de las barras mínimas
+                    
+                    # Calcular indicadores técnicos si se solicitan
+                    if with_indicators:
+                        try:
+                            from indicators.technical_indicators import TechnicalIndicators
+                            from config.config_loader import load_config_from_yaml
+                            
+                            config = load_config_from_yaml()
+                            indicators = TechnicalIndicators(config)
+                            df = indicators.calculate_all_indicators_unified(df)
+                            self.logger.info(f"✅ Indicadores técnicos calculados para datos agrupados {symbol} {timeframe}")
+                        except Exception as ind_error:
+                            self.logger.error(f"Error calculando indicadores para datos agrupados {symbol} {timeframe}: {ind_error}")
+                    
                     # Cachear datos agrupados
                     self.data_cache[cache_key] = {
                         'data': df.copy(),
@@ -279,6 +293,20 @@ class CCXTLiveDataProvider:
                 # ESTRATEGIA DE RESPALDO: Usar timeframe más bajo y agrupar
                 df = self._get_data_with_aggregation(symbol, timeframe, limit)
                 if df is not None and len(df) >= limit:
+                    
+                    # Calcular indicadores técnicos si se solicitan
+                    if with_indicators:
+                        try:
+                            from indicators.technical_indicators import TechnicalIndicators
+                            from config.config_loader import load_config_from_yaml
+                            
+                            config = load_config_from_yaml()
+                            indicators = TechnicalIndicators(config)
+                            df = indicators.calculate_all_indicators_unified(df)
+                            self.logger.info(f"✅ Indicadores técnicos calculados para datos agrupados respaldo {symbol} {timeframe}")
+                        except Exception as ind_error:
+                            self.logger.error(f"Error calculando indicadores para datos agrupados respaldo {symbol} {timeframe}: {ind_error}")
+                    
                     # Cachear datos agrupados
                     self.data_cache[cache_key] = {
                         'data': df.copy(),

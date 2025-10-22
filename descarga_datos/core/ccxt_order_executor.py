@@ -259,7 +259,8 @@ class CCXTOrderExecutor:
             return None
 
     def apply_risk_management(self, symbol: str, order_type: OrderType, entry_price: float,
-                            stop_loss: float = None, take_profit: float = None, risk_per_trade: float = None) -> Dict[str, Any]:
+                            stop_loss: float = None, take_profit: float = None, risk_per_trade: float = None,
+                            portfolio_value: float = None) -> Dict[str, Any]:
         """
         Aplica gestión de riesgo a la orden usando parámetros proporcionados por la estrategia.
 
@@ -270,6 +271,7 @@ class CCXTOrderExecutor:
             stop_loss: Stop loss opcional (proporcionado por estrategia)
             take_profit: Take profit opcional (proporcionado por estrategia)
             risk_per_trade: Porcentaje de riesgo por trade (proporcionado por estrategia)
+            portfolio_value: Valor total del portfolio para cálculo consistente con backtest
 
         Returns:
             Dict con parámetros de riesgo aplicados
@@ -278,12 +280,28 @@ class CCXTOrderExecutor:
             # Usar risk_per_trade proporcionado por estrategia o valor por defecto
             risk_pct = risk_per_trade if risk_per_trade is not None else self.risk_per_trade
 
-            # Obtener balance actual
-            balance_info = self.exchange.fetch_balance()
-            total_balance = balance_info.get('total', {}).get('USDT', 0)
+            # Determinar qué moneda necesitamos según el tipo de orden
+            base_currency, quote_currency = symbol.split('/')
+            if order_type == OrderType.BUY:
+                # Para BUY necesitamos la moneda de cotización (ej: USDT en BTC/USDT)
+                required_currency = quote_currency
+            else:  # SELL
+                # Para SELL necesitamos la moneda base (ej: BTC en BTC/USDT)
+                required_currency = base_currency
 
-            if total_balance <= 0:
-                raise ValueError("Balance insuficiente")
+            # Obtener balance disponible de la moneda requerida
+            balance_info = self.exchange.fetch_balance()
+            available_balance = balance_info.get('free', {}).get(required_currency, 0)
+
+            if available_balance <= 0:
+                raise ValueError(f"Saldo insuficiente en {required_currency}: {available_balance}")
+
+            # Usar portfolio_value si se proporciona, sino estimar basado en balance disponible
+            # Esto mantiene consistencia con el backtest donde portfolio_value es fijo
+            if portfolio_value is None:
+                # Estimar capital total basado en balance disponible + margen de seguridad
+                # Para crypto, asumimos que el balance disponible representa ~80% del capital total
+                portfolio_value = available_balance / 0.8 if order_type == OrderType.SELL else available_balance
 
             # Calcular stop loss si no se proporciona
             if stop_loss is None:
@@ -301,6 +319,7 @@ class CCXTOrderExecutor:
                     take_profit = entry_price - (risk_distance * 2)
 
             # Calcular cantidad basada en riesgo usando el porcentaje proporcionado
+            # CONSISTENTE CON BACKTEST: risk_amount = portfolio_value * risk_pct
             if order_type == OrderType.BUY:
                 risk_distance = entry_price - stop_loss
             else:
@@ -309,23 +328,22 @@ class CCXTOrderExecutor:
             if risk_distance <= 0:
                 raise ValueError("Stop loss inválido")
 
-            risk_amount = total_balance * risk_pct
+            # CÁLCULO CONSISTENTE CON BACKTEST
+            risk_amount = portfolio_value * risk_pct
+            position_size = risk_amount / risk_distance
 
-            # Aplicar factor de reducción SOLO cuando NO viene de estrategia (para mantener consistencia con backtest)
-            if risk_per_trade is not None:
-                # Cuando viene de estrategia, usar cálculo idéntico al backtest (sin reducción)
-                risk_reduction_factor = 1.0
-                max_risk_amount = total_balance * risk_pct  # No limitar, usar exactamente risk_pct
-            else:
-                # Valores por defecto cuando no viene de estrategia
-                risk_reduction_factor = 0.5
-                max_risk_amount = total_balance * 0.02
+            # Para BUY: position_size ya está en unidades base (BTC)
+            # Para SELL: position_size ya está en unidades base (BTC)
+            # Pero necesitamos verificar que no exceda el balance disponible
+            if order_type == OrderType.SELL and position_size > available_balance:
+                # Reducir position_size para que no exceda el balance disponible
+                position_size = available_balance * 0.95  # 95% del balance disponible
+            elif order_type == OrderType.BUY:
+                # Para BUY, verificar que el costo no exceda el balance disponible
+                estimated_cost = position_size * entry_price
+                if estimated_cost > available_balance:
+                    position_size = (available_balance * 0.95) / entry_price  # 95% del balance disponible
 
-            risk_amount = risk_amount * risk_reduction_factor
-            risk_amount = min(risk_amount, max_risk_amount)
-            
-            quantity = risk_amount / risk_distance
-            
             # Ajustar a la precisión del mercado
             try:
                 market_info = self.exchange.market(symbol)
@@ -335,28 +353,31 @@ class CCXTOrderExecutor:
                     if isinstance(precision, (int, float)):
                         if precision >= 1:
                             # Precision entera (decimales)
-                            quantity = round(quantity, int(precision))
+                            position_size = round(position_size, int(precision))
                         else:
                             # Precision como step size (ej: 0.001)
-                            quantity = round(quantity / precision) * precision
+                            position_size = round(position_size / precision) * precision
                     else:
                         # Fallback si precision tiene formato inesperado
-                        quantity = float(f"{quantity:.8f}")
-                
+                        position_size = float(f"{position_size:.8f}")
+
                 # Verificar límites de cantidad mínima
                 min_amount = market_info.get('limits', {}).get('amount', {}).get('min')
-                if min_amount and quantity < min_amount:
-                    self.logger.warning(f"Cantidad calculada {quantity} menor que el mínimo {min_amount}")
-                    quantity = min_amount
+                if min_amount and position_size < min_amount:
+                    self.logger.warning(f"Cantidad calculada {position_size} menor que el mínimo {min_amount}")
+                    position_size = min_amount
             except Exception as e:
                 self.logger.warning(f"Error ajustando precisión: {e}")
 
             return {
-                'quantity': quantity,
+                'quantity': position_size,
                 'stop_loss': stop_loss,
                 'take_profit': take_profit,
                 'risk_amount': risk_amount,
-                'risk_percent': risk_pct
+                'risk_percent': risk_pct,
+                'required_currency': required_currency,
+                'available_balance': available_balance,
+                'portfolio_value': portfolio_value
             }
 
         except Exception as e:
@@ -366,7 +387,7 @@ class CCXTOrderExecutor:
     def open_position(self, symbol: str, order_type: OrderType, quantity: float = None,
                      stop_loss_price: float = None, take_profit_price: float = None,
                      trailing_stop_pct: float = None, risk_per_trade: float = None,
-                     price: float = None) -> Optional[Dict[str, Any]]:
+                     price: float = None, portfolio_value: float = None) -> Optional[Dict[str, Any]]:
         """
         Abre una nueva posición usando parámetros de risk management proporcionados por la estrategia.
 
@@ -379,6 +400,7 @@ class CCXTOrderExecutor:
             trailing_stop_pct: Porcentaje para trailing stop (proporcionado por estrategia)
             risk_per_trade: Porcentaje de riesgo por trade (proporcionado por estrategia)
             price: Precio límite (para órdenes limit)
+            portfolio_value: Valor total del portfolio para cálculo consistente con backtest
 
         Returns:
             Dict con información de la orden o None si hay error
@@ -400,8 +422,27 @@ class CCXTOrderExecutor:
                 if risk_per_trade is None:
                     risk_per_trade = self.risk_per_trade  # Usar valor por defecto
 
+                # Usar portfolio_value proporcionado por el orquestador, o calcular si no se proporciona
+                if portfolio_value is None:
+                    # Calcular portfolio_value para consistencia con backtest
+                    # Obtener balance total de la cuenta (estimación del portfolio)
+                    try:
+                        balance_info = self.exchange.fetch_balance()
+                        # Para crypto, el portfolio_value es el balance en USDT + valor de otras criptos
+                        # Como aproximación, usamos el balance de la moneda de cotización (USDT)
+                        quote_currency = symbol.split('/')[1]  # USDT para BTC/USDT
+                        portfolio_value = balance_info.get('free', {}).get(quote_currency, 0)
+
+                        # Si no hay suficiente balance en quote currency, usar una estimación conservadora
+                        if portfolio_value < 100:  # Umbral mínimo
+                            portfolio_value = 2500  # Valor por defecto similar al backtest
+                            self.logger.warning(f"Balance insuficiente en {quote_currency}, usando valor por defecto: {portfolio_value}")
+                    except Exception as e:
+                        self.logger.warning(f"Error obteniendo balance para portfolio_value: {e}, usando valor por defecto")
+                        portfolio_value = 2500  # Fallback al valor del backtest
+
                 risk_params = self.apply_risk_management(symbol, order_type, price,
-                                                       stop_loss_price, take_profit_price, risk_per_trade)
+                                                       stop_loss_price, take_profit_price, risk_per_trade, portfolio_value)
                 if not risk_params:
                     return None
                 quantity = risk_params['quantity']

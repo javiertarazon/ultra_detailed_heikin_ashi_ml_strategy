@@ -1,0 +1,14 @@
+{
+  "best_roi": -1000.0,
+  "best_params": {
+    "atr_period": 15,
+    "stop_loss_atr": 4.0,
+    "take_profit_atr": 7.0,
+    "trailing_stop_pct": 0.8,
+    "ml_confidence_threshold": 0.35,
+    "risk_per_trade": 0.005
+  },
+  "optimization_date": "2025-10-19T22:34:38.127102",
+  "total_trials": 100,
+  "data_periods": 0
+}

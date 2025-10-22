@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 import os
 import pickle
 import joblib
+import logging
 # Importaciones lazy de sklearn para compatibilidad Python 3.13
 # from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 # from sklearn.neural_network import MLPClassifier
@@ -96,6 +97,8 @@ class MLModelManager:
         df['momentum_10'] = df['close'] - df['close'].shift(10)
         df['price_position'] = (df['close'] - df['close'].rolling(50).min()) / (df['close'].rolling(50).max() - df['close'].rolling(50).min())
         df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
+        # Evitar división por cero o NaN en volume_ratio
+        df['volume_ratio'] = df['volume_ratio'].fillna(1.0).replace([np.inf, -np.inf], 1.0)
         df['trend_strength'] = abs(df['ema_10'] - df['ema_20']) / df['atr']
         
         # Calcular Bollinger Bands (igual que MLTrainer)
@@ -185,7 +188,7 @@ class MLModelManager:
 
         # Verificar que tenemos suficientes datos
         if len(features) < 100:
-            print(f"⚠️  Datos insuficientes para {symbol}: {len(features)} muestras (mínimo 100)")
+            print(f"[WARNING] Datos insuficientes para {symbol}: {len(features)} muestras (mínimo 100)")
             return {}
 
         print(f"✅ Datos preparados: {len(features)} muestras válidas")
@@ -422,7 +425,7 @@ class MLModelManager:
 
     def _calculate_technical_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        ⚠️ MÉTODO OBSOLETO: Use TechnicalIndicators.calculate_all_indicators_unified en su lugar
+        [WARNING] MÉTODO OBSOLETO: Use TechnicalIndicators.calculate_all_indicators_unified en su lugar
         
         Este método se mantiene solo para compatibilidad con código existente.
         Será eliminado en futuras versiones.
@@ -438,14 +441,14 @@ class UltraDetailedHeikinAshiMLStrategy:
     Estrategia ultra-detallada con modelos ML reales entrenados
     """
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, initial_balance=None):
         # Manejar tanto objetos Config como diccionarios
         if config is None:
             self.config = {}
         elif hasattr(config, 'backtesting'):
             # Es un objeto Config - extraer parámetros relevantes
             self.config = {
-                'symbol': getattr(config.backtesting, 'symbols', ['SOL/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'SOL/USDT',
+                'symbol': getattr(config.backtesting, 'symbols', ['BTC/USDT'])[0] if hasattr(config.backtesting, 'symbols') and config.backtesting.symbols else 'BTC/USDT',
                 'timeframe': getattr(config.backtesting, 'timeframe', '4h') if hasattr(config.backtesting, 'timeframe') else '4h',
                 'ml_threshold': 0.58,  # Balance entre selectividad y oportunidades (rango óptimo: 0.4-0.75)
                 'ml_threshold_min': 0.4,  # Rango mínimo de confiabilidad ML
@@ -465,12 +468,12 @@ class UltraDetailedHeikinAshiMLStrategy:
             self.config = config
 
         # Extraer parámetros con valores por defecto
-        self.symbol = self.config.get('symbol', 'SOL/USDT')
+        self.symbol = self.config.get('symbol', 'BTC/USDT')
         self.timeframe = self.config.get('timeframe', '4h')
 
         # Parámetros optimizados desde configuración centralizada
         self.ml_threshold = self.config.get('ml_threshold', 0.58)  # Balance entre selectividad y oportunidades (rango óptimo: 0.4-0.75)
-        self.ml_threshold_min = self.config.get('ml_threshold_min', 0.4)  # Mínimo rango de confiabilidad ML
+        self.ml_threshold_min = self.config.get('ml_threshold_min', 0.3)  # TEMPORAL: Bajado a 0.3 para testing
         self.ml_threshold_max = self.config.get('ml_threshold_max', 0.75)  # Máximo rango de confiabilidad ML
         self.stoch_overbought = self.config.get('stoch_overbought', 85)
         self.stoch_oversold = self.config.get('stoch_oversold', 35)
@@ -490,16 +493,21 @@ class UltraDetailedHeikinAshiMLStrategy:
 
         # Estado interno
         self.active_trades = []
-        self.portfolio_value = 10000.0  # Valor inicial
+        # Usar balance inicial proporcionado o valor por defecto para backtesting
+        self.portfolio_value = initial_balance if initial_balance is not None else 10000.0
         self.current_drawdown = 0.0
 
         # Inicializar gestor de modelos ML
         self.ml_manager = MLModelManager(config=self.config)
 
-    def _load_symbol_specific_params(self, config):
+    def _load_symbol_specific_params(self, config, live_symbol=None):
         """
         Carga parámetros específicos del símbolo desde configuración centralizada.
         Esto elimina la necesidad de modificar la estrategia para cada símbolo.
+
+        Args:
+            config: Configuración del sistema
+            live_symbol: Símbolo específico para live trading (opcional)
         """
         # Valores por defecto universales
         default_params = {
@@ -528,42 +536,87 @@ class UltraDetailedHeikinAshiMLStrategy:
 
         # Intentar cargar parámetros específicos del símbolo desde configuración
         symbol_params = {}
+        # Para live trading, usar el símbolo pasado como parámetro, sino usar self.symbol
+        current_symbol = live_symbol if live_symbol else (self.symbol if hasattr(self, 'symbol') else 'BTC/USDT')
+
         if config and hasattr(config, 'backtesting'):
             # Es un objeto Config - buscar en optimized_parameters
             backtesting_config = config.backtesting
             if hasattr(backtesting_config, 'optimized_parameters') and backtesting_config.optimized_parameters:
                 opt_params = backtesting_config.optimized_parameters
-                # Los parámetros están directamente en optimized_parameters
-                if hasattr(opt_params, '__dict__'):
-                    # Convertir objeto a diccionario
-                    symbol_params = opt_params.__dict__
-                elif hasattr(opt_params, 'items'):
-                    # Ya es un diccionario
-                    symbol_params = dict(opt_params)
+                # Convertir símbolo a clave de parámetros (BTC/USDT -> BTC_USDT)
+                symbol_key = current_symbol.replace('/', '_')
+
+                # Buscar parámetros específicos del símbolo
+                if isinstance(opt_params, dict) and symbol_key in opt_params:
+                    # Los parámetros están en optimized_parameters.BTC_USDT
+                    symbol_opt_params = opt_params[symbol_key]
+                    if isinstance(symbol_opt_params, dict):
+                        # Ya es un diccionario - copiar todos los parámetros
+                        symbol_params = symbol_opt_params.copy()
+                    else:
+                        # Intentar acceder como atributos directos (fallback)
+                        try:
+                            symbol_params = {
+                                'ml_threshold': getattr(symbol_opt_params, 'ml_threshold', None),
+                                'stoch_overbought': getattr(symbol_opt_params, 'stoch_overbought', None),
+                                'stoch_oversold': getattr(symbol_opt_params, 'stoch_oversold', None),
+                                'cci_threshold': getattr(symbol_opt_params, 'cci_threshold', None),
+                                'volume_ratio_min': getattr(symbol_opt_params, 'volume_ratio_min', None),
+                                'sar_acceleration': getattr(symbol_opt_params, 'sar_acceleration', None),
+                                'sar_maximum': getattr(symbol_opt_params, 'sar_maximum', None),
+                                'atr_period': getattr(symbol_opt_params, 'atr_period', None),
+                                'stop_loss_atr_multiplier': getattr(symbol_opt_params, 'stop_loss_atr_multiplier', None),
+                                'take_profit_atr_multiplier': getattr(symbol_opt_params, 'take_profit_atr_multiplier', None),
+                                'ema_trend_period': getattr(symbol_opt_params, 'ema_trend_period', None),
+                                'max_drawdown': getattr(symbol_opt_params, 'max_drawdown', None),
+                                'max_portfolio_heat': getattr(symbol_opt_params, 'max_portfolio_heat', None),
+                                'max_concurrent_trades': getattr(symbol_opt_params, 'max_concurrent_trades', None),
+                                'kelly_fraction': getattr(symbol_opt_params, 'kelly_fraction', None),
+                            }
+                            # Filtrar None values
+                            symbol_params = {k: v for k, v in symbol_params.items() if v is not None}
+                        except:
+                            pass
                 else:
-                    # Intentar acceder como atributos directos
-                    try:
-                        symbol_params = {
-                            'ml_threshold': getattr(opt_params, 'ml_threshold', None),
-                            'stoch_overbought': getattr(opt_params, 'stoch_overbought', None),
-                            'stoch_oversold': getattr(opt_params, 'stoch_oversold', None),
-                            'cci_threshold': getattr(opt_params, 'cci_threshold', None),
-                            'volume_ratio_min': getattr(opt_params, 'volume_ratio_min', None),
-                            'sar_acceleration': getattr(opt_params, 'sar_acceleration', None),
-                            'sar_maximum': getattr(opt_params, 'sar_maximum', None),
-                            'atr_period': getattr(opt_params, 'atr_period', None),
-                            'stop_loss_atr_multiplier': getattr(opt_params, 'stop_loss_atr_multiplier', None),
-                            'take_profit_atr_multiplier': getattr(opt_params, 'take_profit_atr_multiplier', None),
-                            'ema_trend_period': getattr(opt_params, 'ema_trend_period', None),
-                            'max_drawdown': getattr(opt_params, 'max_drawdown', None),
-                            'max_portfolio_heat': getattr(opt_params, 'max_portfolio_heat', None),
-                            'max_concurrent_trades': getattr(opt_params, 'max_concurrent_trades', None),
-                            'kelly_fraction': getattr(opt_params, 'kelly_fraction', None),
-                        }
-                        # Filtrar None values
-                        symbol_params = {k: v for k, v in symbol_params.items() if v is not None}
-                    except:
-                        pass
+                    # Fallback: buscar parámetros globales si no hay específicos del símbolo
+                    if isinstance(opt_params, dict):
+                        # Si opt_params es un diccionario plano con parámetros globales
+                        symbol_params = opt_params.copy()
+        elif isinstance(config, dict):
+            # Configuración como diccionario (modo alternativo)
+            backtesting_config = config.get('backtesting', {})
+            opt_params = backtesting_config.get('optimized_parameters', {})
+            if isinstance(opt_params, dict):
+                symbol_key = current_symbol.replace('/', '_')
+                if symbol_key in opt_params:
+                    symbol_opt_params = opt_params[symbol_key]
+                    if isinstance(symbol_opt_params, dict):
+                        symbol_params = symbol_opt_params.copy()
+                    else:
+                        # Intentar acceder como atributos directos
+                        try:
+                            symbol_params = {
+                                'ml_threshold': getattr(opt_params, 'ml_threshold', None),
+                                'stoch_overbought': getattr(opt_params, 'stoch_overbought', None),
+                                'stoch_oversold': getattr(opt_params, 'stoch_oversold', None),
+                                'cci_threshold': getattr(opt_params, 'cci_threshold', None),
+                                'volume_ratio_min': getattr(opt_params, 'volume_ratio_min', None),
+                                'sar_acceleration': getattr(opt_params, 'sar_acceleration', None),
+                                'sar_maximum': getattr(opt_params, 'sar_maximum', None),
+                                'atr_period': getattr(opt_params, 'atr_period', None),
+                                'stop_loss_atr_multiplier': getattr(opt_params, 'stop_loss_atr_multiplier', None),
+                                'take_profit_atr_multiplier': getattr(opt_params, 'take_profit_atr_multiplier', None),
+                                'ema_trend_period': getattr(opt_params, 'ema_trend_period', None),
+                                'max_drawdown': getattr(opt_params, 'max_drawdown', None),
+                                'max_portfolio_heat': getattr(opt_params, 'max_portfolio_heat', None),
+                                'max_concurrent_trades': getattr(opt_params, 'max_concurrent_trades', None),
+                                'kelly_fraction': getattr(opt_params, 'kelly_fraction', None),
+                            }
+                            # Filtrar None values
+                            symbol_params = {k: v for k, v in symbol_params.items() if v is not None}
+                        except:
+                            pass
 
         # Aplicar parámetros específicos del símbolo o valores por defecto
         for param_name, default_value in default_params.items():
@@ -571,7 +624,7 @@ class UltraDetailedHeikinAshiMLStrategy:
             value = self.config.get(param_name, symbol_params.get(param_name, default_value))
             setattr(self, param_name, value)
 
-        print(f"📊 Parámetros cargados para {self.symbol}: atr_period={self.atr_period}, stop_loss_atr={self.stop_loss_atr_multiplier}, take_profit_atr={self.take_profit_atr_multiplier}")
+        print(f"[PARAMS] Parametros cargados para {current_symbol}: atr_period={self.atr_period}, stop_loss_atr={self.stop_loss_atr_multiplier}, take_profit_atr={self.take_profit_atr_multiplier}")
 
     def run(self, data: pd.DataFrame, symbol: str, timeframe: str = '4h') -> Dict:
         """
@@ -621,7 +674,7 @@ class UltraDetailedHeikinAshiMLStrategy:
                 should_retrain = not model_exists
 
                 if should_retrain:
-                    print(f"⚠️  Modelos ML no encontrados. Entrenando con {len(data_processed)} muestras...")
+                    print(f"[WARNING] Modelos ML no encontrados. Entrenando con {len(data_processed)} muestras...")
                     self.ml_manager.train_models(data_processed, symbol)
                     print("✅ Modelos ML entrenados y guardados")
                 else:
@@ -668,7 +721,7 @@ class UltraDetailedHeikinAshiMLStrategy:
         indicators = TechnicalIndicators()
         data = indicators.calculate_all_indicators_unified(data)
         
-        # ⚠️ CÓDIGO MANUAL ELIMINADO PARA EVITAR INCONSISTENCIAS ⚠️
+        # [WARNING] CÓDIGO MANUAL ELIMINADO PARA EVITAR INCONSISTENCIAS [WARNING]
         # El siguiente código calculaba indicadores manualmente con TA-Lib,
         # causando inconsistencias con el entrenamiento ML que usa TechnicalIndicators centralizada
         
@@ -693,7 +746,7 @@ class UltraDetailedHeikinAshiMLStrategy:
         max_allowed_nans = len(data) * 0.05  # Máximo 5% de NaN permitidos
 
         if total_critical_nans > max_allowed_nans:
-            print(f"️ NaN detectados en indicadores críticos: {nan_counts.to_dict()}")
+            print(f"[WARNING] NaN detectados en indicadores críticos: {nan_counts.to_dict()}")
             print(f"Limpiando {total_critical_nans} filas con NaN...")
             # En lugar de error, limpiar los NaN
             data = data.dropna(subset=critical_indicators)
@@ -735,6 +788,10 @@ class UltraDetailedHeikinAshiMLStrategy:
         """
         try:
             print(f"[LIVE SIGNAL] Generando señal live para {symbol} usando lógica de backtesting")
+
+            # RECARGAR parámetros específicos del símbolo para live trading
+            if hasattr(self, 'config') and self.config:
+                self._load_symbol_specific_params(self.config, live_symbol=symbol)
 
             # MODO SEGURO: Verificar si está activado
             safe_mode = self.config.get('ml_training', {}).get('safe_mode', False)
@@ -818,8 +875,11 @@ class UltraDetailedHeikinAshiMLStrategy:
         current_time = data.index[i]
         atr = data['atr'].iloc[i]
 
+        print(f"[DEBUG LIVE] Evaluando vela {i}: price={current_price}, atr={atr}")
+
         # SKIP si ATR es NaN o cero (igual que backtesting)
         if pd.isna(atr) or atr == 0:
+            print(f"[DEBUG LIVE] ATR inválido: {atr}")
             return {
                 'signal': 'NO_SIGNAL',
                 'signal_data': {},
@@ -916,6 +976,11 @@ class UltraDetailedHeikinAshiMLStrategy:
         Generar señal para un índice específico usando lógica simplificada para asegurar señales
         Retorna: 1 (BUY), -1 (SELL), 0 (NO_SIGNAL)
         """
+        # DEBUG: Mostrar valores clave
+        current_row = data.iloc[i]
+        ml_conf = ml_confidence_all.iloc[i]
+        # logger.info(f"[DEBUG SIGNAL] Index {i}: ML={ml_conf:.3f}, RSI={current_row.get('rsi', 'N/A')}, Volume={current_row.get('volume', 'N/A')}, HA_Close={current_row.get('ha_close', 'N/A')}, HA_Open={current_row.get('ha_open', 'N/A')}, ATR={current_row.get('atr', 'N/A')}")
+
         # Obtener datos de la vela actual
         current_row = data.iloc[i]
 
@@ -923,9 +988,9 @@ class UltraDetailedHeikinAshiMLStrategy:
         if i < 20:  # Necesitamos al menos 20 velas para indicadores
             return 0
 
-        # ML CONFIDENCE como filtro principal - BAJADO para asegurar señales
+        # ML CONFIDENCE como filtro principal - ALINEADO con live trading
         ml_conf = ml_confidence_all.iloc[i]
-        if ml_conf < 0.3:  # BAJADO de 0.25 a 0.3 para ser menos restrictivo
+        if ml_conf < self.ml_threshold_min:  # ALINEADO: usar ml_threshold_min (0.4) en lugar de 0.3
             return 0
 
         # FILTROS TÉCNICOS SIMPLIFICADOS
@@ -948,9 +1013,9 @@ class UltraDetailedHeikinAshiMLStrategy:
         if pd.isna(atr) or atr == 0:
             return 0
 
-        # Normalizar ATR por precio - MENOS restrictivo
+        # Normalizar ATR por precio - MENOS restrictivo para live trading
         atr_ratio = atr / current_row['close']
-        if atr_ratio > 0.10:  # SUBIDO de 0.05 a 0.10 para permitir más volatilidad
+        if atr_ratio > 0.50:  # SUBIDO de 0.10 a 0.50 para permitir más volatilidad en BTC
             return 0
 
         # 4. VOLUME FILTER: Confirmación de volumen - MENOS restrictivo
@@ -961,19 +1026,24 @@ class UltraDetailedHeikinAshiMLStrategy:
         # Comparar con promedio de volumen - MENOS restrictivo
         recent_volume = data['volume'].iloc[max(0, i-20):i+1]
         avg_volume = recent_volume.mean()
+        if pd.isna(avg_volume) or avg_volume <= 0:
+            avg_volume = volume * 0.5  # Valor por defecto si no hay promedio válido
         if volume < avg_volume * 0.3:  # BAJADO de 0.5 a 0.3
             return 0
 
         # SEÑALES SIMPLIFICADAS - Solo requieren ML + Trend + RSI básico
 
         # BUY SIGNAL: ML confidence + trend bullish + RSI no sobrecomprado
-        if trend_bullish and rsi_ok_buy and ml_conf >= 0.3:
+        if trend_bullish and rsi_ok_buy and ml_conf >= self.ml_threshold_min:
+            # logger.info(f"[DEBUG SIGNAL] BUY SIGNAL GENERATED: trend_bullish={trend_bullish}, rsi_ok_buy={rsi_ok_buy}, ml_conf={ml_conf:.3f}")
             return 1
 
         # SELL SIGNAL: ML confidence + trend bearish + RSI no sobrevendido
-        elif trend_bearish and rsi_ok_sell and ml_conf >= 0.3:
+        elif trend_bearish and rsi_ok_sell and ml_conf >= self.ml_threshold_min:
+            # logger.info(f"[DEBUG SIGNAL] SELL SIGNAL GENERATED: trend_bearish={trend_bearish}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
             return -1
 
+        # logger.info(f"[DEBUG SIGNAL] NO SIGNAL: trend_bullish={trend_bullish}, trend_bearish={trend_bearish}, rsi_ok_buy={rsi_ok_buy}, rsi_ok_sell={rsi_ok_sell}, ml_conf={ml_conf:.3f}")
         return 0
 
     def _generate_signals(self, data: pd.DataFrame, symbol: str, ml_confidence_all: pd.Series) -> pd.Series:
@@ -999,7 +1069,10 @@ class UltraDetailedHeikinAshiMLStrategy:
         # Verificar confianza ML en rango óptimo (0.4-0.75)
         current_ml_conf = ml_confidence.iloc[-1]
         if current_ml_conf < self.ml_threshold_min or current_ml_conf > self.ml_threshold_max:
+            print(f"[DEBUG] ML confidence fuera de rango: {current_ml_conf:.3f} (rango: {self.ml_threshold_min}-{self.ml_threshold_max})")
             return 'NO_SIGNAL'
+
+        print(f"[DEBUG] ML confidence OK: {current_ml_conf:.3f}")
 
         # Obtener datos de la última vela
         last_row = data.iloc[-1]
@@ -1014,6 +1087,8 @@ class UltraDetailedHeikinAshiMLStrategy:
 
         # Volume confirmation
         volume_ma = data['volume'].rolling(20).mean().iloc[-1]
+        if pd.isna(volume_ma) or volume_ma <= 0:
+            volume_ma = last_row['volume'] * 0.8  # Valor por defecto si no hay MA válido
         volume_ok = last_row['volume'] > volume_ma * self.volume_threshold
 
         # Trend strength
@@ -1021,12 +1096,16 @@ class UltraDetailedHeikinAshiMLStrategy:
 
         # Señal BUY
         if ha_trend_up and rsi_ok_buy and volume_ok and trend_strength:
+            print(f"[DEBUG] BUY SIGNAL: ha_trend_up={ha_trend_up}, rsi_ok_buy={rsi_ok_buy} (RSI={last_row['rsi']:.2f} < {self.stoch_oversold}), volume_ok={volume_ok}, trend_strength={trend_strength}")
             return 'BUY'
 
         # Señal SELL
         if ha_trend_down and rsi_ok_sell and volume_ok and trend_strength:
+            print(f"[DEBUG] SELL SIGNAL: ha_trend_down={ha_trend_down}, rsi_ok_sell={rsi_ok_sell}, volume_ok={volume_ok}, trend_strength={trend_strength}")
             return 'SELL'
 
+        # Debug de por qué no hay señal
+        print(f"[DEBUG] NO_SIGNAL: ha_trend_up={ha_trend_up}, rsi_ok_buy={rsi_ok_buy} (RSI={last_row['rsi']:.2f}), volume_ok={volume_ok}, trend_strength={trend_strength}")
         return 'NO_SIGNAL'
 
         for i in range(1, len(data)):
@@ -1215,7 +1294,7 @@ class UltraDetailedHeikinAshiMLStrategy:
                             stop_loss_price = new_stop
                             print(f"Trailing stop {self.trailing_stop_pct:.0%} ajustado: {stop_loss_price:.6f} (profit: {profit_amount:.6f})")
 
-                # ⚠️ CÓDIGO DUPLICADO ELIMINADO ⚠️
+                # [WARNING] CÓDIGO DUPLICADO ELIMINADO [WARNING]
                 # El siguiente bloque estaba completamente repetido y no tenía efecto adicional
                 # if position > 0:  # Posición larga
                 #     new_stop = entry_price + new_stop_distance
@@ -1354,9 +1433,18 @@ class UltraDetailedHeikinAshiMLStrategy:
                 atr_value = last_row.get('atr', current_price * 0.02)  # fallback si no hay ATR
 
                 # Cargar parámetros desde config
-                atr_period = self.config.get('backtesting', {}).get('optimized_parameters', {}).get('atr_period', 14)
-                stop_loss_atr = self.config.get('backtesting', {}).get('optimized_parameters', {}).get('stop_loss_atr_multiplier', 3.0)
-                take_profit_atr = self.config.get('backtesting', {}).get('optimized_parameters', {}).get('take_profit_atr_multiplier', 5.0)
+                symbol_key = 'BTC_USDT'  # Para BTC/USDT
+                opt_params = self.config.backtesting.optimized_parameters
+                if isinstance(opt_params, dict) and symbol_key in opt_params:
+                    symbol_params = opt_params[symbol_key]
+                    atr_period = symbol_params.get('atr_period', 14)
+                    stop_loss_atr = symbol_params.get('stop_loss_atr_multiplier', 3.0)
+                    take_profit_atr = symbol_params.get('take_profit_atr_multiplier', 5.0)
+                else:
+                    # Fallback a valores por defecto
+                    atr_period = 14
+                    stop_loss_atr = 3.0
+                    take_profit_atr = 5.0
 
                 # Calcular precios de stop loss y take profit
                 if signal == 'BUY':
@@ -1541,6 +1629,7 @@ class UltraDetailedHeikinAshiMLStrategy:
             'trades': []
         }
 
+    # SEGUNDO MÉTODO should_close_position - EL QUE SE EJECUTA ACTUALMENTE
     def should_close_position(self, position_data: Dict, current_price: float, entry_price: float,
                             take_profit_price: float = None) -> Dict:
         """
@@ -1583,15 +1672,19 @@ class UltraDetailedHeikinAshiMLStrategy:
             if stop_loss_price:
                 direction = position_data.get('type', position_data.get('direction', 'buy'))
                 if direction in ['buy', 'BUY'] and current_price <= stop_loss_price:
+                    # Determinar si es stop loss inicial o trailing stop activado
+                    stop_type = 'stop_loss_trailing' if position_data.get('trailing_stop_updated', False) else 'stop_loss_initial'
                     return {
                         'should_close': True,
-                        'reason': 'stop_loss',
+                        'reason': stop_type,
                         'exit_price': stop_loss_price
                     }
                 elif direction in ['sell', 'SELL'] and current_price >= stop_loss_price:
+                    # Determinar si es stop loss inicial o trailing stop activado
+                    stop_type = 'stop_loss_trailing' if position_data.get('trailing_stop_updated', False) else 'stop_loss_initial'
                     return {
                         'should_close': True,
-                        'reason': 'stop_loss',
+                        'reason': stop_type,
                         'exit_price': stop_loss_price
                     }
 

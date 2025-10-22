@@ -50,16 +50,20 @@ class CCXTLiveTradingOrchestrator:
     - Seguimiento de posiciones y rendimiento
     """
 
-    def __init__(self, config_path: str = None, exchange_name: str = 'bybit'):
+    def __init__(self, config_path: str = None, exchange_name: str = None):
         """
         Inicializa el orquestador de trading en vivo para cripto.
 
         Args:
             config_path: Ruta al archivo de configuración YAML. Si es None, se usa la configuración predeterminada.
-            exchange_name: Nombre del exchange a usar (bybit, binance, etc.)
+            exchange_name: Nombre del exchange a usar (bybit, binance, etc.). Si es None, se usa el active_exchange de config.
         """
         # Cargar configuración
         self.config = load_config(config_path)
+        
+        # Usar exchange activo de configuración si no se especifica
+        if exchange_name is None:
+            exchange_name = self.config.get('active_exchange', 'binance')
         self.exchange_name = exchange_name
 
         # Configuración de live trading
@@ -89,6 +93,9 @@ class CCXTLiveTradingOrchestrator:
         self.strategy_classes = {}
         self.strategy_instances = {}
 
+        # Balance real de la cuenta (se obtiene al conectar)
+        self.real_account_balance = 0.0
+
         # Cola para procesamiento seguro de señales
         self.signal_queue = queue.Queue()
         
@@ -113,6 +120,50 @@ class CCXTLiveTradingOrchestrator:
 
         logger.info("CCXTLiveTradingOrchestrator inicializado correctamente")
 
+    def get_effective_portfolio_value(self) -> float:
+        """
+        Calcula el valor efectivo del portfolio usando el balance real de la cuenta.
+        En modo live, siempre usamos el balance actual disponible.
+
+        Returns:
+            float: Valor efectivo del portfolio (balance real disponible)
+        """
+        try:
+            # En modo live, el capital efectivo es simplemente el balance disponible
+            # No necesitamos calcular posiciones abiertas ya que el balance ya refleja eso
+            balance_info = self.order_executor.exchange.fetch_balance()
+            available_usdt = balance_info.get('free', {}).get('USDT', 0)
+
+            logger.debug(f"Capital efectivo (balance real): ${available_usdt:.2f} USDT")
+            return available_usdt
+
+        except Exception as e:
+            logger.error(f"Error obteniendo balance real: {e}")
+            # Fallback: usar balance almacenado
+            return self.real_account_balance
+
+    def get_real_account_balance(self) -> float:
+        """
+        Obtiene el balance real actual de la cuenta desde el exchange.
+        Este método se usa para inicializar el capital disponible en modo live.
+
+        Returns:
+            float: Balance real en USDT disponible para trading
+        """
+        try:
+            balance_info = self.order_executor.exchange.fetch_balance()
+            available_usdt = balance_info.get('free', {}).get('USDT', 0)
+
+            logger.info(f"Balance real de cuenta obtenido: ${available_usdt:.2f} USDT")
+            return available_usdt
+
+        except Exception as e:
+            logger.error(f"Error obteniendo balance real de cuenta: {e}")
+            # Fallback: usar capital configurado como último recurso
+            fallback_capital = self.backtesting_config.get('initial_capital', 1000.0)
+            logger.warning(f"Usando capital fallback: ${fallback_capital:.2f}")
+            return fallback_capital
+
     def connect(self) -> bool:
         """
         Conecta todos los componentes necesarios para el trading en vivo.
@@ -130,6 +181,13 @@ class CCXTLiveTradingOrchestrator:
             if not self.order_executor.connect():
                 logger.error("Error conectando ejecutor de órdenes")
                 return False
+
+            # Obtener balance real de la cuenta para usar en cálculos de riesgo
+            self.real_account_balance = self.get_real_account_balance()
+            logger.info(f"Balance real de cuenta establecido para trading: ${self.real_account_balance:.2f} USDT")
+
+            # Sincronizar posiciones abiertas desde el exchange
+            self._sync_open_positions()
 
             logger.info("Todos los componentes conectados correctamente")
             return True
@@ -153,6 +211,28 @@ class CCXTLiveTradingOrchestrator:
         except Exception as e:
             logger.error(f"Error desconectando componentes: {e}")
             return False
+
+    def _sync_open_positions(self):
+        """
+        Sincroniza las posiciones abiertas desde el exchange.
+        """
+        try:
+            logger.info("Sincronizando posiciones abiertas desde el exchange...")
+
+            # Obtener posiciones abiertas del exchange
+            open_positions = self.order_executor.get_open_positions()
+
+            if open_positions:
+                logger.info(f"Encontradas {len(open_positions)} posiciones abiertas")
+                for position in open_positions:
+                    logger.info(f"Posición abierta: {position.get('symbol', 'N/A')} - "
+                              f"Cantidad: {position.get('amount', 0)} - "
+                              f"Precio: {position.get('price', 0)}")
+            else:
+                logger.info("No hay posiciones abiertas en el exchange")
+
+        except Exception as e:
+            logger.error(f"Error sincronizando posiciones abiertas: {e}")
 
     def load_strategies(self):
         """
@@ -287,12 +367,16 @@ class CCXTLiveTradingOrchestrator:
                         logger.debug(f"📦 Instanciando estrategia {strategy_name}...")
                         module = __import__(module_path, fromlist=[class_name])
                         strategy_class = getattr(module, class_name)
-                        # Pasar config para que la estrategia cargue parámetros optimizados igual que en backtest
+                        # Pasar config y balance real para que la estrategia use el capital disponible real
                         try:
-                            self.strategy_instances[strategy_name] = strategy_class(config=self.config)
+                            self.strategy_instances[strategy_name] = strategy_class(config=self.config, initial_balance=self.real_account_balance)
                         except TypeError:
-                            # Fallback si no acepta config
-                            self.strategy_instances[strategy_name] = strategy_class()
+                            # Fallback si no acepta initial_balance
+                            try:
+                                self.strategy_instances[strategy_name] = strategy_class(config=self.config)
+                            except TypeError:
+                                # Fallback si no acepta config
+                                self.strategy_instances[strategy_name] = strategy_class()
                         logger.debug(f"✅ Estrategia {strategy_name} instanciada")
 
                     strategy = self.strategy_instances[strategy_name]
@@ -333,6 +417,22 @@ class CCXTLiveTradingOrchestrator:
             if signal in ['BUY', 'SELL'] and signal_data.get('current_signal') == signal:
                 logger.info(f"Abrir nueva posición {signal} para {symbol} - Estrategia: {strategy_name}")
 
+                # Verificar límites de posiciones antes de proceder
+                total_positions = len(self.active_positions)
+                max_positions = self.live_config.get('max_positions', 1)
+
+                if total_positions >= max_positions:
+                    logger.info(f"Límite total de posiciones alcanzado: {total_positions}/{max_positions}")
+                    return
+
+                # Contar posiciones para este símbolo específico
+                symbol_positions = sum(1 for pos in self.active_positions.values() if pos.get('symbol') == symbol)
+                max_positions_per_symbol = self.live_config.get('max_positions_per_symbol', 1)
+
+                if symbol_positions >= max_positions_per_symbol:
+                    logger.info(f"Límite de posiciones por símbolo alcanzado para {symbol}: {symbol_positions}/{max_positions_per_symbol}")
+                    return
+
                 # Extraer parámetros de risk management de la estrategia
                 order_type = OrderType.BUY if signal == 'BUY' else OrderType.SELL
 
@@ -353,11 +453,30 @@ class CCXTLiveTradingOrchestrator:
                 # Si hay posición abierta en dirección opuesta, cerrarla primero
                 if existing_position and existing_position['type'] != signal.lower():
                     logger.info(f"Cerrando posición opuesta para {symbol}")
-                    self.order_executor.close_position(existing_position['ticket'])
+                    close_success = self.order_executor.close_position(existing_position['ticket'])
+                    if close_success:
+                        # Remover la posición cerrada del diccionario active_positions
+                        del self.active_positions[existing_position['ticket']]
+                        logger.info(f"Posición opuesta cerrada y removida del seguimiento: {existing_position['ticket']}")
+                        # Reset existing_position para permitir apertura de nueva posición
+                        existing_position = None
+                    else:
+                        logger.error(f"No se pudo cerrar la posición opuesta: {existing_position['ticket']}")
+                        return  # No continuar si no se pudo cerrar la posición opuesta
+
+                # Si ya hay una posición abierta en la misma dirección, NO abrir nueva
+                elif existing_position and existing_position['type'] == signal.lower():
+                    logger.warning(f"Ya existe posición {signal} abierta para {symbol} (ticket: {existing_position['ticket']}). Ignorando nueva señal.")
+                    return  # No abrir nueva posición si ya hay una en la misma dirección
 
                 # Si no hay posición abierta, abrir nueva
                 if not existing_position:
-                    logger.info(f"Abrir nueva posición {signal} para {symbol} con risk management de estrategia")
+                    logger.info(f"🚀 APERTURA DE OPERACIÓN: {signal} {symbol} | Estrategia: {strategy_name}")
+                    logger.info(f"   💰 Precio entrada: ${entry_price:.2f} | Stop Loss: ${stop_loss_price:.2f} | Take Profit: ${take_profit_price:.2f}")
+                    logger.info(f"   📊 Riesgo por trade: {risk_per_trade:.1%} | Trailing Stop: {trailing_stop_pct:.1%}")
+
+                    # Calcular capital efectivo disponible para esta nueva posición
+                    effective_portfolio_value = self.get_effective_portfolio_value()
 
                     # Abrir posición con parámetros de risk management de la estrategia
                     position = self.order_executor.open_position(
@@ -367,7 +486,8 @@ class CCXTLiveTradingOrchestrator:
                         take_profit_price=take_profit_price,
                         trailing_stop_pct=trailing_stop_pct,
                         risk_per_trade=risk_per_trade,
-                        price=entry_price
+                        price=entry_price,
+                        portfolio_value=effective_portfolio_value
                     )
 
                     if position:
@@ -426,9 +546,10 @@ class CCXTLiveTradingOrchestrator:
                         position['highest_price'] = max(position.get('highest_price', current_price), current_price)
                         
                         self.active_positions[ticket] = position
-                        logger.info(f"🔼 Trailing stop actualizado para {ticket}: "
-                                  f"Stop {current_stop:.2f} → {new_stop_price:.2f} "
-                                  f"(Profit: {profit_amount:.2f}, {trailing_stop_pct:.0%})")
+                        logger.info(f"� TRAILING STOP ACTIVADO {ticket}")
+                        logger.info(f"   🔼 Stop Loss mejorado: ${current_stop:.2f} → ${new_stop_price:.2f}")
+                        logger.info(f"   💰 Ganancia protegida: ${profit_amount:.2f} ({trailing_stop_pct:.0%} del profit)")
+                        logger.info(f"   📊 Precio más alto alcanzado: ${position.get('highest_price', current_price):.2f}")
                         return True
                         
                 else:  # sell/short
@@ -442,9 +563,10 @@ class CCXTLiveTradingOrchestrator:
                         position['lowest_price'] = min(position.get('lowest_price', current_price), current_price)
                         
                         self.active_positions[ticket] = position
-                        logger.info(f"🔽 Trailing stop actualizado para {ticket}: "
-                                  f"Stop {current_stop:.2f} → {new_stop_price:.2f} "
-                                  f"(Profit: {profit_amount:.2f}, {trailing_stop_pct:.0%})")
+                        logger.info(f"� TRAILING STOP ACTIVADO {ticket}")
+                        logger.info(f"   🔽 Stop Loss mejorado: ${current_stop:.2f} → ${new_stop_price:.2f}")
+                        logger.info(f"   💰 Ganancia protegida: ${profit_amount:.2f} ({trailing_stop_pct:.0%} del profit)")
+                        logger.info(f"   📊 Precio más bajo alcanzado: ${position.get('lowest_price', current_price):.2f}")
                         return True
             
             return False
@@ -523,14 +645,28 @@ class CCXTLiveTradingOrchestrator:
             if self.order_executor.close_position(ticket):
                 position = self.active_positions[ticket]
                 pnl = position.get('pnl', 0)
-                self.live_metrics['total_pnl'] += pnl
-
+                exit_reason = close_info.get('reason', 'unknown')
+                
+                # Determinar emoji y mensaje según el resultado
                 if pnl > 0:
+                    result_emoji = "✅"
+                    result_msg = "GANANCIA"
                     self.live_metrics['winning_trades'] += 1
                 else:
+                    result_emoji = "❌"
+                    result_msg = "PÉRDIDA"
                     self.live_metrics['losing_trades'] += 1
 
-                position['exit_reason'] = close_info.get('reason', 'unknown')
+                # Log detallado del cierre
+                logger.info(f"🔒 CIERRE DE OPERACIÓN {result_emoji}")
+                logger.info(f"   🎯 Ticket: {ticket} | Símbolo: {position['symbol']} {position['type'].upper()}")
+                logger.info(f"   💰 Precio entrada: ${position['entry_price']:.2f} | Precio salida: ${position.get('current_price', 'N/A'):.2f}")
+                logger.info(f"   📊 P&L Final: {pnl:.6f} BTC (${pnl * position.get('current_price', position['entry_price']):.2f})")
+                logger.info(f"   📈 Razón de cierre: {exit_reason}")
+                logger.info(f"   ⏱️ Duración: {position.get('duration', 'N/A')}")
+
+                position['exit_reason'] = exit_reason
+                self.live_metrics['total_pnl'] += pnl
                 self.position_history.append(position)
                 del self.active_positions[ticket]
 
@@ -651,15 +787,18 @@ class CCXTLiveTradingOrchestrator:
                             # Obtener tamaño de la posición (puede ser 'size' o 'quantity')
                             position_size = position.get('size', position.get('quantity', 0))
                             
-                            # Calcular PnL actual
+                            # Calcular PnL actual CORRECTAMENTE
                             if position['type'] == 'buy':
                                 pnl_pct = (current_price / position['entry_price'] - 1) * 100
+                                # P&L en valor absoluto: (precio actual - precio entrada) * cantidad
+                                position['current_pnl'] = (current_price - position['entry_price']) * position_size
                             else:  # sell/short
                                 pnl_pct = (1 - current_price / position['entry_price']) * 100
+                                # P&L en valor absoluto: (precio entrada - precio actual) * cantidad
+                                position['current_pnl'] = (position['entry_price'] - current_price) * position_size
                                 
                             position['current_price'] = current_price
                             position['current_pnl_pct'] = pnl_pct
-                            position['current_pnl'] = position_size * pnl_pct / 100
                             position['last_updated'] = datetime.now().isoformat()
                             
                             # Obtener el riesgo aplicado a esta operación
@@ -677,8 +816,11 @@ class CCXTLiveTradingOrchestrator:
                             self.active_positions[ticket] = position
                             
                             # Registrar actualización en el log
-                            logger.info(f"Posición {ticket} actualizada: {symbol} {position['type']} - "
-                                       f"P&L: {position['current_pnl']:.2f} ({pnl_pct:.2f}%)")
+                            pnl_emoji = "📈" if position['current_pnl'] >= 0 else "📉"
+                            logger.info(f"📊 POSICIÓN ACTIVA {ticket}: {symbol} {position['type'].upper()}")
+                            logger.info(f"   {pnl_emoji} P&L: {position['current_pnl']:.6f} BTC (${position['current_pnl'] * current_price:.2f}) | {pnl_pct:+.2f}%")
+                            logger.info(f"   💰 Precio actual: ${current_price:.2f} | Entrada: ${position['entry_price']:.2f}")
+                            logger.info(f"   🛡️ Stop Loss: ${position['stop_loss']:.2f} | Take Profit: ${position.get('take_profit', 'N/A')}")
                 else:
                     # Caso de compatibilidad si updated_positions es un diccionario
                     for ticket, position in updated_positions.items():
@@ -689,15 +831,18 @@ class CCXTLiveTradingOrchestrator:
                             # Obtener tamaño de la posición (puede ser 'size' o 'quantity')
                             position_size = position.get('size', position.get('quantity', 0))
                             
-                            # Calcular PnL actual
+                            # Calcular PnL actual CORRECTAMENTE
                             if position['type'] == 'buy':
                                 pnl_pct = (current_price / position['entry_price'] - 1) * 100
+                                # P&L en valor absoluto: (precio actual - precio entrada) * cantidad
+                                position['current_pnl'] = (current_price - position['entry_price']) * position_size
                             else:  # sell/short
                                 pnl_pct = (1 - current_price / position['entry_price']) * 100
+                                # P&L en valor absoluto: (precio entrada - precio actual) * cantidad
+                                position['current_pnl'] = (position['entry_price'] - current_price) * position_size
                                 
                             position['current_price'] = current_price
                             position['current_pnl_pct'] = pnl_pct
-                            position['current_pnl'] = position_size * pnl_pct / 100
                             position['last_updated'] = datetime.now().isoformat()
                             
                             # Obtener el riesgo aplicado a esta operación
@@ -715,8 +860,11 @@ class CCXTLiveTradingOrchestrator:
                             self.active_positions[ticket] = position
                             
                             # Registrar actualización en el log
-                            logger.info(f"Posición {ticket} actualizada: {symbol} {position['type']} - "
-                                       f"P&L: {position['current_pnl']:.2f} ({pnl_pct:.2f}%)")
+                            pnl_emoji = "📈" if position['current_pnl'] >= 0 else "📉"
+                            logger.info(f"📊 POSICIÓN ACTIVA {ticket}: {symbol} {position['type'].upper()}")
+                            logger.info(f"   {pnl_emoji} P&L: {position['current_pnl']:.6f} BTC (${position['current_pnl'] * current_price:.2f}) | {pnl_pct:+.2f}%")
+                            logger.info(f"   💰 Precio actual: ${current_price:.2f} | Entrada: ${position['entry_price']:.2f}")
+                            logger.info(f"   🛡️ Stop Loss: ${position['stop_loss']:.2f} | Take Profit: ${position.get('take_profit', 'N/A')}")
                 
                 # Guardar el historial completo
                 self._save_position_updates()

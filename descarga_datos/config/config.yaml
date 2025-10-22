@@ -3,44 +3,41 @@ backtesting:
   commission: 0.1
   data_quality: null
   end_date: '2025-10-16'
-  initial_capital: 100
+  initial_capital: 231.67  # Capital real disponible en testnet
   optimized_parameters:
     BTC_USDT:
       atr_period: 17
-      cci_threshold: 100
+      cci_threshold: 90
       ema_trend_period: 50
       kelly_fraction: 0.1
+      liquidity_score_min: 5
       max_concurrent_trades: 1
       max_drawdown: 0.03
       max_portfolio_heat: 0.05
-      ml_threshold: 0.45
-      ml_threshold_max: 0.75
-      ml_threshold_min: 0.5
+      min_rr_ratio: 2.5
+      ml_threshold: 0.2
+      ml_threshold_max: 0.8
+      ml_threshold_min: 0.2
+      risk_per_trade: 0.02
       sar_acceleration: 0.04
       sar_maximum: 0.26
-      stoch_overbought: 75
-      stoch_oversold: 15
+      stoch_overbought: 70
+      stoch_oversold: 35
       stop_loss_atr_multiplier: 2.25
       take_profit_atr_multiplier: 3.75
       volume_ratio_min: 0.3
-    atr_period: 14
-    liquidity_score_min: 5
-    max_concurrent_trades: 3
-    min_rr_ratio: 2.5
-    ml_threshold_max: 0.8
-    ml_threshold_min: 0.45
-    risk_per_trade: 0.025
-    stop_loss_atr_multiplier: 1.2
-    take_profit_atr_multiplier: 2.5
   slippage: 0.05
   start_date: '2025-01-01'
   strategies:
-    HeikinNeuronalMLPruebas: true
-    UltraDetailedHeikinAshiML: false
+    HeikinNeuronalMLPruebas: false
+    UltraDetailedHeikinAshiML: true
   strategy_paths:
     HeikinNeuronalMLPruebas:
     - strategies.heikin_neuronal_ml_pruebas
     - HeikinNeuronalMLPruebasStrategy
+    UltraDetailedHeikinAshiML:
+    - strategies.ultra_detailed_heikin_ashi_ml_strategy
+    - UltraDetailedHeikinAshiMLStrategy
   symbol_selection:
     BTC/USDT: true
   symbols:
@@ -103,7 +100,7 @@ indicators:
     period: 14
 live_trading:
   account_type: DEMO
-  active_strategy: HeikinNeuronalMLPruebasStrategy
+  active_strategy: UltraDetailedHeikinAshiMLStrategy
   active_symbol: BTC/USDT
   apply_risk_management: true
   ccxt_exchange: binance
