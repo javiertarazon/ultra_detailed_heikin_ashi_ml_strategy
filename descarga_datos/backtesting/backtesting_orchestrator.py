@@ -279,8 +279,9 @@ async def run_full_backtesting_with_batches():
                         if requires_state:
                             # Cargar datos completos desde CSV para estrategias stateful
                             import pandas as pd
-                            csv_path = f"data/csv/{symbol.replace('/', '_')}_{timeframe_used}.csv"
-                            if os.path.exists(csv_path):
+                            from pathlib import Path
+                            csv_path = Path(__file__).parent.parent / "data" / "csv" / f"{symbol.replace('/', '_')}_{timeframe_used}.csv"
+                            if csv_path.exists():
                                 full_df = pd.read_csv(csv_path)
                                 full_df['timestamp'] = pd.to_datetime(full_df['timestamp'])
                                 full_df.set_index('timestamp', inplace=True)

@@ -24,6 +24,10 @@ class MarketDataValidator:
         Args:
             db_path: Ruta a la base de datos SQLite
         """
+        import os
+        # Normalizar ruta: si comienza con "data/", cambiar a descarga_datos/data/
+        if db_path.startswith("data/"):
+            db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), db_path)
         self.db_path = db_path
         self._init_audit_table()
     

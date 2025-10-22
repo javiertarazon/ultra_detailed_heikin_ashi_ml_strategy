@@ -756,10 +756,13 @@ class LiveTradingOrchestrator:
         """
         import json
         from datetime import datetime
+        from pathlib import Path
         
         if not filepath:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filepath = f"data/live_trading_results/live_results_{timestamp}.json"
+            results_dir = Path(__file__).parent.parent / "data" / "live_trading_results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            filepath = results_dir / f"live_results_{timestamp}.json"
         
         try:
             # Preparar resultados

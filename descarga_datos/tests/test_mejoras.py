@@ -81,8 +81,8 @@ def cargar_y_verificar_datos_backtest():
     csv_symbol = symbol.replace('/', '_')
     timeframe = config.backtesting.timeframe
     
-    # Buscar archivos de backtest (normalmente están en data/csv)
-    csv_path = Path(os.path.join(root_dir, "data", "csv"))
+    # Buscar archivos de backtest (normalmente están en descarga_datos/data/csv)
+    csv_path = Path(os.path.join(root_dir, "descarga_datos", "data", "csv"))
     backtest_file = None
     
     # Buscar el archivo de backtest correspondiente
@@ -119,7 +119,7 @@ def comparar_procesamiento_datos():
         return
     
     # Cargar archivo de backtest
-    csv_path = Path(os.path.join(root_dir, "data", "csv"))
+    csv_path = Path(os.path.join(root_dir, "descarga_datos", "data", "csv"))
     backtest_files = list(csv_path.glob("BTC_USDT_15m*.csv"))
     
     if not backtest_files:

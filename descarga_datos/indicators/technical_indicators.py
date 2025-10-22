@@ -597,7 +597,7 @@ class TechnicalIndicators:
         return normalized_df
 
     def save_normalized_indicators_to_csv(self, df: pd.DataFrame, exchange: str, symbol: str, timeframe: str, 
-                                        output_dir: str = "data/csv", method: str = "minmax") -> bool:
+                                        output_dir: str = None, method: str = "minmax") -> bool:
         """
         Save normalized indicators to CSV file.
         
@@ -613,6 +613,11 @@ class TechnicalIndicators:
             bool: True if successful, False otherwise
         """
         try:
+            # Default output directory if not provided
+            if output_dir is None:
+                from pathlib import Path
+                output_dir = str(Path(__file__).parent.parent / "data" / "csv")
+            
             # Calculate all indicators
             indicators_df = self.calculate_all_indicators(df)
             

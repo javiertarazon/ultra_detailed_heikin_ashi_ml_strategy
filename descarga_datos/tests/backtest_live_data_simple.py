@@ -36,7 +36,7 @@ def consolidate_live_data(symbol='BTC_USDT', timeframe='15m'):
     Returns:
         pd.DataFrame: DataFrame consolidado con todos los datos live
     """
-    live_data_path = Path(current_dir) / "data" / "live_data"
+    live_data_path = Path(current_dir).parent / "data" / "live_data"
     pattern = f"{symbol}_{timeframe}_*.csv"
     
     logger.info(f"Buscando archivos que coincidan con el patrón: {pattern}")

@@ -753,7 +753,7 @@ def check_data_status():
 
         # Verificar CSV
         print("\n📄 Verificando archivos CSV...")
-        csv_dir = Path("data/csv")
+        csv_dir = Path(__file__).parent / "data" / "csv"
         csv_available = {}
 
         if csv_dir.exists():

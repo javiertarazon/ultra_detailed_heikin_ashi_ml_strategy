@@ -1127,13 +1127,14 @@ class AdvancedDataDownloader:
             if timeframe not in ['1h', '4h']:
                 return None
 
-            csv_path = f"data/csv/{symbol.replace('/', '_')}_{timeframe}.csv"
+            from pathlib import Path
+            csv_path = Path(__file__).parent.parent / "data" / "csv" / f"{symbol.replace('/', '_')}_{timeframe}.csv"
 
-            if not os.path.exists(csv_path):
+            if not csv_path.exists():
                 return None
 
             self.logger.info(f"📄 CSV encontrado para {symbol}: {csv_path}")
-            df = pd.read_csv(csv_path)
+            df = pd.read_csv(str(csv_path))
 
             if df.empty:
                 return None

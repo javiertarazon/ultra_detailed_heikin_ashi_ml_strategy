@@ -40,7 +40,7 @@ def consolidar_datos_live(symbol='BTC_USDT', timeframe='15m'):
     Returns:
         DataFrame consolidado con los datos live
     """
-    live_data_path = Path(os.path.join(current_dir, "data", "live_data"))
+    live_data_path = Path(os.path.join(current_dir, "..", "data", "live_data"))
     pattern = f"{symbol}_{timeframe}_*.csv"
     
     logger.info(f"Buscando archivos que coincidan con: {pattern}")
@@ -178,7 +178,7 @@ def guardar_datos_procesados(df, symbol='BTC_USDT', timeframe='15m'):
         timeframe: Timeframe procesado
     """
     # Crear directorio si no existe
-    output_dir = Path(os.path.join(current_dir, "data", "live_data_with_indicators"))
+    output_dir = Path(os.path.join(current_dir, "..", "data", "live_data_with_indicators"))
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Generar nombre de archivo con timestamp

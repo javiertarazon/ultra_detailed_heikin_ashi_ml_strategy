@@ -904,7 +904,7 @@ class CCXTLiveTradingOrchestrator:
             
             # Guardar en archivo cada 5 actualizaciones para no sobrecargar el sistema
             if len(self.position_history) % 5 == 0:
-                history_dir = Path("data/live_data/position_monitoring")
+                history_dir = Path(__file__).parent.parent / "data" / "live_data" / "position_monitoring"
                 history_dir.mkdir(parents=True, exist_ok=True)
                 
                 filename = history_dir / f"positions_{datetime.now().strftime('%Y%m%d')}.json"
@@ -945,7 +945,7 @@ class CCXTLiveTradingOrchestrator:
         """
         try:
             # Crear directorio si no existe
-            results_dir = Path("data/live_trading_results")
+            results_dir = Path(__file__).parent.parent / "data" / "live_trading_results"
             results_dir.mkdir(parents=True, exist_ok=True)
 
             # Preparar datos para guardar
@@ -1001,7 +1001,7 @@ class CCXTLiveTradingOrchestrator:
             import os
             
             # Crear directorio si no existe
-            data_dir = Path("data/live_data_with_indicators")
+            data_dir = Path(__file__).parent.parent / "data" / "live_data_with_indicators"
             data_dir.mkdir(parents=True, exist_ok=True)
             
             # Crear nombre de archivo seguro

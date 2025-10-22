@@ -120,7 +120,7 @@ class StrategyOptimizer:
             logger.info("⚠️ SQLite vacío, intentando CSV...")
             symbol_clean = self.symbol.replace('/', '_')
             filename = f"{symbol_clean}_{self.timeframe}.csv"
-            csv_path = Path('data/csv') / filename
+            csv_path = Path(__file__).parent.parent / 'data' / 'csv' / filename
 
             if not csv_path.exists():
                 raise FileNotFoundError(f'Archivo CSV no encontrado: {csv_path}')

@@ -107,7 +107,7 @@ class MLTrainer:
 
         # CRÍTICO: Verificar si ya tenemos datos válidos antes de descargar
         symbol_clean = self.symbol.replace('/', '_')
-        csv_path = Path('data/csv') / f'{symbol_clean}_{self.timeframe}.csv'
+        csv_path = Path(__file__).parent.parent / 'data' / 'csv' / f'{symbol_clean}_{self.timeframe}.csv'
         if csv_path.exists():
             try:
                 # Verificar si los datos existentes cubren el período requerido
@@ -452,7 +452,7 @@ class MLTrainer:
         from pathlib import Path
         
         symbol_clean = self.symbol.replace('/', '_')
-        csv_path = Path('data/csv') / f'{symbol_clean}_{self.timeframe}.csv'
+        csv_path = Path(__file__).parent.parent / 'data' / 'csv' / f'{symbol_clean}_{self.timeframe}.csv'
         
         if not csv_path.exists():
             logger.warning(f'No se encontró archivo CSV local: {csv_path}')

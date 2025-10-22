@@ -26,6 +26,9 @@ class DataStorage(BaseDataHandler):
     
     def __init__(self, db_path: str = "data/data.db"):
         super().__init__()
+        # Normalizar ruta: si comienza con "data/", cambiar a descarga_datos/data/
+        if db_path.startswith("data/"):
+            db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), db_path)
         self.db_path = db_path
         self._ensure_db_path()
         # Compatibilidad: algunas llamadas antiguas referencian self.logger
