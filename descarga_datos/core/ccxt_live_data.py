@@ -90,7 +90,7 @@ class CCXTLiveDataProvider:
     def _initialize_exchange(self):
         """Inicializa la conexión con el exchange CCXT"""
         try:
-            exchange_config = self.config.get(self.exchange_name, {})
+            exchange_config = self.config.get('exchanges', {}).get(self.exchange_name, {})
             if not exchange_config.get('enabled', False):
                 self.logger.warning(f"Exchange {self.exchange_name} no está habilitado en configuración")
                 return False
@@ -269,7 +269,7 @@ class CCXTLiveDataProvider:
                             
                             config = load_config_from_yaml()
                             indicators = TechnicalIndicators(config)
-                            df = indicators.calculate_all_indicators_unified(df)
+                            df = indicators.calculate_all_indicators(df)
                             self.logger.info(f"✅ Indicadores técnicos calculados para datos agrupados {symbol} {timeframe}")
                         except Exception as ind_error:
                             self.logger.error(f"Error calculando indicadores para datos agrupados {symbol} {timeframe}: {ind_error}")
@@ -302,7 +302,11 @@ class CCXTLiveDataProvider:
                             
                             config = load_config_from_yaml()
                             indicators = TechnicalIndicators(config)
-                            df = indicators.calculate_all_indicators_unified(df)
+                            df = indicators.calculate_all_indicators(df)
+                            
+                            # Aplicar normalización consistente con backtest
+                            df = self._normalize_and_scale(df)
+                            
                             self.logger.info(f"✅ Indicadores técnicos calculados para datos agrupados respaldo {symbol} {timeframe}")
                         except Exception as ind_error:
                             self.logger.error(f"Error calculando indicadores para datos agrupados respaldo {symbol} {timeframe}: {ind_error}")
@@ -339,8 +343,12 @@ class CCXTLiveDataProvider:
                     
                     config = load_config_from_yaml()
                     indicators = TechnicalIndicators(config)
-                    df = indicators.calculate_all_indicators_unified(df)
-                    self.logger.info(f"✅ Indicadores técnicos calculados para {symbol} {timeframe}")
+                    df = indicators.calculate_all_indicators(df)
+                    
+                    # Aplicar normalización consistente con backtest
+                    df = self._normalize_and_scale(df)
+                    
+                    self.logger.info(f"✅ Indicadores técnicos calculados para datos agrupados {symbol} {timeframe}")
                 except Exception as ind_error:
                     self.logger.error(f"Error calculando indicadores para {symbol} {timeframe}: {ind_error}")
 
@@ -359,6 +367,39 @@ class CCXTLiveDataProvider:
         except Exception as e:
             self.logger.error(f"Error obteniendo datos históricos para {symbol} {timeframe}: {e}")
             return None
+
+    def _normalize_and_scale(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normaliza y escala los datos de forma consistente con backtest"""
+        try:
+            # Columnas que NO deben ser normalizadas (valores absolutos para estrategias)
+            exclude_cols = [
+                'open', 'high', 'low', 'close', 'volume',  # Precios y volumen
+                'atr', 'adx', 'sar', 'rsi', 'macd', 'macd_signal',  # Indicadores técnicos
+                'bb_upper', 'bb_lower',  # Bandas de Bollinger
+                'ema_10', 'ema_20', 'ema_200'  # EMAs necesarias para estrategias
+            ]
+
+            # Identificar columnas numéricas (excluir timestamp y columnas excluidas)
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_cols = [col for col in numeric_cols if col not in exclude_cols and col != 'timestamp']
+
+            if not numeric_cols:
+                return df
+
+            # Normalizar solo columnas que no afectan las estrategias
+            df_normalized = df.copy()
+            for col in numeric_cols:
+                # Min-Max scaling solo para columnas permitidas
+                min_val = df[col].min()
+                max_val = df[col].max()
+                if max_val > min_val:
+                    df_normalized[col] = (df[col] - min_val) / (max_val - min_val)
+
+            return df_normalized
+
+        except Exception as e:
+            self.logger.error(f"Error en normalización: {e}")
+            return df
 
     def get_current_price(self, symbol: str) -> Optional[Dict[str, float]]:
         """

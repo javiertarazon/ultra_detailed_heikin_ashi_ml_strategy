@@ -72,20 +72,20 @@ class StrategyOptimizer:
         self.config = config if config is not None else load_config_from_yaml()
         self.data = None
         
-        # Targets de optimización configurables
+        # Targets de optimización configurables - OBJETIVOS ESPECÍFICOS: ROI +5% y WIN_RATE > 80%
         self.optimization_targets = optimization_targets or {
-            'maximize': ['total_pnl', 'win_rate', 'profit_factor', 'sharpe_ratio'],
+            'maximize': ['total_pnl', 'win_rate', 'pnl_return'],
             'minimize': ['max_drawdown'],
             'constraints': {
-                'min_trades': 20,
-                'max_drawdown_limit': 0.15,
-                'max_pnl_limit': 20647.89,  # 50% menos del P&L actual de $41,295.77
-                'min_win_rate': 0.55
+                'min_trades': 50,  # Más trades para mayor robustez
+                'max_drawdown_limit': 0.08,  # Máximo 8% drawdown
+                'min_win_rate': 0.80,  # WIN_RATE > 80% (objetivo principal)
+                'min_pnl_return': 352.79  # ROI +5% sobre baseline (335.99% + 5%)
             }
         }
         
         # Carpeta para guardar resultados
-        self.results_dir = Path("descarga_datos/data/optimization_results")
+        self.results_dir = Path(__file__).parent.parent / "data" / "optimization_results"
         self.results_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Inicializando optimización para {symbol} en {timeframe}")

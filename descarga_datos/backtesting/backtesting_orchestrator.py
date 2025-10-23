@@ -83,7 +83,7 @@ def load_strategies_from_config(config):
                     # Instanciar estrategia con configuración
                     try:
                         # Intentar instanciar con config para estrategias que lo soportan
-                        strategy_instance = strategy_class(config=config)
+                        strategy_instance = strategy_class(config=config, initial_balance=config.backtesting.initial_capital)
                     except TypeError:
                         # Fallback para estrategias que no aceptan config
                         strategy_instance = strategy_class()

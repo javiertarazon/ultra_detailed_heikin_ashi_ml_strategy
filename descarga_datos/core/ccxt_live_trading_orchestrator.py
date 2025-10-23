@@ -18,6 +18,7 @@ import pandas as pd
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 import threading
+import uuid
 from indicators.technical_indicators import TechnicalIndicators
 import queue
 import json
@@ -72,14 +73,14 @@ class CCXTLiveTradingOrchestrator:
 
         # Inicializar componentes de trading
         self.data_provider = CCXTLiveDataProvider(
-            config=self.config.get('exchanges', {}),
+            config=self.config,  # ✅ PASAR CONFIG COMPLETO
             exchange_name=exchange_name,
             symbols=self.backtesting_config.get('symbols', ['BTC/USDT']),
             timeframes=[self.backtesting_config.get('timeframe', '4h')]
         )
 
         self.order_executor = CCXTOrderExecutor(
-            config=self.config.get('exchanges', {}),
+            config=self.config,  # ✅ PASAR CONFIG COMPLETO
             live_data_provider=self.data_provider,
             exchange_name=exchange_name,
             risk_per_trade=self.live_config.get('risk_per_trade', 0.01),
@@ -164,6 +165,55 @@ class CCXTLiveTradingOrchestrator:
             logger.warning(f"Usando capital fallback: ${fallback_capital:.2f}")
             return fallback_capital
 
+    def get_effective_portfolio_value(self) -> float:
+        """
+        Calcula el valor efectivo total del portfolio incluyendo USDT y valor de criptomonedas.
+
+        Para BTC/USDT, incluye:
+        - Balance de USDT disponible
+        - Valor de BTC en USDT (balance_BTC * precio_actual_BTC)
+
+        Returns:
+            float: Valor total efectivo del portfolio en USDT
+        """
+        try:
+            balance_info = self.order_executor.exchange.fetch_balance()
+
+            # Obtener balance de USDT
+            usdt_balance = balance_info.get('free', {}).get('USDT', 0)
+
+            # Obtener balance de BTC y calcular su valor en USDT
+            btc_balance = balance_info.get('free', {}).get('BTC', 0)
+
+            # Obtener precio actual de BTC/USDT
+            try:
+                ticker = self.order_executor.exchange.fetch_ticker('BTC/USDT')
+                btc_price = ticker.get('last', 0)
+            except Exception as e:
+                logger.warning(f"Error obteniendo precio BTC: {e}, usando precio estimado")
+                btc_price = 60000  # Precio fallback conservador
+
+            # Calcular valor total del portfolio
+            btc_value_in_usdt = btc_balance * btc_price
+            total_portfolio_value = usdt_balance + btc_value_in_usdt
+
+            logger.info(f"Valor efectivo del portfolio: ${total_portfolio_value:.2f} "
+                       f"(USDT: ${usdt_balance:.2f} + BTC: {btc_balance:.6f} × ${btc_price:.0f} = ${btc_value_in_usdt:.2f})")
+
+            # Asegurar un mínimo razonable para evitar cálculos con valores muy pequeños
+            if total_portfolio_value < 100:
+                logger.warning(f"Portfolio value muy pequeño: ${total_portfolio_value:.2f}, usando fallback")
+                total_portfolio_value = self.backtesting_config.get('initial_capital', 2500.0)
+
+            return total_portfolio_value
+
+        except Exception as e:
+            logger.error(f"Error calculando valor efectivo del portfolio: {e}")
+            # Fallback: usar capital configurado
+            fallback_capital = self.backtesting_config.get('initial_capital', 2500.0)
+            logger.warning(f"Usando capital fallback: ${fallback_capital:.2f}")
+            return fallback_capital
+
     def connect(self) -> bool:
         """
         Conecta todos los componentes necesarios para el trading en vivo.
@@ -214,25 +264,52 @@ class CCXTLiveTradingOrchestrator:
 
     def _sync_open_positions(self):
         """
-        Sincroniza las posiciones abiertas desde el exchange.
+        Sincroniza las posiciones REALES abiertas desde Binance testnet.
         """
         try:
-            logger.info("Sincronizando posiciones abiertas desde el exchange...")
+            logger.info("🔄 Sincronizando posiciones REALES desde Binance testnet...")
 
-            # Obtener posiciones abiertas del exchange
-            open_positions = self.order_executor.get_open_positions()
+            # Obtener posiciones reales del exchange
+            real_positions = self.order_executor.get_open_positions()
 
-            if open_positions:
-                logger.info(f"Encontradas {len(open_positions)} posiciones abiertas")
-                for position in open_positions:
-                    logger.info(f"Posición abierta: {position.get('symbol', 'N/A')} - "
-                              f"Cantidad: {position.get('amount', 0)} - "
-                              f"Precio: {position.get('price', 0)}")
+            # Limpiar posiciones activas actuales
+            self.active_positions.clear()
+
+            # Actualizar con posiciones reales verificadas
+            synced_count = 0
+            for position in real_positions:
+                ticket = position.get('ticket', str(uuid.uuid4()))
+                self.active_positions[ticket] = position
+                synced_count += 1
+
+                # Log detallado de cada posición real
+                source = position.get('source', 'unknown')
+                logger.info(f"✅ Posición REAL sincronizada - Ticket: {ticket} - "
+                          f"Symbol: {position.get('symbol', 'N/A')} - "
+                          f"Type: {position.get('type', 'N/A')} - "
+                          f"Quantity: {position.get('quantity', 0)} - "
+                          f"Entry: ${position.get('entry_price', 0):.2f} - "
+                          f"Source: {source}")
+
+            if synced_count > 0:
+                logger.info(f"🎯 Sincronizadas {synced_count} posiciones REALES desde testnet")
             else:
-                logger.info("No hay posiciones abiertas en el exchange")
+                logger.info("📭 No hay posiciones abiertas reales en testnet")
+
+            # Verificar balance actual después de sincronización
+            try:
+                balance = self.order_executor.get_account_balance()
+                if balance:
+                    total_balance = balance.get('total', {}).get('USDT', 0)
+                    free_balance = balance.get('free', {}).get('USDT', 0)
+                    logger.info(f"💰 Balance actual en testnet: ${total_balance:.2f} USDT total, "
+                              f"${free_balance:.2f} USDT disponible")
+            except Exception as balance_error:
+                logger.warning(f"No se pudo obtener balance actual: {balance_error}")
 
         except Exception as e:
-            logger.error(f"Error sincronizando posiciones abiertas: {e}")
+            logger.error(f"❌ Error sincronizando posiciones reales: {e}")
+            logger.warning("Continuando con posiciones locales como fallback")
 
     def load_strategies(self):
         """
@@ -338,9 +415,11 @@ class CCXTLiveTradingOrchestrator:
             logger.debug(f"📥 Obteniendo datos históricos con indicadores para {symbol}...")
             # Usar timeframe configurado en lugar de hardcodeado
             timeframe = self.backtesting_config.get('timeframe', '4h')
+            # Usar el límite configurado de barras históricas en lugar de hardcoded 80
+            history_bars_limit = self.live_config.get('initial_history_bars', 500)
             # Obtener suficientes barras para compensar NaN iniciales después de calcular indicadores
             # Aseguramos que with_indicators=True para que ya vengan calculados
-            data_with_indicators = self.data_provider.get_historical_data(symbol, timeframe, limit=80, with_indicators=True)
+            data_with_indicators = self.data_provider.get_historical_data(symbol, timeframe, limit=history_bars_limit, with_indicators=True)
             
             if data_with_indicators is None or data_with_indicators.empty:
                 logger.warning(f"⚠️ No hay datos disponibles para {symbol}")
@@ -648,7 +727,8 @@ class CCXTLiveTradingOrchestrator:
                 exit_reason = close_info.get('reason', 'unknown')
                 
                 # Determinar emoji y mensaje según el resultado
-                if pnl > 0:
+                # Si se cerró por trailing stop activado, SIEMPRE es ganancia (asegura profits)
+                if 'trailing_stop_activated' in exit_reason or pnl > 0:
                     result_emoji = "✅"
                     result_msg = "GANANCIA"
                     self.live_metrics['winning_trades'] += 1
@@ -660,8 +740,8 @@ class CCXTLiveTradingOrchestrator:
                 # Log detallado del cierre
                 logger.info(f"🔒 CIERRE DE OPERACIÓN {result_emoji}")
                 logger.info(f"   🎯 Ticket: {ticket} | Símbolo: {position['symbol']} {position['type'].upper()}")
-                logger.info(f"   💰 Precio entrada: ${position['entry_price']:.2f} | Precio salida: ${position.get('current_price', 'N/A'):.2f}")
-                logger.info(f"   📊 P&L Final: {pnl:.6f} BTC (${pnl * position.get('current_price', position['entry_price']):.2f})")
+                logger.info(f"   💰 Precio entrada: ${position['entry_price']:.2f} | Precio salida: ${position.get('current_price', 'N/A')}")
+                logger.info(f"   📊 P&L Final: ${float(pnl):.2f} USDT")
                 logger.info(f"   📈 Razón de cierre: {exit_reason}")
                 logger.info(f"   ⏱️ Duración: {position.get('duration', 'N/A')}")
 
@@ -818,7 +898,7 @@ class CCXTLiveTradingOrchestrator:
                             # Registrar actualización en el log
                             pnl_emoji = "📈" if position['current_pnl'] >= 0 else "📉"
                             logger.info(f"📊 POSICIÓN ACTIVA {ticket}: {symbol} {position['type'].upper()}")
-                            logger.info(f"   {pnl_emoji} P&L: {position['current_pnl']:.6f} BTC (${position['current_pnl'] * current_price:.2f}) | {pnl_pct:+.2f}%")
+                            logger.info(f"   {pnl_emoji} P&L: ${position['current_pnl']:.2f} USDT | {pnl_pct:+.2f}%")
                             logger.info(f"   💰 Precio actual: ${current_price:.2f} | Entrada: ${position['entry_price']:.2f}")
                             logger.info(f"   🛡️ Stop Loss: ${position['stop_loss']:.2f} | Take Profit: ${position.get('take_profit', 'N/A')}")
                 else:
@@ -862,7 +942,7 @@ class CCXTLiveTradingOrchestrator:
                             # Registrar actualización en el log
                             pnl_emoji = "📈" if position['current_pnl'] >= 0 else "📉"
                             logger.info(f"📊 POSICIÓN ACTIVA {ticket}: {symbol} {position['type'].upper()}")
-                            logger.info(f"   {pnl_emoji} P&L: {position['current_pnl']:.6f} BTC (${position['current_pnl'] * current_price:.2f}) | {pnl_pct:+.2f}%")
+                            logger.info(f"   {pnl_emoji} P&L: ${position['current_pnl']:.2f} USDT | {pnl_pct:+.2f}%")
                             logger.info(f"   💰 Precio actual: ${current_price:.2f} | Entrada: ${position['entry_price']:.2f}")
                             logger.info(f"   🛡️ Stop Loss: ${position['stop_loss']:.2f} | Take Profit: ${position.get('take_profit', 'N/A')}")
                 

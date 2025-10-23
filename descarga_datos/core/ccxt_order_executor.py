@@ -106,7 +106,7 @@ class CCXTOrderExecutor:
     def _initialize_exchange(self):
         """Inicializa la conexión con el exchange CCXT"""
         try:
-            exchange_config = self.config.get(self.exchange_name, {})
+            exchange_config = self.config.get('exchanges', {}).get(self.exchange_name, {})
             # Intentar cargar .env local si está presente (fallback seguro)
             try:
                 from dotenv import load_dotenv
@@ -538,25 +538,42 @@ class CCXTOrderExecutor:
             # Ejecutar orden
             order = self.exchange.create_order(**order_params)
 
+            # ✅ VERIFICAR EJECUCIÓN REAL EN BINANCE TESTNET
+            order_verification = self.verify_order_execution(order['id'], symbol)
+
+            if order_verification['execution_status'] not in ['filled', 'pending']:
+                self.logger.error(f"Orden {order['id']} no se ejecutó correctamente: {order_verification}")
+                # Intentar cancelar la orden si está pendiente
+                try:
+                    self.exchange.cancel_order(order['id'], symbol)
+                    self.logger.info(f"Orden {order['id']} cancelada por verificación fallida")
+                except Exception as cancel_error:
+                    self.logger.warning(f"No se pudo cancelar orden {order['id']}: {cancel_error}")
+                return None
+
             # Crear registro de posición con información completa de risk management
             position_info = {
-                'ticket': str(uuid.uuid4()),
+                'ticket': str(order['id']),  # ✅ USAR ID REAL DE BINANCE
                 'order_id': order['id'],
                 'symbol': symbol,
                 'type': order_type.value,
                 'quantity': quantity,
                 'size': quantity,  # Alias para compatibilidad
-                'entry_price': order.get('price', price),
+                'entry_price': order.get('price', price) or order_verification.get('price', price),
                 'stop_loss': stop_loss_price,
                 'take_profit': take_profit_price,
                 'trailing_stop_pct': trailing_stop_pct,
                 'risk_per_trade': risk_per_trade or self.risk_per_trade,
                 'open_time': datetime.now(),
-                'status': 'open'
+                'status': 'open',
+                'verified_execution': True,  # ✅ CONFIRMA EJECUCIÓN REAL
+                'execution_details': order_verification
             }
 
             self.open_positions[position_info['ticket']] = position_info
-            self.logger.info(f"Posición abierta con risk management: {position_info}")
+            self.logger.info(f"✅ Posición REAL abierta en testnet - Ticket: {order['id']} - "
+                           f"Verificada: {order_verification['execution_status']} - "
+                           f"Filled: {order_verification.get('filled', 0)}/{order_verification.get('amount', 0)}")
 
             return position_info
 
@@ -637,12 +654,132 @@ class CCXTOrderExecutor:
 
     def get_open_positions(self) -> List[Dict[str, Any]]:
         """
-        Obtiene todas las posiciones abiertas.
+        Obtiene posiciones REALES abiertas desde Binance testnet.
 
         Returns:
-            List: Lista de posiciones abiertas
+            List: Lista de posiciones abiertas reales en el exchange
         """
-        return list(self.open_positions.values())
+        if not self.is_connected():
+            self.logger.warning("Exchange no conectado, usando posiciones locales")
+            return list(self.open_positions.values())
+
+        try:
+            positions = []
+
+            # Obtener órdenes abiertas reales desde el exchange
+            # Especificar símbolos para evitar límites de rate estrictos
+            symbols_to_check = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']  # Símbolos comunes
+
+            for symbol in symbols_to_check:
+                try:
+                    open_orders = self.exchange.fetch_open_orders(symbol)
+                    for order in open_orders:
+                        if order['status'] in ['open', 'partially_filled']:
+                            # Convertir orden a formato de posición
+                            position = {
+                                'ticket': str(order['id']),  # ID real de Binance
+                                'symbol': order['symbol'],
+                                'type': order['side'],  # 'buy' o 'sell'
+                                'quantity': float(order['amount']),
+                                'entry_price': float(order['price']) if order['price'] else 0.0,
+                                'status': 'open',
+                                'timestamp': order.get('timestamp', 0),
+                                'filled': float(order.get('filled', 0)),
+                                'remaining': float(order.get('remaining', order['amount'])),
+                                'source': 'exchange'  # Indica que viene del exchange real
+                            }
+                            positions.append(position)
+                except Exception as e:
+                    self.logger.debug(f"Error obteniendo órdenes para {symbol}: {e}")
+                    continue
+
+            # Para futuros/perpetual swaps si están disponibles
+            try:
+                futures_positions = self.exchange.fetch_positions()
+                for pos in futures_positions:
+                    if abs(float(pos.get('contracts', 0))) > 0:
+                        position = {
+                            'ticket': f"futures_{pos['symbol'].replace('/', '_')}",
+                            'symbol': pos['symbol'],
+                            'type': 'long' if float(pos.get('contracts', 0)) > 0 else 'short',
+                            'quantity': abs(float(pos.get('contracts', 0))),
+                            'entry_price': float(pos.get('entryPrice', 0)),
+                            'status': 'open',
+                            'pnl': float(pos.get('unrealizedPnl', 0)),
+                            'source': 'futures'
+                        }
+                        positions.append(position)
+            except Exception as e:
+                # Futures no disponible o error, continuar
+                self.logger.debug(f"Futures positions no disponibles: {e}")
+
+            self.logger.info(f"Obtenidas {len(positions)} posiciones reales desde testnet")
+            return positions
+
+        except Exception as e:
+            self.logger.error(f"Error obteniendo posiciones reales desde exchange: {e}")
+            self.logger.warning("Usando posiciones locales como fallback")
+            # Fallback: devolver posiciones locales pero marcar como simuladas
+            local_positions = list(self.open_positions.values())
+            for pos in local_positions:
+                pos['source'] = 'local_fallback'
+            return local_positions
+
+    def verify_order_execution(self, order_id: str, symbol: str) -> Dict[str, Any]:
+        """
+        Verifica el estado real de una orden en Binance testnet.
+
+        Args:
+            order_id: ID de la orden a verificar
+            symbol: Símbolo del par de trading (ej: 'BTC/USDT')
+
+        Returns:
+            Dict con información del estado de la orden
+        """
+        if not self.is_connected():
+            return {'status': 'unknown', 'error': 'exchange_not_connected'}
+
+        try:
+            order = self.exchange.fetch_order(order_id, symbol)
+
+            result = {
+                'order_id': order_id,
+                'status': order.get('status', 'unknown'),
+                'symbol': order.get('symbol', ''),
+                'side': order.get('side', ''),
+                'amount': float(order.get('amount', 0)),
+                'filled': float(order.get('filled', 0)),
+                'remaining': float(order.get('remaining', 0)),
+                'price': float(order.get('price', 0)) if order.get('price') else None,
+                'cost': float(order.get('cost', 0)) if order.get('cost') else None,
+                'fee': order.get('fee', {}),
+                'timestamp': order.get('timestamp', 0),
+                'verified_at': datetime.now().isoformat()
+            }
+
+            # Determinar si la orden se ejecutó completamente
+            if result['status'] == 'closed' and result['filled'] > 0:
+                result['execution_status'] = 'filled'
+            elif result['status'] == 'open':
+                result['execution_status'] = 'pending'
+            elif result['status'] == 'canceled':
+                result['execution_status'] = 'cancelled'
+            else:
+                result['execution_status'] = 'unknown'
+
+            self.logger.info(f"Orden {order_id} verificada: {result['execution_status']} - "
+                           f"Filled: {result['filled']}/{result['amount']}")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error verificando orden {order_id}: {e}")
+            return {
+                'order_id': order_id,
+                'status': 'error',
+                'error': str(e),
+                'verified_at': datetime.now().isoformat()
+            }
 
     def get_account_balance(self) -> Optional[Dict]:
         """

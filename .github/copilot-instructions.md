@@ -43,6 +43,76 @@ This is a modular trading system with centralized entry via `descarga_datos/main
 - **Data Verification Flow**: When executing any main function requiring historical data (backtest, optimization, data download, data audit, model training), first verify if data exists in the SQLite database. If present, use those data. If not, proceed to download with corresponding modules, process, verify, calculate necessary indicators, and execute the corresponding main function.
 - **Data Priority**: SQLite primary → CSV fallback → auto-download. Never skip verification steps.
 
+## Directory Structure Policy - STRICT ENFORCEMENT
+
+### **🚨 DUPLICATE DIRECTORIES PROHIBITED**
+**Critical Policy**: Duplicate directory structures are strictly forbidden and will be immediately corrected.
+
+#### **📁 CORRECT STRUCTURE (MANDATORY):**
+```
+botcopilot-sar/
+├── descarga_datos/           ✅ ONLY ALLOWED LOCATION
+│   ├── data/                 ✅ CENTRALIZED DATA STORAGE
+│   │   ├── csv/              ✅ CSV files
+│   │   ├── dashboard_results/ ✅ Backtest results
+│   │   ├── optimization_pipeline/ ✅ Optimization data
+│   │   ├── optimization_results/ ✅ Strategy optimization
+│   │   └── [other data folders]
+│   └── [other descarga_datos folders]
+└── [root level files only]
+```
+
+#### **❌ FORBIDDEN STRUCTURES (NEVER CREATE):**
+```
+❌ descarga_datos/descarga_datos/data/  ← DUPLICATE - ELIMINATE IMMEDIATELY
+❌ data/ (at root level)               ← DUPLICATE - ELIMINATE IMMEDIATELY  
+❌ logs/ (at root level)               ← DUPLICATE - ELIMINATE IMMEDIATELY
+❌ descarga_datos/data/descarga_datos/ ← NESTED DUPLICATE - FIX ROUTES
+```
+
+### **🔧 CORRECTIONS IMPLEMENTED - v4.5**
+
+#### **Fixed Path Issues:**
+1. **Configuration Files**: Changed `path: data` → `path: descarga_datos/data` in all YAML configs
+2. **Default Parameters**: Updated default paths in storage classes and indicators
+3. **Optimization Scripts**: Fixed relative paths in `run_optimization_pipeline2.py` and `strategy_optimizer.py`
+4. **Environment Files**: Corrected database URLs in `.env` files
+
+#### **Code Corrections Applied:**
+```python
+# ❌ BEFORE (Created duplicates)
+results_dir = Path("descarga_datos/data/optimization_pipeline")
+
+# ✅ AFTER (Correct relative paths)  
+results_dir = Path(__file__).parent.parent / "data" / "optimization_pipeline"
+```
+
+#### **Files Corrected:**
+- `descarga_datos/config/config.yaml`
+- `descarga_datos/config/*.yaml` (all backups)
+- `descarga_datos/utils/storage.py`
+- `descarga_datos/utils/market_data_validator.py` 
+- `descarga_datos/indicators/technical_indicators.py`
+- `descarga_datos/.env.example*`
+- `descarga_datos/optimizacion/run_optimization_pipeline2.py`
+- `descarga_datos/optimizacion/strategy_optimizer.py`
+
+### **🛡️ PREVENTION MEASURES**
+- **Path Validation**: All paths must be relative to script location using `Path(__file__).parent.parent`
+- **Configuration Audit**: YAML configs must use `descarga_datos/data` prefix
+- **Code Review**: Any hardcoded "data/" paths trigger immediate correction
+- **Testing**: Directory structure validation in CI/CD pipeline
+
+### **🚨 IMMEDIATE ACTION REQUIRED**
+If duplicate directories are detected:
+1. **STOP ALL OPERATIONS**
+2. **Move data** to correct location (`descarga_datos/data/`)
+3. **Delete duplicates** 
+4. **Fix code paths** causing the duplication
+5. **Test thoroughly** before resuming operations
+
+**Violation Severity**: HIGH - Duplicate directories corrupt data integrity and system stability.
+
 ## Error Prevention Rules
 - **Avoid SQL Metadata Errors**: Ensure correct column count in INSERT statements (e.g., 9 values for 9 columns in data_metadata). Reference `utils/storage.py` fixes.
 - **Handle KeyboardInterrupt Gracefully**: Implement try/except/finally blocks for shutdown, always launch dashboard if results exist.

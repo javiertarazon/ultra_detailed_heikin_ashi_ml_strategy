@@ -47,7 +47,7 @@ class OptimizationPipeline:
                  val_end="2023-12-31",
                  opt_start="2022-01-01",
                  opt_end="2023-12-31",
-                 n_trials=50):
+                 n_trials=300):
         """
         Inicializa el pipeline de optimización completo.
 
@@ -412,7 +412,7 @@ class OptimizationPipeline:
             results (dict): Resultados a guardar
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_dir = Path("descarga_datos/data/optimization_pipeline")
+        results_dir = Path(__file__).parent.parent / "data" / "optimization_pipeline"
         results_dir.mkdir(parents=True, exist_ok=True)
 
         results_file = results_dir / f"pipeline_complete_{timestamp}.json"
@@ -462,7 +462,7 @@ class OptimizationPipeline:
 
         # Guardar resultados del test
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_dir = Path("descarga_datos/data/optimization_pipeline")
+        results_dir = Path(__file__).parent.parent / "data" / "optimization_pipeline"
         results_dir.mkdir(parents=True, exist_ok=True)
 
         test_file = results_dir / f"quick_test_{timestamp}.json"

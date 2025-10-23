@@ -48,6 +48,7 @@ except ImportError:
 # Importar utilidades usando paths absolutos
 from utils.logger import setup_logger
 from utils.retry_manager import retry_operation
+from risk_management.risk_management import apply_risk_management
 
 
 # Enums para órdenes
@@ -434,217 +435,91 @@ class MT5OrderExecutor:
             self.logger.warning(f"Error calculando slippage para {symbol}: {e}")
             return 0.0
 
-    def open_position(
-        self,
-        symbol: str,
-        order_type: OrderType,
-        volume: float,
-        price: float = 0.0,
-        sl: float = 0.0,
-        tp: float = 0.0,
-        comment: str = "",
-        magic: int = 0,
-    ) -> None:
+    def open_position(self, symbol: str, order_type: OrderType, quantity: float = None,
+                     stop_loss_price: float = None, take_profit_price: float = None,
+                     trailing_stop_pct: float = None, risk_per_trade: float = None,
+                     price: float = None, portfolio_value: float = None) -> Optional[Dict[str, Any]]:
         """
-        Abre una nueva posición en el mercado.
+        Abre una nueva posición usando parámetros de risk management proporcionados por la estrategia.
 
         Args:
-            symbol: Símbolo a operar
-            order_type: Tipo de orden (BUY, SELL)
-            volume: Volumen en lotes
-            price: Precio (0 para mercado)
-            sl: Stop Loss (0 para desactivar)
-            tp: Take Profit (0 para desactivar)
-            comment: Comentario para la orden
-            magic: Número mágico para identificar la orden
+            symbol: Símbolo del par
+            order_type: Tipo de orden (BUY/SELL)
+            quantity: Cantidad a operar (opcional, se calcula por riesgo si no se proporciona)
+            stop_loss_price: Precio exacto de stop loss (proporcionado por estrategia)
+            take_profit_price: Precio exacto de take profit (proporcionado por estrategia)
+            trailing_stop_pct: Porcentaje para trailing stop (proporcionado por estrategia)
+            risk_per_trade: Porcentaje de riesgo por trade (proporcionado por estrategia)
+            price: Precio límite (para órdenes limit)
+            portfolio_value: Valor total del portfolio para cálculo consistente con backtest
 
-        Raises:
-            OrderExecutionError: Si la orden no puede ser ejecutada
+        Returns:
+            Dict con información de la orden o None si hay error
         """
-        if not self.ensure_connection():
-            raise OrderExecutionError(
-                message="No hay conexión con MT5",
-                error_code=-2,
-                symbol=symbol,
-                order_type=order_type.name,
-                volume=volume,
-                price=price,
-            )
-
-        # Verificar gaps de mercado antes de abrir posición
-        has_gap, gap_message = self._check_market_gaps(symbol)
-        if has_gap:
-            self.logger.warning(f"🚫 Orden rechazada para {symbol}: {gap_message}")
-            raise OrderExecutionError(
-                message=f"Gap de mercado detectado: {gap_message}",
-                error_code=-3,
-                symbol=symbol,
-                order_type=order_type.name,
-                volume=volume,
-                price=price,
-            )
+        if not self.is_connected():
+            self.logger.error("No conectado a MT5")
+            return None
 
         try:
-            # Preparar estructura de la orden
-            if not magic:
-                magic = int(time.time()) % 1000000  # Número semi-aleatorio si no se proporciona
+            # Obtener precio actual si no se proporciona
+            if price is None or price == 0.0:
+                current_price = self.get_current_price(symbol)
+                if not current_price:
+                    return None
+                price = current_price['ask'] if order_type == OrderType.BUY else current_price['bid']
 
-            # Añadir identificador de la estrategia al comentario
-            if not comment:
-                comment = "Bot Trader Copilot"
+            # Si no se proporciona quantity, calcular basado en riesgo
+            if quantity is None:
+                if risk_per_trade is None:
+                    risk_per_trade = self.max_risk_percent / 100.0  # Usar valor por defecto
 
-            # Si es una orden de mercado y el precio es 0, obtener el precio actual
-            symbol_info = mt5.symbol_info(symbol)
-            if not symbol_info:
-                raise OrderExecutionError(
-                    message=f"Símbolo {symbol} no encontrado",
-                    error_code=-4,
-                    symbol=symbol,
-                    order_type=order_type.name,
-                    volume=volume,
-                    price=price,
-                )
+                # Usar portfolio_value proporcionado por el orquestador, o calcular si no se proporciona
+                if portfolio_value is None:
+                    # Calcular portfolio_value para consistencia con backtest
+                    try:
+                        account_info = mt5.account_info()
+                        if account_info:
+                            portfolio_value = account_info.balance
+                        else:
+                            portfolio_value = 10000  # Valor por defecto conservador
+                    except Exception as e:
+                        self.logger.warning(f"Error obteniendo balance para portfolio_value: {e}, usando valor por defecto")
+                        portfolio_value = 10000  # Fallback
 
-            if price <= 0:
-                if order_type == OrderType.BUY:
-                    price = symbol_info.ask
-                else:  # SELL
-                    price = symbol_info.bid
+                # Calcular tamaño de posición basado en riesgo
+                risk_params = self.apply_risk_management(symbol, order_type, price,
+                                                       stop_loss_price, take_profit_price, risk_per_trade, portfolio_value)
+                if not risk_params:
+                    return None
+                quantity = risk_params['quantity']
 
-            # Redondear el precio según los dígitos del símbolo
-            price = round(price, symbol_info.digits)
-            if sl > 0:
-                sl = round(sl, symbol_info.digits)
-            if tp > 0:
-                tp = round(tp, symbol_info.digits)
+                # Usar stop_loss y take_profit proporcionados por estrategia, o calculados
+                if stop_loss_price is None and 'stop_loss' in risk_params:
+                    stop_loss_price = risk_params['stop_loss']
+                if take_profit_price is None and 'take_profit' in risk_params:
+                    take_profit_price = risk_params['take_profit']
 
-            # Crear estructura de la orden
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": symbol,
-                "volume": volume,
-                "type": order_type.value,
-                "price": price,
-                "sl": sl,
-                "tp": tp,
-                "deviation": 10,  # Desviación máxima del precio
-                "magic": magic,
-                "comment": comment,
-                "type_time": mt5.ORDER_TIME_GTC,  # Good Till Cancelled
-                "type_filling": mt5.ORDER_FILLING_IOC,  # Immediate or Cancel
-            }
+            # Convertir parámetros para MT5
+            sl = stop_loss_price if stop_loss_price else 0.0
+            tp = take_profit_price if take_profit_price else 0.0
 
-            # Verificar límites de riesgo
-            if not self._validate_risk(symbol, volume, sl, price):
-                return self._create_error_result(
-                    "La orden excede los límites de riesgo configurados"
-                )
-
-            # Registrar la orden para análisis
-            trade_id = str(uuid.uuid4())
-            order_data = {
-                "trade_id": trade_id,
-                "symbol": symbol,
-                "type": order_type.name,
-                "volume": volume,
-                "price": price,
-                "sl": sl,
-                "tp": tp,
-                "comment": comment,
-                "magic": magic,
-                "timestamp": datetime.now().isoformat(),
-                "status": "SENDING",
-            }
-
-            # Enviar la orden
-            self.logger.info(f"Enviando orden: {symbol} {order_type.name} {volume} lotes a {price}")
-            result = mt5.order_send(request)
-
-            if result is None:
-                error_code = mt5.last_error()
-                error_message = f"Error enviando orden: {error_code}"
-                self.logger.error(error_message)
-
-                # Actualizar datos de la orden
-                order_data["status"] = "ERROR"
-                order_data["error_code"] = error_code
-                order_data["error_message"] = error_message
-
-                # Guardar para análisis
-                self._save_trade_record(order_data)
-
-                raise OrderExecutionError(
-                    message=error_message,
-                    error_code=error_code,
-                    trade_id=trade_id,
-                    symbol=symbol,
-                    order_type=order_type.name,
-                    volume=volume,
-                    price=price,
-                )
-
-            if result.retcode != mt5.TRADE_RETCODE_DONE:
-                error_message = f"Orden rechazada: {result.retcode} - {self._get_retcode_description(result.retcode)}"
-                self.logger.error(error_message)
-
-                # Actualizar datos de la orden
-                order_data["status"] = "REJECTED"
-                order_data["error_code"] = result.retcode
-                order_data["error_message"] = error_message
-
-                # Guardar para análisis
-                self._save_trade_record(order_data)
-
-                raise OrderExecutionError(
-                    message=error_message,
-                    error_code=result.retcode,
-                    trade_id=trade_id,
-                    symbol=symbol,
-                    order_type=order_type.name,
-                    volume=volume,
-                    price=price,
-                )
-
-            # Orden ejecutada correctamente
-            self.logger.info(
-                f"Orden ejecutada: {result.order} {symbol} {order_type.name} {volume} lotes a {price}"
-            )
-
-            # Verificar slippage
-            slippage_pct = self._check_slippage(symbol, price, result.price, order_type)
-            if slippage_pct > 0.5:  # Slippage > 0.5%
-                warning_msg = f"⚠️ Slippage alto detectado: {slippage_pct:.2f}% (solicitado: {price}, ejecutado: {result.price})"
-                self.logger.warning(warning_msg)
-                order_data["slippage_pct"] = slippage_pct
-                order_data["slippage_warning"] = warning_msg
-
-            # Actualizar datos de la orden
-            order_data["status"] = "EXECUTED"
-            order_data["order_id"] = result.order
-            order_data["executed_price"] = result.price
-            order_data["executed_volume"] = result.volume
-
-            # Guardar para análisis
-            self._save_trade_record(order_data)
-
-            # Actualizar posiciones
-            self.refresh_positions()
-
-            # Orden ejecutada exitosamente
-            self.logger.info(f"✅ Orden completada exitosamente: {result.order}")
+            # Llamar al método original pero con manejo de errores mejorado
+            try:
+                return self._open_position_mt5(symbol, order_type, quantity, price, sl, tp, "", 0)
+            except OrderExecutionError as e:
+                self.logger.error(f"Error ejecutando orden MT5: {e.message}")
+                return {
+                    'success': False,
+                    'message': e.message,
+                    'error_code': e.error_code
+                }
 
         except Exception as e:
-            error_message = f"Error ejecutando orden: {str(e)}"
-            self.logger.error(error_message)
-            raise OrderExecutionError(
-                message=error_message,
-                error_code=-1,
-                trade_id=trade_id,
-                symbol=symbol if "symbol" in locals() else None,
-                order_type=order_type.name if "order_type" in locals() else None,
-                volume=volume if "volume" in locals() else None,
-                price=price if "price" in locals() else None,
-            )
+            self.logger.error(f"Error en open_position: {str(e)}")
+            return {
+                'success': False,
+                'message': str(e)
+            }
 
     def close_position(self, position_id: int, volume: float = 0.0) -> Dict:
         """
@@ -1327,23 +1202,232 @@ class MT5OrderExecutor:
             trade_id = trade_data.get("trade_id", str(uuid.uuid4()))
             symbol = trade_data.get("symbol", "UNKNOWN")
             filename = self.trades_path / f"{timestamp}_{symbol}_{trade_id}.json"
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(trade_data, f, indent=2, default=str, ensure_ascii=False)
+        except Exception as e:
+            self.logger.error(f"Error guardando registro de trade: {e}")
 
-            # Guardar como JSON
-            with open(filename, "w") as f:
-                json.dump(trade_data, f, indent=2)
+    def apply_risk_management(self, symbol: str, order_type: OrderType, entry_price: float,
+                            stop_loss: float = None, take_profit: float = None, risk_per_trade: float = None,
+                            portfolio_value: float = None) -> Dict[str, Any]:
+        """
+        Aplica gestión de riesgo a la orden usando parámetros proporcionados por la estrategia.
+
+        Args:
+            symbol: Símbolo del par
+            order_type: Tipo de orden (BUY/SELL)
+            entry_price: Precio de entrada
+            stop_loss: Stop loss opcional (proporcionado por estrategia)
+            take_profit: Take profit opcional (proporcionado por estrategia)
+            risk_per_trade: Porcentaje de riesgo por trade (proporcionado por estrategia)
+            portfolio_value: Valor total del portfolio para cálculo consistente con backtest
+
+        Returns:
+            Dict con parámetros de riesgo aplicados
+        """
+        try:
+            # Usar risk_per_trade proporcionado por estrategia o valor por defecto
+            risk_pct = risk_per_trade if risk_per_trade is not None else self.max_risk_percent / 100.0
+
+            # Obtener información del símbolo
+            symbol_info = mt5.symbol_info(symbol)
+            if not symbol_info:
+                raise ValueError(f"Símbolo {symbol} no encontrado")
+
+            # Calcular tick value y contract size
+            tick_value = symbol_info.trade_tick_value
+            contract_size = symbol_info.trade_contract_size
+            tick_size = symbol_info.point
+
+            # Usar portfolio_value si se proporciona, sino obtener del balance de la cuenta
+            if portfolio_value is None:
+                try:
+                    account_info = mt5.account_info()
+                    if account_info:
+                        portfolio_value = account_info.balance
+                    else:
+                        portfolio_value = 10000  # Valor por defecto conservador
+                except Exception as e:
+                    self.logger.warning(f"Error obteniendo balance: {e}, usando valor por defecto")
+                    portfolio_value = 10000
+
+            # Calcular stop loss si no se proporciona
+            if stop_loss is None:
+                # Usar un stop loss por defecto basado en ATR o porcentaje
+                stop_distance_pips = self.default_sl_pips
+                if order_type == OrderType.BUY:
+                    stop_loss = entry_price - (stop_distance_pips * tick_size)
+                else:
+                    stop_loss = entry_price + (stop_distance_pips * tick_size)
+
+            # Calcular take profit si no se proporciona
+            if take_profit is None:
+                # Usar un take profit por defecto
+                tp_distance_pips = self.default_tp_pips
+                if order_type == OrderType.BUY:
+                    take_profit = entry_price + (tp_distance_pips * tick_size)
+                else:
+                    take_profit = entry_price - (tp_distance_pips * tick_size)
+
+            # Calcular riesgo en dinero
+            risk_amount = portfolio_value * risk_pct
+
+            # Calcular distancia del stop loss en precio
+            if order_type == OrderType.BUY:
+                stop_distance = entry_price - stop_loss
+            else:
+                stop_distance = stop_loss - entry_price
+
+            # Calcular tamaño de posición
+            # Para forex: risk_amount / (stop_distance * contract_size * tick_value / tick_size)
+            if stop_distance > 0:
+                # Convertir stop_distance a pips
+                stop_pips = stop_distance / tick_size
+                # Calcular lotes: risk_amount / (stop_pips * tick_value)
+                quantity = risk_amount / (stop_pips * tick_value)
+            else:
+                quantity = 0.01  # Mínimo por defecto
+
+            # Limitar tamaño máximo de posición
+            max_lot = self.calculate_optimal_lot_size(symbol, risk_pct, entry_price, stop_loss)
+            quantity = min(quantity, max_lot)
+
+            # Asegurar mínimo
+            min_lot = symbol_info.volume_min if symbol_info.volume_min > 0 else 0.01
+            quantity = max(quantity, min_lot)
+
+            # Redondear al step de volumen
+            volume_step = symbol_info.volume_step if symbol_info.volume_step > 0 else 0.01
+            quantity = round(quantity / volume_step) * volume_step
+
+            return {
+                'quantity': quantity,
+                'stop_loss': stop_loss,
+                'take_profit': take_profit,
+                'risk_amount': risk_amount,
+                'risk_percent': risk_pct * 100,
+                'portfolio_value': portfolio_value
+            }
 
         except Exception as e:
-            self.logger.error(f"Error guardando registro de operación: {e}")
+            self.logger.error(f"Error en apply_risk_management: {str(e)}")
+            return None
 
-    def shutdown(self) -> None:
+    def _open_position_mt5(self, symbol: str, order_type: OrderType, volume: float,
+                          price: float = 0.0, sl: float = 0.0, tp: float = 0.0,
+                          comment: str = "", magic: int = 0) -> Dict[str, Any]:
         """
-        Cierra la conexión con MT5.
+        Ejecuta la orden real en MT5 y devuelve resultado estructurado.
+
+        Args:
+            symbol: Símbolo a operar
+            order_type: Tipo de orden (BUY, SELL)
+            volume: Volumen en lotes
+            price: Precio (0 para mercado)
+            sl: Stop Loss (0 para desactivar)
+            tp: Take Profit (0 para desactivar)
+            comment: Comentario para la orden
+            magic: Número mágico para identificar la orden
+
+        Returns:
+            Dict con resultado de la operación
         """
-        if MT5_AVAILABLE and self.connected:
-            with self.connection_lock:
-                mt5.shutdown()
-                self.connected = False
-                self.logger.info("MT5 desconectado")
+        if not self.ensure_connection():
+            return {
+                'success': False,
+                'message': "No hay conexión con MT5",
+                'error_code': -2
+            }
+
+        # Verificar gaps de mercado antes de abrir posición
+        has_gap, gap_message = self._check_market_gaps(symbol)
+        if has_gap:
+            self.logger.warning(f"🚫 Orden rechazada para {symbol}: {gap_message}")
+            return {
+                'success': False,
+                'message': f"Gap de mercado detectado: {gap_message}",
+                'error_code': -3
+            }
+
+        try:
+            # Preparar estructura de la orden
+            if not magic:
+                magic = int(time.time()) % 1000000  # Número semi-aleatorio si no se proporciona
+
+            # Añadir identificador de la estrategia al comentario
+            if not comment:
+                comment = "Bot Trader Copilot"
+
+            # Si es una orden de mercado y el precio es 0, obtener el precio actual
+            symbol_info = mt5.symbol_info(symbol)
+            if not symbol_info:
+                return {
+                    'success': False,
+                    'message': f"Símbolo {symbol} no encontrado",
+                    'error_code': -1
+                }
+
+            # Verificar que el símbolo esté disponible para trading
+            if not symbol_info.visible:
+                return {
+                    'success': False,
+                    'message': f"Símbolo {symbol} no visible",
+                    'error_code': -4
+                }
+
+            # Preparar la orden
+            order_type_mt5 = mt5.ORDER_TYPE_BUY if order_type == OrderType.BUY else mt5.ORDER_TYPE_SELL
+
+            # Crear estructura de orden
+            order_request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": volume,
+                "type": order_type_mt5,
+                "price": price if price > 0 else symbol_info.ask if order_type == OrderType.BUY else symbol_info.bid,
+                "sl": sl,
+                "tp": tp,
+                "deviation": 10,  # Desviación permitida en puntos
+                "magic": magic,
+                "comment": comment,
+                "type_time": mt5.ORDER_TIME_GTC,  # Good till cancelled
+                "type_filling": mt5.ORDER_FILLING_IOC,  # Immediate or cancel
+            }
+
+            # Enviar la orden
+            result = mt5.order_send(order_request)
+
+            if result is None:
+                return {
+                    'success': False,
+                    'message': "Error desconocido en MT5",
+                    'error_code': -5
+                }
+
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                error_msg = self._get_mt5_error_message(result.retcode)
+                return {
+                    'success': False,
+                    'message': f"Error MT5: {error_msg}",
+                    'error_code': result.retcode
+                }
+
+            # Éxito
+            return {
+                'success': True,
+                'order': result.order,
+                'price': result.price,
+                'volume': result.volume,
+                'message': f"Orden {order_type.name} ejecutada correctamente"
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error ejecutando orden MT5: {str(e)}")
+            return {
+                'success': False,
+                'message': str(e),
+                'error_code': -6
+            }
 
     def __del__(self):
         """

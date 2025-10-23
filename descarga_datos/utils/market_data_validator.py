@@ -19,7 +19,7 @@ class MarketDataValidator:
     Implementa métodos estadísticos para detectar datos sintéticos.
     """
     
-    def __init__(self, db_path: str = "data/data.db"):
+    def __init__(self, db_path: str = "descarga_datos/data/data.db"):
         """
         Inicializa el validador con la conexión a la base de datos.
         

@@ -1,24 +1,45 @@
-C:\Users\javie\copilot\botcopilot-sar\descarga_datos\models#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 MT5 Live Data Provider - Componente para obtener datos en tiempo real de MetaTrader 5
 para operaciones de trading en vivo con actualización continua.
 """
 
 import time
+import os
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Any, Tuple
 from utils.logger import get_logger
+
+# Intentar importar MT5
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    mt5 = None
+    MT5_AVAILABLE = False
+    logger.warning("MetaTrader5 no está disponible. Modo simulado activado.")
 
 logger = get_logger(__name__)
 import threading
 
 class MT5LiveDataProvider:
     def __init__(self, config=None):
+        # Inicializar logger primero
+        self.logger = get_logger(__name__ + ".MT5LiveDataProvider")
+        
+        self.config = config
         self.connected = False
         self.connection_lock = threading.Lock()
         self.data_cache = {}  # Cache de datos por símbolo y timeframe
         self.market_status = {}  # Estado del mercado por símbolo
+        
+        # Configuración de símbolos y timeframes por defecto
+        self.symbols = getattr(config, 'symbols', ['EURUSD', 'GBPUSD', 'USDJPY']) if config else ['EURUSD', 'GBPUSD', 'USDJPY']
+        self.timeframes = getattr(config, 'timeframes', ['1m', '5m', '1h']) if config else ['1m', '5m', '1h']
+        self.history_bars = getattr(config, 'history_bars', 1000) if config else 1000
         
         # Configuración de reintentos
         self.max_retries = getattr(config, 'max_retries', 3) if hasattr(config, 'max_retries') else 3

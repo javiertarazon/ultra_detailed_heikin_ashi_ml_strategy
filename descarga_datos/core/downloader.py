@@ -994,7 +994,7 @@ class AdvancedDataDownloader:
             
             # Crear instancia y calcular todos los indicadores
             indicators = TechnicalIndicators()
-            result_df = indicators.calculate_all_indicators_unified(df)
+            result_df = indicators.calculate_all_indicators(df)
             
             # Llenar NaN con 0
             result_df = result_df.fillna(0)
@@ -1183,7 +1183,11 @@ class AdvancedDataDownloader:
             # Cerrar exchanges CCXT
             for exchange in self.ccxt_exchanges.values():
                 try:
-                    await exchange.close()
+                    # Los exchanges CCXT son síncronos, verificar si tienen método close
+                    if hasattr(exchange, 'close') and callable(getattr(exchange, 'close')):
+                        exchange.close()
+                    else:
+                        self.logger.debug(f"Exchange {getattr(exchange, 'id', '?')} no tiene método close")
                 except Exception as ex:
                     # Captura de errores de cierre individuales para no abortar el resto
                     self.logger.warning(f"Error cerrando exchange {getattr(exchange, 'id', '?')}: {ex}")
@@ -1200,7 +1204,11 @@ class AdvancedDataDownloader:
             try:
                 for exchange in self.ccxt_exchanges.values():
                     try:
-                        await exchange.close()
+                        # Los exchanges CCXT son síncronos, verificar si tienen método close
+                        if hasattr(exchange, 'close') and callable(getattr(exchange, 'close')):
+                            exchange.close()
+                        else:
+                            self.logger.debug(f"Exchange {getattr(exchange, 'id', '?')} no tiene método close")
                     except Exception:
                         pass
                 if self.mt5_downloader:
@@ -1259,8 +1267,12 @@ class AdvancedDataDownloader:
         """Cierra todas las conexiones de exchanges"""
         for exchange_name, exchange in self.ccxt_exchanges.items():
             try:
-                await exchange.close()
-                self.logger.info(f"[INFO] Exchange {exchange_name} cerrado")
+                # Los exchanges CCXT son síncronos, verificar si tienen método close
+                if hasattr(exchange, 'close') and callable(getattr(exchange, 'close')):
+                    exchange.close()
+                    self.logger.info(f"[INFO] Exchange {exchange_name} cerrado")
+                else:
+                    self.logger.debug(f"[DEBUG] Exchange {exchange_name} no tiene método close")
             except Exception as e:
                 self.logger.error(f"[ERROR] Error cerrando {exchange_name}: {e}")
 

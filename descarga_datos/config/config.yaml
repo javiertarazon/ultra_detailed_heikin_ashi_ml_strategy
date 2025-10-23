@@ -3,7 +3,7 @@ backtesting:
   commission: 0.1
   data_quality: null
   end_date: '2025-10-16'
-  initial_capital: 231.67  # Capital real disponible en testnet
+  initial_capital: 800  # Capital inicial cambiado a 800 USDT
   optimized_parameters:
     BTC_USDT:
       atr_period: 17
@@ -122,6 +122,7 @@ live_trading:
   - 4h
   - 1d
   risk_per_trade: 0.002
+  trailing_activation_pct: 0.65
   strategy_mapping: {}
   update_interval_seconds: 900
   validation: {}
@@ -130,18 +131,29 @@ ml_training:
     random_forest: true
   models:
     random_forest:
-      max_depth: 10
-      n_estimators: 100
+      max_depth: 15
+      n_estimators: 300
+      min_samples_split: 10
+      min_samples_leaf: 4
+      max_features: 'sqrt'
       n_jobs: 1
       random_state: 42
   optimization:
     constraints:
       max_drawdown_limit: 0.08
     enabled: true
-    n_trials: 150
+    n_trials: 300
     opt_end: '2025-10-16'
-    opt_start: '2025-07-01'
-    study_name: btc_ml_optimization_drawdown_focused_v1
+    opt_start: '2025-01-01'
+    study_name: roi_5percent_winrate_80_v1
+    targets:
+      maximize: ['total_pnl', 'win_rate', 'pnl_return']
+      minimize: ['max_drawdown']
+      constraints:
+        min_trades: 50
+        max_drawdown_limit: 0.08
+        min_win_rate: 0.80
+        min_pnl_return: 352.79
   safe_mode: false
   training:
     min_samples: 500
@@ -173,7 +185,7 @@ risk_management:
 storage:
   cache_enabled: true
   csv_enabled: true
-  path: data
+  path: descarga_datos/data
   sqlite_enabled: true
 system:
   auto_launch_dashboard: true

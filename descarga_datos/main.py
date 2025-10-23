@@ -319,6 +319,24 @@ def run_live_ccxt():
 
     # Verificar configuración de seguridad
     config = load_config_from_yaml()
+    
+    # VALIDACIÓN DE CONSISTENCIA: Verificar que timeframes coincidan entre backtest y live
+    backtest_timeframe = config.backtesting.timeframe
+    live_timeframes = config.live_trading.ccxt_timeframes
+    if backtest_timeframe not in live_timeframes:
+        print(f" [WARN] ⚠️  INCONSISTENCIA DE TIMEFRAMES DETECTADA:")
+        print(f"   Backtest timeframe: {backtest_timeframe}")
+        print(f"   Live timeframes: {live_timeframes}")
+        print(f"   Recomendación: Asegurar consistencia para resultados comparables")
+    
+    # LOGGING COMPARATIVO: Mostrar configuraciones clave
+    print(f" [CONFIG] Comparación Backtest vs Live:")
+    print(f"   Capital inicial backtest: ${config.backtesting.initial_capital}")
+    print(f"   Risk per trade live: {config.live_trading.risk_per_trade}")
+    print(f"   Timeframe backtest: {backtest_timeframe}")
+    print(f"   Timeframes live: {live_timeframes}")
+    print(f"   Datos históricos live: {config.live_trading.initial_history_bars} barras")
+    
     if config.live_trading.enabled:
         print(" [WARN]  ADVERTENCIA: Live trading está HABILITADO en configuración")
         if config.live_trading.account_type == "REAL":
@@ -454,6 +472,18 @@ async def run_backtest():
         # PASO 1: Cargar configuración centralizada
         config = load_config_from_yaml()
         print("[OK] Configuración centralizada cargada")
+        
+        # LOGGING COMPARATIVO: Mostrar configuraciones clave para comparación con live
+        print(f" [CONFIG] Configuración Backtest:")
+        print(f"   Capital inicial: ${config.backtesting.initial_capital}")
+        print(f"   Timeframe: {config.backtesting.timeframe}")
+        print(f"   Símbolos: {config.backtesting.symbols}")
+        print(f"   Período: {config.backtesting.start_date} → {config.backtesting.end_date}")
+        if hasattr(config, 'live_trading'):
+            print(f" [CONFIG] Comparación con Live:")
+            print(f"   Live timeframes: {config.live_trading.ccxt_timeframes}")
+            print(f"   Live datos históricos: {config.live_trading.initial_history_bars} barras")
+            print(f"   Live risk per trade: {config.live_trading.risk_per_trade}")
         
         # PASO 2: Verificar y asegurar disponibilidad de datos
         # Leer overrides de CLI si existen

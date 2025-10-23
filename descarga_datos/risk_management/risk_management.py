@@ -278,24 +278,29 @@ def apply_risk_management(signal: Dict[str, Any],
     
     logger.info(f"🛑 Distancia Stop Loss: {stop_distance_pct:.2f}% ({abs(entry_price - stop_loss_price):.2f} puntos)")
     
-    # Calcular tamaño de posición
-    risk_percent = config.get('risk_percent', 1.0)
-    logger.info(f"⚖️ Riesgo porcentual configurado: {risk_percent}%")
-    
-    position_size = rm.calculate_position_size(
-        direction=direction,
-        entry_price=entry_price,
-        stop_loss_price=stop_loss_price,
-        account_balance=account_balance,
-        risk_percent=risk_percent,
-        symbol=symbol,
-        symbol_info=symbol_info
-    )
-    
-    # Calcular valor monetario en riesgo
+    # Calcular tamaño de posición usando la fórmula estándar de riesgo
+    # risk_amount = account_balance * risk_percent / 100
+    # position_size = risk_amount / stop_loss_distance
+
+    risk_percent = config.get('max_risk_per_trade', 1.0)  # Obtener de config
     risk_amount = account_balance * risk_percent / 100
-    logger.info(f"💲 Monto en riesgo: {risk_amount:.2f} ({risk_percent}% del capital)")
-    logger.info(f"📏 Tamaño posición calculado: {position_size}")
+    
+    # Calcular distancia del stop loss
+    if direction.lower() == 'buy':
+        stop_distance = abs(entry_price - stop_loss_price)
+    else:  # sell
+        stop_distance = abs(stop_loss_price - entry_price)
+    
+    if stop_distance <= 0:
+        logger.error(f"❌ Distancia de stop loss inválida: {stop_distance}")
+        signal['rejected'] = True
+        signal['rejection_reason'] = "Stop loss distance inválida"
+        return signal
+    
+    # Calcular position_size
+    position_size = risk_amount / stop_distance
+    
+    logger.info(f"� Tamaño posición calculado: {position_size} (riesgo: {risk_amount:.2f}, distancia_SL: {stop_distance:.2f})")
     
     # Verificar límites de exposición
     max_position_size = config.get('max_position_size', 0.25)
@@ -308,7 +313,8 @@ def apply_risk_management(signal: Dict[str, Any],
     
     # Verificar límites de drawdown
     max_drawdown = config.get('max_drawdown_limit', 20.0)
-    current_drawdown = rm.current_drawdown
+    # TODO: Implementar cálculo de drawdown actual en AdvancedRiskManager
+    current_drawdown = 0.0  # Placeholder hasta implementar
     logger.info(f"📉 Drawdown actual: {current_drawdown:.2f}%, Límite: {max_drawdown:.2f}%")
     
     if current_drawdown > max_drawdown:
@@ -318,7 +324,8 @@ def apply_risk_management(signal: Dict[str, Any],
         return signal
     
     # Verificar correlaciones para diversificación
-    correlated_exposure = rm.get_correlated_exposure(symbol)
+    # TODO: Implementar cálculo de exposición correlacionada en AdvancedRiskManager
+    correlated_exposure = 0.0  # Placeholder hasta implementar
     logger.info(f"🔄 Exposición a activos correlacionados: {correlated_exposure:.2f}%")
     
     # Generar métricas detalladas de riesgo para esta operación

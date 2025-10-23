@@ -24,7 +24,7 @@ def _get_sqlite_type(dtype) -> str:
 class DataStorage(BaseDataHandler):
     """Clase para el manejo de almacenamiento de datos."""
     
-    def __init__(self, db_path: str = "data/data.db"):
+    def __init__(self, db_path: str = "descarga_datos/data/data.db"):
         super().__init__()
         # Normalizar ruta: si comienza con "data/", cambiar a descarga_datos/data/
         if db_path.startswith("data/"):

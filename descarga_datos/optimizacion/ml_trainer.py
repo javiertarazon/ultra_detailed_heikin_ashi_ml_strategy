@@ -296,8 +296,14 @@ class MLTrainer:
             models['RandomForest'] = RandomForestClassifier(
                 n_estimators=rf_config.get('n_estimators', 100),
                 max_depth=rf_config.get('max_depth', 10),
+                min_samples_split=rf_config.get('min_samples_split', 2),
+                min_samples_leaf=rf_config.get('min_samples_leaf', 1),
+                max_features=rf_config.get('max_features', None),
                 random_state=rf_config.get('random_state', 42),
-                n_jobs=rf_config.get('n_jobs', 1)  # Usar configuración del YAML, default 1 para Python 3.13
+                n_jobs=rf_config.get('n_jobs', 1),  # Usar configuración del YAML, default 1 para Python 3.13
+                bootstrap=True,
+                criterion='gini',
+                class_weight='balanced_subsample'
             )
             logger.info('RandomForest activado')
 
@@ -332,7 +338,7 @@ class MLTrainer:
 
         results = {}
         best_model, best_score = None, 0
-        tscv = TimeSeriesSplit(n_splits=3)
+        tscv = TimeSeriesSplit(n_splits=5)  # Aumentado de 3 a 5 para mejor evaluación
 
         for name, model in models.items():
             logger.info(f'Entrenando {name}...')
@@ -351,7 +357,14 @@ class MLTrainer:
                 val_auc = roc_auc_score(y_val, y_val_proba)
                 val_accuracy = (y_val_pred == y_val).mean()
 
+                # Calcular métricas adicionales
+                from sklearn.metrics import precision_score, recall_score, f1_score
+                val_precision = precision_score(y_val, y_val_pred, zero_division=0)
+                val_recall = recall_score(y_val, y_val_pred, zero_division=0)
+                val_f1 = f1_score(y_val, y_val_pred, zero_division=0)
+
                 logger.info(f'{name} - Validation AUC: {val_auc:.4f}, Accuracy: {val_accuracy:.4f}')
+                logger.info(f'{name} - Precision: {val_precision:.4f}, Recall: {val_recall:.4f}, F1: {val_f1:.4f}')
 
                 results[name] = {
                     'model': model,
@@ -361,6 +374,9 @@ class MLTrainer:
                     'cv_std': float(cv_scores.std()),
                     'val_auc': float(val_auc),
                     'val_accuracy': float(val_accuracy),
+                    'val_precision': float(val_precision),
+                    'val_recall': float(val_recall),
+                    'val_f1': float(val_f1),
                     'confusion_matrix': confusion_matrix(y_val, y_val_pred).tolist()
                 }
 
@@ -390,7 +406,12 @@ class MLTrainer:
                     'model_type': name,
                     'features': feature_names,
                     'cv_mean': data['cv_mean'],
+                    'cv_std': data['cv_std'],
                     'val_auc': data['val_auc'],
+                    'val_accuracy': data['val_accuracy'],
+                    'val_precision': data['val_precision'],
+                    'val_recall': data['val_recall'],
+                    'val_f1': data['val_f1'],
                     'timestamp': timestamp
                 }
             }
@@ -399,7 +420,20 @@ class MLTrainer:
             joblib.dump(model_data, model_path)
 
             # También guardar metadata por separado para compatibilidad
-            metadata = {'symbol': self.symbol, 'timeframe': self.timeframe, 'model_type': name, 'features': feature_names, 'cv_mean': data['cv_mean'], 'val_auc': data['val_auc'], 'timestamp': timestamp}
+            metadata = {
+                'symbol': self.symbol,
+                'timeframe': self.timeframe,
+                'model_type': name,
+                'features': feature_names,
+                'cv_mean': data['cv_mean'],
+                'cv_std': data['cv_std'],
+                'val_auc': data['val_auc'],
+                'val_accuracy': data['val_accuracy'],
+                'val_precision': data['val_precision'],
+                'val_recall': data['val_recall'],
+                'val_f1': data['val_f1'],
+                'timestamp': timestamp
+            }
             with open(self.models_dir / f'{name}_{timestamp}_metadata.json', 'w') as f:
                 json.dump(metadata, f, indent=2)
 

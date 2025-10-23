@@ -1174,7 +1174,7 @@ class UltraDetailedHeikinAshiMLStrategy:
     def _run_backtest(self, data: pd.DataFrame, signals: pd.Series, symbol: str, ml_confidence_all: pd.Series) -> Dict:
         """Ejecutar backtesting con GESTIÓN DE RIESGO REAL basada en ATR y volatilidad"""
 
-        capital = self.portfolio_value
+        capital = self.config.backtesting.initial_capital if self.config and hasattr(self.config, 'backtesting') else self.portfolio_value
         trades = []
         peak_value = capital
         max_drawdown = 0
@@ -1491,7 +1491,8 @@ class UltraDetailedHeikinAshiMLStrategy:
                 'reason': 'safe_mode_error'
             }
 
-    def check_trailing_stop(self, position_data: Dict, current_price: float, entry_price: float) -> Dict:
+    def check_trailing_stop(self, position_data: Dict, current_price: float, entry_price: float, 
+                            take_profit_price: float = None) -> Dict:
         """
         Verificar si una posición debe cerrarse por trailing stop
         Método llamado por el orquestador para delegar gestión de trailing stops
@@ -1500,54 +1501,64 @@ class UltraDetailedHeikinAshiMLStrategy:
             position_data: Información de la posición abierta
             current_price: Precio actual del mercado
             entry_price: Precio de entrada de la posición
+            take_profit_price: Precio objetivo de take profit
 
         Returns:
             Dict con 'should_close': bool y 'reason': str si debe cerrarse
         """
         try:
             direction = position_data.get('type', position_data.get('direction', 'buy'))
-            trailing_stop_pct = position_data.get('trailing_stop_pct', self.trailing_stop_pct)
-
-            # Calcular PnL actual
+            
+            # Si no hay take profit definido, no aplicar trailing stop
+            if take_profit_price is None:
+                return {'should_close': False}
+            
+            # Obtener porcentaje de activación del trailing stop desde configuración
+            trailing_activation_pct = self.config.get('live_trading', {}).get('trailing_activation_pct', 0.65)
+            
+            # Calcular ganancia actual
             if direction in ['buy', 'BUY']:
-                unrealized_pnl = current_price - entry_price
-                profit_amount = max(0, unrealized_pnl)
+                current_profit = current_price - entry_price
+                profit_target = take_profit_price - entry_price
             else:  # sell/short
-                unrealized_pnl = entry_price - current_price
-                profit_amount = max(0, unrealized_pnl)
-
-            # Solo aplicar trailing stop si hay profit
-            if profit_amount > 0:
-                # Calcular nuevo stop loss basado en trailing stop percentage
-                new_stop_distance = profit_amount * trailing_stop_pct
-
+                current_profit = entry_price - current_price
+                profit_target = entry_price - take_profit_price
+            
+            # Solo aplicar trailing stop si hay ganancia
+            if current_profit <= 0:
+                return {'should_close': False}
+            
+            # Verificar si se alcanzó el porcentaje de activación del trailing stop
+            activation_threshold = profit_target * trailing_activation_pct
+            
+            if current_profit >= activation_threshold:
+                # Trailing stop activado: colocar stop loss en el punto de ganancia asegurada
                 if direction in ['buy', 'BUY']:
-                    new_stop_price = entry_price + new_stop_distance
-                    current_stop = position_data.get('stop_loss', entry_price - (entry_price * 0.05))
-
-                    # Si el precio actual está por debajo del nuevo stop, cerrar
-                    if current_price <= new_stop_price:
+                    secured_profit_stop = entry_price + current_profit
+                    # Cerrar si el precio actual está por debajo del stop de ganancia asegurada
+                    if current_price <= secured_profit_stop:
                         return {
                             'should_close': True,
-                            'reason': f'trailing_stop_buy_{trailing_stop_pct:.0%}',
-                            'new_stop_loss': new_stop_price
+                            'reason': f'trailing_stop_activated_{trailing_activation_pct:.0%}',
+                            'secured_profit': current_profit,
+                            'exit_price': secured_profit_stop
                         }
                 else:  # sell/short
-                    new_stop_price = entry_price - new_stop_distance
-                    current_stop = position_data.get('stop_loss', entry_price + (entry_price * 0.05))
-
-                    # Si el precio actual está por encima del nuevo stop, cerrar
-                    if current_price >= new_stop_price:
+                    secured_profit_stop = entry_price - current_profit
+                    # Cerrar si el precio actual está por encima del stop de ganancia asegurada
+                    if current_price >= secured_profit_stop:
                         return {
                             'should_close': True,
-                            'reason': f'trailing_stop_sell_{trailing_stop_pct:.0%}',
-                            'new_stop_loss': new_stop_price
+                            'reason': f'trailing_stop_activated_{trailing_activation_pct:.0%}',
+                            'secured_profit': current_profit,
+                            'exit_price': secured_profit_stop
                         }
 
             return {'should_close': False}
 
         except Exception as e:
             print(f"[ERROR] Error checking trailing stop: {e}")
+            return {'should_close': False}
             return {'should_close': False}
 
     def should_close_position(self, position_data: Dict, current_price: float, entry_price: float,
@@ -1647,7 +1658,7 @@ class UltraDetailedHeikinAshiMLStrategy:
         """
         try:
             # 1. Verificar trailing stop
-            trailing_check = self.check_trailing_stop(position_data, current_price, entry_price)
+            trailing_check = self.check_trailing_stop(position_data, current_price, entry_price, take_profit_price)
             if trailing_check['should_close']:
                 return trailing_check
 

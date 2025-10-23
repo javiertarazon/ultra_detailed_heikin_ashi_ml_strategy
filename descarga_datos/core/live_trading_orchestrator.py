@@ -543,7 +543,7 @@ class LiveTradingOrchestrator:
                 take_profit = signal_data['signal'].get('take_profit', current_price * 1.1)
                 
                 # Abrir posición larga
-                result = self.order_executor.open_market_order(
+                result = self.order_executor.open_position(
                     symbol=symbol,
                     order_type='BUY',
                     volume=signal_data['signal'].get('volume', None),  # Volumen automático si es None
@@ -575,7 +575,7 @@ class LiveTradingOrchestrator:
                 take_profit = signal_data['signal'].get('take_profit', current_price * 0.9)
                 
                 # Abrir posición corta
-                result = self.order_executor.open_market_order(
+                result = self.order_executor.open_position(
                     symbol=symbol,
                     order_type='SELL',
                     volume=signal_data['signal'].get('volume', None),  # Volumen automático si es None

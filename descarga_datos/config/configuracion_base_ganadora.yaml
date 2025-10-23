@@ -164,7 +164,7 @@ risk:
 storage:
   cache_enabled: true
   csv_enabled: true
-  path: data
+  path: descarga_datos/data
   sqlite_enabled: true
 system:
   auto_launch_dashboard: true

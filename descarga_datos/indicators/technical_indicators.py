@@ -633,7 +633,7 @@ class TechnicalIndicators:
             return False
 
     def save_normalized_indicators_to_sqlite(self, df: pd.DataFrame, exchange: str, symbol: str, timeframe: str, 
-                                           db_path: str = "data/indicators.db", method: str = "minmax") -> bool:
+                                           db_path: str = "descarga_datos/data/indicators.db", method: str = "minmax") -> bool:
         """
         Save normalized indicators to SQLite database.
         
