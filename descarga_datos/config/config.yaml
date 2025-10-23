@@ -110,8 +110,8 @@ live_trading:
   - 15m
   enabled: true
   initial_history_bars: 500
-  max_positions: 1
-  max_positions_per_symbol: 1
+  max_positions: 2                    # Cambiar a 2 para permitir 2 posiciones simultáneas
+  max_positions_per_symbol: 1         # Mantener 1 por símbolo para evitar concentración
   mode: CCXT
   mt5_symbols:
   - EURUSD
