@@ -278,35 +278,55 @@ def apply_risk_management(signal: Dict[str, Any],
     
     logger.info(f"🛑 Distancia Stop Loss: {stop_distance_pct:.2f}% ({abs(entry_price - stop_loss_price):.2f} puntos)")
     
-    # Calcular tamaño de posición usando la fórmula estándar de riesgo
-    # risk_amount = account_balance * risk_percent / 100
-    # position_size = risk_amount / stop_loss_distance
+    # Calcular tamaño de posición usando lógica similar a MT5/Forex
+    # En lugar de arriesgar % del capital total, usar lotes fijos conservadores
 
     risk_percent = config.get('max_risk_per_trade', 1.0)  # Obtener de config
-    risk_amount = account_balance * risk_percent / 100
-    
-    # Calcular distancia del stop loss
+
+    # Para cripto/forex: usar lógica de lotes como en MT5
+    # Un lote estándar = 100,000 unidades, pero usaremos micro-lotes conservadores
+
+    # Calcular distancia del stop loss en puntos
     if direction.lower() == 'buy':
         stop_distance = abs(entry_price - stop_loss_price)
-    else:  # sell
+    else:
         stop_distance = abs(stop_loss_price - entry_price)
-    
+
     if stop_distance <= 0:
         logger.error(f"❌ Distancia de stop loss inválida: {stop_distance}")
         signal['rejected'] = True
         signal['rejection_reason'] = "Stop loss distance inválida"
         return signal
-    
-    # Calcular position_size
+
+    # LÓGICA MT5/FOREX: Calcular lotes basados en riesgo fijo por trade
+    # Usar solo el balance en USD disponible, no el valor total del portfolio
+
+    # Para cripto, usar tamaños mucho más conservadores (equivalente a micro-lotes forex)
+    # risk_amount = account_balance * risk_percent / 100  # ESTO ES DEMASIADO AGRESIVO
+
+    # Enfoque conservador: riesgo máximo $50-100 por trade inicialmente
+    max_risk_per_trade_usd = config.get('max_risk_per_trade_usd', 50.0)  # $50 máximo por trade
+
+    # Asegurar que no exceda el % del balance disponible
+    max_risk_from_balance = account_balance * risk_percent / 100
+    risk_amount = min(max_risk_per_trade_usd, max_risk_from_balance)
+
+    # Calcular position_size: cuánto necesito comprar/vender para arriesgar esa cantidad
     position_size = risk_amount / stop_distance
-    
-    logger.info(f"� Tamaño posición calculado: {position_size} (riesgo: {risk_amount:.2f}, distancia_SL: {stop_distance:.2f})")
-    
-    # Verificar límites de exposición
-    max_position_size = config.get('max_position_size', 0.25)
+
+    # Para cripto, limitar aún más: máximo 0.001 BTC por trade inicialmente
+    max_position_crypto = config.get('max_position_crypto', 0.001)  # Máximo 0.001 BTC
+    position_size = min(position_size, max_position_crypto)
+
+    # Asegurar mínimo viable
+    min_position = config.get('min_position_crypto', 0.0001)  # Mínimo 0.0001 BTC
+    position_size = max(position_size, min_position)
+
+    logger.info(f"🎯 Tamaño posición MT5-style: {position_size:.6f} (riesgo: ${risk_amount:.2f}, distancia_SL: {stop_distance:.2f})")    # Verificar límites de exposición - MT5 style (muy conservador)
+    max_position_size = config.get('max_position_size', 0.01)  # Solo 1% del balance máximo
     max_position_value = account_balance * max_position_size
     position_value = position_size * entry_price
-    
+
     if position_value > max_position_value:
         logger.warning(f"⚠️ Tamaño ajustado por límite de exposición - Original: {position_size}, Nuevo: {max_position_value/entry_price}")
         position_size = max_position_value / entry_price

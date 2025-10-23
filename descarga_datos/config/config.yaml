@@ -122,6 +122,11 @@ live_trading:
   - 4h
   - 1d
   risk_per_trade: 0.002
+  # Parámetros conservadores MT5-style para cripto
+  max_risk_per_trade_usd: 50.0        # Máximo $50 USD por trade
+  max_position_crypto: 0.001          # Máximo 0.001 BTC por posición
+  min_position_crypto: 0.0001         # Mínimo 0.0001 BTC por posición
+  max_position_size: 0.01             # Máximo 1% del balance por posición
   trailing_activation_pct: 0.65
   strategy_mapping: {}
   update_interval_seconds: 900
