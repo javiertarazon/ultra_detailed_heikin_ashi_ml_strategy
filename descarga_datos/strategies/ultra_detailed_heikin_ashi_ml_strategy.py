@@ -500,6 +500,10 @@ class UltraDetailedHeikinAshiMLStrategy:
         # Inicializar gestor de modelos ML
         self.ml_manager = MLModelManager(config=self.config)
 
+        # Inicializar logger
+        from utils.logger import get_logger
+        self.logger = get_logger('ultra_detailed_heikin_ashi_ml_strategy')
+
     def _load_symbol_specific_params(self, config, live_symbol=None):
         """
         Carga parámetros específicos del símbolo desde configuración centralizada.
@@ -1174,7 +1178,15 @@ class UltraDetailedHeikinAshiMLStrategy:
     def _run_backtest(self, data: pd.DataFrame, signals: pd.Series, symbol: str, ml_confidence_all: pd.Series) -> Dict:
         """Ejecutar backtesting con GESTIÓN DE RIESGO REAL basada en ATR y volatilidad"""
 
-        capital = self.config.backtesting.initial_capital if self.config and hasattr(self.config, 'backtesting') else self.portfolio_value
+        # Determinar capital: usar portfolio_value si fue establecido con balance real (modo live), sino initial_capital de backtesting
+        if hasattr(self, 'portfolio_value') and self.portfolio_value != 10000.0:
+            # Modo live: usar balance real de la cuenta
+            capital = self.portfolio_value
+            self.logger.info(f"🔥 MODO LIVE: Usando balance real de cuenta: ${capital:.2f}")
+        else:
+            # Modo backtesting: usar capital configurado
+            capital = self.config.backtesting.initial_capital if self.config and hasattr(self.config, 'backtesting') else self.portfolio_value
+            self.logger.info(f"📊 MODO BACKTEST: Usando capital configurado: ${capital:.2f}")
         trades = []
         peak_value = capital
         max_drawdown = 0
@@ -1189,10 +1201,8 @@ class UltraDetailedHeikinAshiMLStrategy:
         max_concurrent_trades = self.max_concurrent_trades
 
         # CONTADORES para análisis
-        from utils.logger import get_logger
-        logger = get_logger('ultra_detailed_strategy')
         signals_nonzero = signals[signals != 0]
-        logger.info(f"DEBUG: {len(signals_nonzero)} señales no-cero detectadas en serie signals")
+        self.logger.info(f"DEBUG: {len(signals_nonzero)} señales no-cero detectadas en serie signals")
 
         for i in range(len(data)):
             current_price = data['close'].iloc[i]
@@ -1202,20 +1212,20 @@ class UltraDetailedHeikinAshiMLStrategy:
             # SKIP si ATR es NaN o cero (primeras velas sin datos suficientes)
             if pd.isna(atr) or atr == 0:
                 if i < 10:  # Solo log primeras 10
-                    logger.debug(f"[DEBUG] Saltando i={i} - ATR NaN o cero: {atr}")
+                    self.logger.debug(f"[DEBUG] Saltando i={i} - ATR NaN o cero: {atr}")
                 continue
 
             # GESTIÓN DE RIESGO REAL: Calcular position size basado en ATR
             if position == 0 and signals.iloc[i] != 0:
                 # DEBUG: Primera señal válida
                 if len(trades) == 0:
-                    logger.info(f"[SIGNAL] Primera señal válida en i={i}: signal={signals.iloc[i]}, price={current_price}, atr={atr}")
+                    self.logger.info(f"[SIGNAL] Primera señal válida en i={i}: signal={signals.iloc[i]}, price={current_price}, atr={atr}")
 
                 # CONFIRMAR señal con ML confidence en rango óptimo (0.4-0.75)
                 ml_conf = ml_confidence_all.iloc[i]
                 if ml_conf < self.ml_threshold_min or ml_conf > self.ml_threshold_max:
                     if i < 30:  # Solo primeras 30 para no saturar
-                        logger.debug(f"[DEBUG] Saltando i={i} - ML confidence fuera de rango: {ml_conf} no está en [{self.ml_threshold_min}, {self.ml_threshold_max}]")
+                        self.logger.debug(f"[DEBUG] Saltando i={i} - ML confidence fuera de rango: {ml_conf} no está en [{self.ml_threshold_min}, {self.ml_threshold_max}]")
                     continue  # Skip señales con confianza ML fuera del rango óptimo
 
                 entry_price = current_price
@@ -1240,13 +1250,13 @@ class UltraDetailedHeikinAshiMLStrategy:
                 # LÍMITES DE PORTFOLIO REALES
                 active_trades_count = len([t for t in self.active_trades if t['status'] == 'open'])
                 if active_trades_count >= max_concurrent_trades:
-                    logger.debug(f"[DEBUG] Saltando i={i} - Max concurrent trades alcanzado: {active_trades_count} >= {max_concurrent_trades}")
+                    self.logger.debug(f"[DEBUG] Saltando i={i} - Max concurrent trades alcanzado: {active_trades_count} >= {max_concurrent_trades}")
                     continue
 
                 # VALIDAR liquidez real antes de entrar
                 current_row = data.iloc[i]
                 if not self._check_liquidity_score(current_row):
-                    logger.debug(f"[DEBUG] Saltando i={i} - Liquidity score bajo")
+                    self.logger.debug(f"[DEBUG] Saltando i={i} - Liquidity score bajo")
                     continue
 
                 # ENTRAR POSICIÓN
@@ -1532,27 +1542,31 @@ class UltraDetailedHeikinAshiMLStrategy:
             activation_threshold = profit_target * trailing_activation_pct
             
             if current_profit >= activation_threshold:
-                # Trailing stop activado: colocar stop loss en el punto de ganancia asegurada
+                # TRAILING STOP ACTIVADO: AJUSTAR STOP LOSS PARA PROTEGER GANANCIAS
+                # NO cerrar la posición, solo ajustar el stop loss
+                trailing_stop_level = current_profit * self.trailing_stop_pct
+                
                 if direction in ['buy', 'BUY']:
-                    secured_profit_stop = entry_price + current_profit
-                    # Cerrar si el precio actual está por debajo del stop de ganancia asegurada
-                    if current_price <= secured_profit_stop:
-                        return {
-                            'should_close': True,
-                            'reason': f'trailing_stop_activated_{trailing_activation_pct:.0%}',
-                            'secured_profit': current_profit,
-                            'exit_price': secured_profit_stop
-                        }
+                    # Para BUY: stop loss se sube para proteger ganancia
+                    new_stop_loss = entry_price + trailing_stop_level
+                    # Actualizar el stop loss en position_data si es mejor que el actual
+                    current_stop = position_data.get('stop_loss', entry_price)
+                    if new_stop_loss > current_stop:
+                        position_data['stop_loss'] = new_stop_loss
+                        position_data['trailing_stop_updated'] = True  # Marcar que el trailing stop se activó
+                        self.logger.info(f"🛡️ TRAILING STOP ACTIVADO: Stop Loss ajustado de ${current_stop:.2f} a ${new_stop_loss:.2f} (protegiendo ${current_profit:.2f} de ganancia)")
+                        return {'should_close': False, 'trailing_stop_adjusted': True}
+                        
                 else:  # sell/short
-                    secured_profit_stop = entry_price - current_profit
-                    # Cerrar si el precio actual está por encima del stop de ganancia asegurada
-                    if current_price >= secured_profit_stop:
-                        return {
-                            'should_close': True,
-                            'reason': f'trailing_stop_activated_{trailing_activation_pct:.0%}',
-                            'secured_profit': current_profit,
-                            'exit_price': secured_profit_stop
-                        }
+                    # Para SELL: stop loss se baja para proteger ganancia
+                    new_stop_loss = entry_price - trailing_stop_level
+                    # Actualizar el stop loss en position_data si es mejor que el actual
+                    current_stop = position_data.get('stop_loss', entry_price)
+                    if new_stop_loss < current_stop:
+                        position_data['stop_loss'] = new_stop_loss
+                        position_data['trailing_stop_updated'] = True  # Marcar que el trailing stop se activó
+                        self.logger.info(f"🛡️ TRAILING STOP ACTIVADO: Stop Loss ajustado de ${current_stop:.2f} a ${new_stop_loss:.2f} (protegiendo ${current_profit:.2f} de ganancia)")
+                        return {'should_close': False, 'trailing_stop_adjusted': True}
 
             return {'should_close': False}
 

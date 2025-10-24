@@ -69,6 +69,7 @@ class CCXTLiveDataProvider:
         self.connected = False
         self.connection_lock = threading.Lock()
         self.data_cache = {}  # Cache de datos por símbolo y timeframe
+        self.max_cache_size = 50  # Límite máximo de entradas en cache para prevenir memory leaks
         self.market_status = {}  # Estado del mercado por símbolo (siempre True para crypto)
 
         # Configuración de reintentos
@@ -201,6 +202,71 @@ class CCXTLiveDataProvider:
         """
         return self.connected and self.exchange is not None
 
+    def _check_network_connectivity(self) -> bool:
+        """
+        Verifica la conectividad de red intentando hacer ping al exchange.
+
+        Returns:
+            bool: True si hay conectividad de red
+        """
+        try:
+            # Intentar hacer una petición simple al exchange
+            self.exchange.fetch_time()
+            return True
+        except Exception as e:
+            self.logger.warning(f"Error de conectividad de red con {self.exchange_name}: {e}")
+            return False
+
+    def _attempt_reconnection(self) -> bool:
+        """
+        Intenta reconectar automáticamente al exchange después de una desconexión.
+
+        Returns:
+            bool: True si la reconexión fue exitosa
+        """
+        self.logger.info(f"Intentando reconexión automática a {self.exchange_name}...")
+
+        try:
+            # Desconectar primero si hay una conexión existente
+            if self.connected:
+                self.disconnect()
+
+            # Intentar reconectar
+            success = self.connect()
+
+            if success:
+                self.logger.info(f"✅ Reconexión exitosa a {self.exchange_name}")
+                return True
+            else:
+                self.logger.error(f"❌ Falló reconexión a {self.exchange_name}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Error durante reconexión a {self.exchange_name}: {e}")
+            return False
+
+    def check_and_reconnect(self) -> bool:
+        """
+        Verifica el estado de la conexión y reconecta automáticamente si es necesario.
+        Método diseñado para ser llamado periódicamente por el health check.
+
+        Returns:
+            bool: True si la conexión está activa (después de reconectar si fue necesario)
+        """
+        # Si está conectado, verificar conectividad de red
+        if self.is_connected():
+            if self._check_network_connectivity():
+                return True  # Conexión OK
+            else:
+                self.logger.warning("Conectividad de red perdida, intentando reconexión...")
+                self.connected = False  # Marcar como desconectado
+
+        # Intentar reconexión si no está conectado
+        if not self.is_connected():
+            return self._attempt_reconnection()
+
+        return self.is_connected()
+
     def get_last_price(self, symbol: str) -> Optional[float]:
         """
         Obtiene el último precio (precio actual) para un símbolo.
@@ -279,6 +345,7 @@ class CCXTLiveDataProvider:
                         'data': df.copy(),
                         'timestamp': datetime.now()
                     }
+                    self._clean_cache()  # Limpiar cache si excede límite
                     # GUARDAR DATOS EN VIVO AUTOMÁTICAMENTE
                     self._save_live_data(symbol, timeframe, df)
                     self.logger.info(f"Datos históricos agrupados obtenidos: {symbol} {timeframe} - {len(df)} barras")
@@ -316,6 +383,7 @@ class CCXTLiveDataProvider:
                         'data': df.copy(),
                         'timestamp': datetime.now()
                     }
+                    self._clean_cache()  # Limpiar cache si excede límite
                     # GUARDAR DATOS EN VIVO AUTOMÁTICAMENTE
                     self._save_live_data(symbol, timeframe, df)
                     self.logger.info(f"Datos históricos agrupados obtenidos: {symbol} {timeframe} - {len(df)} barras")
@@ -357,6 +425,7 @@ class CCXTLiveDataProvider:
                 'data': df.copy(),
                 'timestamp': datetime.now()
             }
+            self._clean_cache()  # Limpiar cache si excede límite
 
             # GUARDAR DATOS EN VIVO AUTOMÁTICAMENTE
             self._save_live_data(symbol, timeframe, df)
@@ -472,6 +541,30 @@ class CCXTLiveDataProvider:
                 self.logger.error(f"Error actualizando cache de datos: {e}")
                 time.sleep(30)  # Esperar 30 segundos en caso de error
 
+    def _clean_cache(self):
+        """
+        Limpia el cache si excede el límite máximo para prevenir memory leaks.
+        Mantiene las entradas más recientes basadas en timestamp.
+        """
+        if len(self.data_cache) > self.max_cache_size:
+            try:
+                # Ordenar por timestamp (más reciente primero) y mantener solo las primeras max_cache_size
+                sorted_cache = sorted(
+                    self.data_cache.items(),
+                    key=lambda x: x[1]['timestamp'] if isinstance(x[1], dict) and 'timestamp' in x[1] else datetime.min,
+                    reverse=True
+                )
+
+                # Mantener solo las entradas más recientes
+                self.data_cache = dict(sorted_cache[:self.max_cache_size])
+                self.logger.info(f"Cache limpiado: reducido a {len(self.data_cache)} entradas (límite: {self.max_cache_size})")
+
+            except Exception as e:
+                self.logger.error(f"Error limpiando cache: {e}")
+                # En caso de error, limpiar completamente el cache como fallback
+                self.data_cache = {}
+                self.logger.warning("Cache limpiado completamente debido a error en limpieza")
+
     def start_real_time_updates(self):
         """
         Inicia actualizaciones en tiempo real en un hilo separado.
@@ -486,26 +579,61 @@ class CCXTLiveDataProvider:
 
     def get_account_balance(self) -> Optional[Dict]:
         """
-        Obtiene el balance de la cuenta del exchange.
+        Obtiene el balance REAL de la cuenta del exchange.
+        NO usa simulador ni fallback - solo balance REAL de la cuenta testnet.
+        
+        Para Binance testnet, usa endpoint SPOT ya que SAPI no está disponible.
 
         Returns:
-            Dict con balances o None si hay error
+            Dict con balances reales de la cuenta testnet
+            
+        Raises:
+            Exception: Si el balance no está disponible desde la cuenta testnet
         """
         if not self.is_connected():
-            self.logger.error("No conectado al exchange")
-            return None
+            raise Exception("No conectado al exchange - no se puede obtener balance")
 
         try:
             balance = self.exchange.fetch_balance()
+            
+            if balance is None:
+                raise Exception("Balance obtenido es None")
+            
             return {
                 'total': balance.get('total', {}),
                 'free': balance.get('free', {}),
                 'used': balance.get('used', {})
             }
-
-        except Exception as e:
-            self.logger.error(f"Error obteniendo balance de cuenta: {e}")
-            return None
+            
+        except Exception as first_error:
+            # Si el error es por SAPI en Binance testnet, intentar con SPOT
+            if 'sapi' in str(first_error).lower() or 'sandbox' in str(first_error).lower():
+                self.logger.warning(f"SAPI no disponible, intentando endpoint SPOT...")
+                
+                try:
+                    # Cambiar temporalmente a spot para obtener balance
+                    original_default_type = self.exchange.options.get('defaultType', 'margin')
+                    self.exchange.options['defaultType'] = 'spot'
+                    
+                    balance = self.exchange.fetch_balance()
+                    
+                    # Restaurar el defaultType original
+                    self.exchange.options['defaultType'] = original_default_type
+                    
+                    if balance is None:
+                        raise Exception("Balance con SPOT retornó None")
+                    
+                    return {
+                        'total': balance.get('total', {}),
+                        'free': balance.get('free', {}),
+                        'used': balance.get('used', {})
+                    }
+                    
+                except Exception as spot_error:
+                    self.logger.error(f"Error usando SPOT endpoint: {spot_error}")
+                    raise Exception(f"No se pudo obtener balance: {first_error}") from first_error
+            else:
+                raise
 
     def _save_live_data(self, symbol: str, timeframe: str, data: pd.DataFrame) -> None:
         """

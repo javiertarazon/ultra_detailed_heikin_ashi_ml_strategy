@@ -110,8 +110,30 @@ live_trading:
   - 15m
   enabled: true
   initial_history_bars: 500
-  max_positions: 2                    # Cambiar a 2 para permitir 2 posiciones simultáneas
-  max_positions_per_symbol: 1         # Mantener 1 por símbolo para evitar concentración
+  
+  # ========== TIPO DE TRADING ==========
+  # Opciones: 'spot' (compra/venta física), 'margin' (apalancado), 'futures' (perpetuos)
+  trading_mode: margin              # ⭐ CAMBIAR A 'futures' PARA PROBAR
+  
+  # Configuración de Margin Trading
+  margin_type: cross                # 'cross' (riesgo compartido) o 'isolated' (riesgo aislado por posición)
+  margin_leverage: 10               # Apalancamiento: 1-20x (recomendado 5-10x)
+  
+  # Configuración de Futures/Perpetuales
+  futures_leverage: 10              # Apalancamiento: 1-20x
+  futures_position_mode: 'net'      # 'net' (unidireccional) o 'hedge' (long+short simultáneamente)
+  futures_mode_type: 'USD-M'        # 'USD-M' (BTC/USDT perpetuals) o 'COIN-M' (BTC/USD coin perpetuals)
+  
+  # Configuración de límite de posiciones
+  enable_position_limit: false        # ⚠️ DESACTIVADO: Permite múltiples operaciones sin límite
+  max_positions: 2                    # Se usa solo si enable_position_limit=true
+  max_positions_per_symbol: 1         # Se usa solo si enable_position_limit=true
+  
+  # Sincronización de posiciones (CRÍTICA - EVITA CIERRE PREMATURO)
+  position_sync_timeout: 5            # Segundos antes de considerar una posición como cerrada
+  position_sync_interval: 10          # Segundos entre sincronizaciones de posiciones reales
+  use_open_orders_only: false         # ⭐ IMPORTANTE: false=busca también posiciones ejecutadas, true=solo órdenes abiertas
+  
   mode: CCXT
   mt5_symbols:
   - EURUSD
@@ -124,7 +146,7 @@ live_trading:
   risk_per_trade: 0.002
   # Parámetros conservadores MT5-style para cripto
   max_risk_per_trade_usd: 50.0        # Máximo $50 USD por trade
-  max_position_crypto: 0.001          # Máximo 0.001 BTC por posición
+  max_position_crypto: 0.001          # Máximo 0.001 BTC por posición (solo en spot)
   min_position_crypto: 0.0001         # Mínimo 0.0001 BTC por posición
   max_position_size: 0.01             # Máximo 1% del balance por posición
   trailing_activation_pct: 0.65

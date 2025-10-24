@@ -514,6 +514,12 @@ class TechnicalIndicators:
             for col in emas_df.columns:
                 result_df[col] = emas_df[col]
             
+            # Trend Strength (requiere EMA_10, EMA_20 y ATR)
+            if 'ema_10' in result_df.columns and 'ema_20' in result_df.columns and 'atr' in result_df.columns:
+                result_df['trend_strength'] = abs(result_df['ema_10'] - result_df['ema_20']) / result_df['atr']
+            else:
+                result_df['trend_strength'] = np.nan
+            
             # SAR - Calculado y normalizado de forma especial
             sar_values = self.calculate_sar(df)
             result_df['sar'] = self.normalize_sar(sar_values, df)
@@ -529,18 +535,48 @@ class TechnicalIndicators:
                     # RSI usando talib wrapper
                     result_df['rsi'] = talib.RSI(df['close'], timeperiod=14)
                     
+                    # STOCHASTIC OSCILLATOR usando talib wrapper
+                    stoch_k, stoch_d = talib.STOCH(df['high'], df['low'], df['close'], 
+                                                 fastk_period=14, slowk_period=3, slowd_period=3)
+                    result_df['stoch_k'] = stoch_k
+                    result_df['stoch_d'] = stoch_d
+                    
+                    # COMMODITY CHANNEL INDEX usando talib wrapper
+                    result_df['cci'] = talib.CCI(df['high'], df['low'], df['close'], timeperiod=14)
+                    
+                    # BOLLINGER BANDS usando talib wrapper
+                    bb_upper, bb_middle, bb_lower = talib.BBANDS(df['close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
+                    result_df['bb_upper'] = bb_upper
+                    result_df['bb_middle'] = bb_middle
+                    result_df['bb_lower'] = bb_lower
+                    result_df['bb_width'] = (bb_upper - bb_lower) / bb_middle
+                    
                 except Exception as e:
-                    self.logger.warning(f"Error calculando MACD/RSI con talib wrapper: {e}")
+                    self.logger.warning(f"Error calculando indicadores con talib wrapper: {e}")
                     # Implementaciones fallback simples
                     result_df['macd'] = np.nan
                     result_df['macd_signal'] = np.nan
                     result_df['rsi'] = np.nan
+                    result_df['stoch_k'] = np.nan
+                    result_df['stoch_d'] = np.nan
+                    result_df['cci'] = np.nan
+                    result_df['bb_upper'] = np.nan
+                    result_df['bb_middle'] = np.nan
+                    result_df['bb_lower'] = np.nan
+                    result_df['bb_width'] = np.nan
             else:
                 # Implementaciones propias si TALIB no está disponible
-                self.logger.warning("talib wrapper no disponible, indicadores MACD/RSI no calculados")
+                self.logger.warning("talib wrapper no disponible, indicadores no calculados")
                 result_df['macd'] = np.nan
                 result_df['macd_signal'] = np.nan
                 result_df['rsi'] = np.nan
+                result_df['stoch_k'] = np.nan
+                result_df['stoch_d'] = np.nan
+                result_df['cci'] = np.nan
+                result_df['bb_upper'] = np.nan
+                result_df['bb_middle'] = np.nan
+                result_df['bb_lower'] = np.nan
+                result_df['bb_width'] = np.nan
             
             # Verificar que tenemos todas las columnas necesarias
             required_columns = ['open', 'high', 'low', 'close', 'volume', 'timestamp']

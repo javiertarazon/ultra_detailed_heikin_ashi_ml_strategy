@@ -37,6 +37,9 @@ from config.config_loader import load_config
 from utils.logger import setup_logger
 from risk_management.risk_management import apply_risk_management, get_risk_manager
 
+# Importar Live Trading Tracker
+from utils.live_trading_tracker import LiveTradingTracker
+
 # Configurar logging
 logger = setup_logger('CCXTLiveTradingOrchestrator')
 
@@ -106,113 +109,128 @@ class CCXTLiveTradingOrchestrator:
         self.position_update_lock = threading.Lock()
         self.stop_monitoring = False
 
-        # Métricas en vivo
-        self.live_metrics = {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'total_pnl': 0.0,
-            'max_drawdown': 0.0,
-            'win_rate': 0.0,
-            'profit_factor': 0.0,
-            'start_time': datetime.now(),
-            'runtime_minutes': 0
-        }
+        # Inicializar Live Trading Tracker con balance inicial
+        initial_balance = self.live_config.get('initial_balance', 100000.0)
+        self.live_tracker = LiveTradingTracker(initial_balance=initial_balance)
+
+        # Intentar cargar estado anterior del tracker
+        self._load_tracker_state()
+
+        # Mantener compatibilidad con código existente (deprecated)
+        self.live_metrics = self.live_tracker.get_comprehensive_metrics()
 
         logger.info("CCXTLiveTradingOrchestrator inicializado correctamente")
 
     def get_effective_portfolio_value(self) -> float:
         """
-        Calcula el valor efectivo del portfolio usando el balance real de la cuenta.
-        En modo live, siempre usamos el balance actual disponible.
+        Calcula el valor efectivo del portfolio usando el balance REAL de la cuenta.
+        En modo live, siempre usamos el balance actual disponible desde la cuenta testnet.
+        NO usa simulador ni fallback.
+        
+        Para Binance testnet, usa endpoint SPOT para obtener balance ya que SAPI no está disponible.
 
         Returns:
-            float: Valor efectivo del portfolio (balance real disponible)
+            float: Valor efectivo del portfolio (balance REAL disponible de la cuenta testnet)
+            
+        Raises:
+            Exception: Si el balance no está disponible desde la cuenta testnet
         """
+        exchange = self.order_executor.exchange
+        
         try:
-            # En modo live, el capital efectivo es simplemente el balance disponible
-            # No necesitamos calcular posiciones abiertas ya que el balance ya refleja eso
-            balance_info = self.order_executor.exchange.fetch_balance()
-            available_usdt = balance_info.get('free', {}).get('USDT', 0)
-
-            logger.debug(f"Capital efectivo (balance real): ${available_usdt:.2f} USDT")
+            # Intentar obtener balance con la configuración actual
+            balance_info = exchange.fetch_balance()
+            
+            if balance_info is None:
+                raise Exception("fetch_balance() retornó None")
+            
+            available_usdt = balance_info.get('free', {}).get('USDT', 0) if isinstance(balance_info.get('free'), dict) else 0
+            logger.debug(f"Capital efectivo REAL (balance testnet): ${available_usdt:.2f} USDT")
             return available_usdt
-
-        except Exception as e:
-            logger.error(f"Error obteniendo balance real: {e}")
-            # Fallback: usar balance almacenado
-            return self.real_account_balance
+            
+        except Exception as first_error:
+            # Si el error es por SAPI en Binance testnet, intentar con SPOT
+            if 'sapi' in str(first_error).lower() or 'sandbox' in str(first_error).lower():
+                logger.warning(f"SAPI no disponible, intentando endpoint SPOT...")
+                
+                try:
+                    # Cambiar temporalmente a spot para obtener balance
+                    original_default_type = exchange.options.get('defaultType', 'margin')
+                    exchange.options['defaultType'] = 'spot'
+                    
+                    balance_info = exchange.fetch_balance()
+                    
+                    # Restaurar el defaultType original
+                    exchange.options['defaultType'] = original_default_type
+                    
+                    if balance_info is None:
+                        raise Exception("fetch_balance() con SPOT retornó None")
+                    
+                    available_usdt = balance_info.get('free', {}).get('USDT', 0) if isinstance(balance_info.get('free'), dict) else 0
+                    logger.debug(f"Capital efectivo REAL via SPOT endpoint: ${available_usdt:.2f} USDT")
+                    return available_usdt
+                    
+                except Exception as spot_error:
+                    logger.error(f"Error usando SPOT endpoint: {spot_error}")
+                    raise Exception(f"No se pudo obtener balance testnet: {first_error}") from first_error
+            else:
+                raise
 
     def get_real_account_balance(self) -> float:
         """
-        Obtiene el balance real actual de la cuenta desde el exchange.
-        Este método se usa para inicializar el capital disponible en modo live.
+        Obtiene el balance REAL de la cuenta desde el exchange. 
+        NO usa simulador ni fallback - solo balance REAL de la cuenta testnet.
+        
+        Para Binance testnet, usa endpoint SPOT para obtener balance ya que SAPI no está disponible.
 
         Returns:
-            float: Balance real en USDT disponible para trading
+            float: Balance REAL en USDT disponible para trading desde la cuenta testnet
+            
+        Raises:
+            Exception: Si el balance no está disponible desde la cuenta testnet
         """
+        exchange = self.order_executor.exchange
+        
         try:
-            balance_info = self.order_executor.exchange.fetch_balance()
-            available_usdt = balance_info.get('free', {}).get('USDT', 0)
-
-            logger.info(f"Balance real de cuenta obtenido: ${available_usdt:.2f} USDT")
+            # Intentar obtener balance con la configuración actual (puede ser margin/futures)
+            balance_info = exchange.fetch_balance()
+            
+            if balance_info is None:
+                raise Exception("fetch_balance() retornó None")
+            
+            available_usdt = balance_info.get('free', {}).get('USDT', 0) if isinstance(balance_info.get('free'), dict) else 0
+            logger.info(f"Balance REAL de cuenta testnet obtenido: ${available_usdt:.2f} USDT")
             return available_usdt
+            
+        except Exception as first_error:
+            # Si el error es por SAPI en Binance testnet, intentar con SPOT
+            if 'sapi' in str(first_error).lower() or 'sandbox' in str(first_error).lower():
+                logger.warning(f"SAPI no disponible en testnet ({first_error}), intentando endpoint SPOT...")
+                
+                try:
+                    # Cambiar temporalmente a spot para obtener balance
+                    original_default_type = exchange.options.get('defaultType', 'margin')
+                    exchange.options['defaultType'] = 'spot'
+                    
+                    balance_info = exchange.fetch_balance()
+                    
+                    # Restaurar el defaultType original
+                    exchange.options['defaultType'] = original_default_type
+                    
+                    if balance_info is None:
+                        raise Exception("fetch_balance() con SPOT retornó None")
+                    
+                    available_usdt = balance_info.get('free', {}).get('USDT', 0) if isinstance(balance_info.get('free'), dict) else 0
+                    logger.info(f"Balance REAL de cuenta testnet obtenido via SPOT endpoint: ${available_usdt:.2f} USDT")
+                    return available_usdt
+                    
+                except Exception as spot_error:
+                    logger.error(f"Error usando SPOT endpoint: {spot_error}")
+                    raise Exception(f"No se pudo obtener balance desde testnet SAPI ni SPOT: {first_error}") from first_error
+            else:
+                # Error diferente, no es por SAPI
+                raise Exception(f"Error obteniendo balance testnet: {first_error}") from first_error
 
-        except Exception as e:
-            logger.error(f"Error obteniendo balance real de cuenta: {e}")
-            # Fallback: usar capital configurado como último recurso
-            fallback_capital = self.backtesting_config.get('initial_capital', 1000.0)
-            logger.warning(f"Usando capital fallback: ${fallback_capital:.2f}")
-            return fallback_capital
-
-    def get_effective_portfolio_value(self) -> float:
-        """
-        Calcula el valor efectivo total del portfolio incluyendo USDT y valor de criptomonedas.
-
-        Para BTC/USDT, incluye:
-        - Balance de USDT disponible
-        - Valor de BTC en USDT (balance_BTC * precio_actual_BTC)
-
-        Returns:
-            float: Valor total efectivo del portfolio en USDT
-        """
-        try:
-            balance_info = self.order_executor.exchange.fetch_balance()
-
-            # Obtener balance de USDT
-            usdt_balance = balance_info.get('free', {}).get('USDT', 0)
-
-            # Obtener balance de BTC y calcular su valor en USDT
-            btc_balance = balance_info.get('free', {}).get('BTC', 0)
-
-            # Obtener precio actual de BTC/USDT
-            try:
-                ticker = self.order_executor.exchange.fetch_ticker('BTC/USDT')
-                btc_price = ticker.get('last', 0)
-            except Exception as e:
-                logger.warning(f"Error obteniendo precio BTC: {e}, usando precio estimado")
-                btc_price = 60000  # Precio fallback conservador
-
-            # Calcular valor total del portfolio
-            btc_value_in_usdt = btc_balance * btc_price
-            total_portfolio_value = usdt_balance + btc_value_in_usdt
-
-            logger.info(f"Valor efectivo del portfolio: ${total_portfolio_value:.2f} "
-                       f"(USDT: ${usdt_balance:.2f} + BTC: {btc_balance:.6f} × ${btc_price:.0f} = ${btc_value_in_usdt:.2f})")
-
-            # Asegurar un mínimo razonable para evitar cálculos con valores muy pequeños
-            if total_portfolio_value < 100:
-                logger.warning(f"Portfolio value muy pequeño: ${total_portfolio_value:.2f}, usando fallback")
-                total_portfolio_value = self.backtesting_config.get('initial_capital', 2500.0)
-
-            return total_portfolio_value
-
-        except Exception as e:
-            logger.error(f"Error calculando valor efectivo del portfolio: {e}")
-            # Fallback: usar capital configurado
-            fallback_capital = self.backtesting_config.get('initial_capital', 2500.0)
-            logger.warning(f"Usando capital fallback: ${fallback_capital:.2f}")
-            return fallback_capital
 
     def connect(self) -> bool:
         """
@@ -235,6 +253,12 @@ class CCXTLiveTradingOrchestrator:
             # Obtener balance real de la cuenta para usar en cálculos de riesgo
             self.real_account_balance = self.get_real_account_balance()
             logger.info(f"Balance real de cuenta establecido para trading: ${self.real_account_balance:.2f} USDT")
+
+            # ✅ ACTUALIZAR TRACKER CON BALANCE REAL
+            # Reemplazar el tracker inicializado con balance simulado por uno con balance real
+            self.live_tracker = LiveTradingTracker(initial_balance=self.real_account_balance)
+            self.live_metrics = self.live_tracker.get_comprehensive_metrics()
+            logger.info(f"Live Trading Tracker actualizado con balance real: ${self.real_account_balance:.2f} USDT")
 
             # Sincronizar posiciones abiertas desde el exchange
             self._sync_open_positions()
@@ -290,6 +314,14 @@ class CCXTLiveTradingOrchestrator:
                           f"Quantity: {position.get('quantity', 0)} - "
                           f"Entry: ${position.get('entry_price', 0):.2f} - "
                           f"Source: {source}")
+
+            # Sincronizar también las posiciones en el order_executor
+            if hasattr(self.order_executor, 'sync_positions_with_exchange'):
+                sync_success = self.order_executor.sync_positions_with_exchange()
+                if sync_success:
+                    logger.info("✅ Posiciones del order_executor sincronizadas con exchange")
+                else:
+                    logger.warning("⚠️ Error sincronizando posiciones del order_executor")
 
             if synced_count > 0:
                 logger.info(f"🎯 Sincronizadas {synced_count} posiciones REALES desde testnet")
@@ -366,6 +398,17 @@ class CCXTLiveTradingOrchestrator:
                 if duration_minutes and (time.time() - start_time) > (duration_minutes * 60):
                     logger.info(f"Duración límite alcanzada ({duration_minutes} minutos)")
                     break
+
+                # Health check cada 300 ciclos (5 minutos)
+                if cycle_count % 300 == 0:
+                    if not self._health_check():
+                        logger.error("❌ Health check falló - sistema inestable")
+                        logger.info("🔄 Intentando recuperación automática...")
+                        if not self._attempt_recovery():
+                            logger.error("❌ Recuperación falló - deteniendo sistema")
+                            break
+                        else:
+                            logger.info("✅ Recuperación exitosa - continuando...")
 
                 # Procesar señales de trading cada 60 segundos
                 if cycle_count % 60 == 0:
@@ -496,21 +539,47 @@ class CCXTLiveTradingOrchestrator:
             if signal in ['BUY', 'SELL'] and signal_data.get('current_signal') == signal:
                 logger.info(f"Abrir nueva posición {signal} para {symbol} - Estrategia: {strategy_name}")
 
-                # Verificar límites de posiciones antes de proceder
+                # 🔄 SINCRONIZACIÓN CRÍTICA: Sincronizar posiciones REALES desde el exchange
+                # Esto asegura que el diccionario active_positions esté actualizado
+                try:
+                    real_positions = self.order_executor.get_open_positions()
+                    if isinstance(real_positions, list):
+                        # Actualizar active_positions con posiciones reales
+                        real_tickets = set()
+                        for pos in real_positions:
+                            ticket = pos.get('id') or pos.get('ticket') or pos.get('position_id')
+                            if ticket:
+                                real_tickets.add(ticket)
+
+                        # Remover posiciones que ya no existen en el exchange
+                        tickets_to_remove = []
+                        for ticket in self.active_positions:
+                            if ticket not in real_tickets:
+                                logger.info(f"🔄 Removiendo posición {ticket} del seguimiento - ya cerrada en exchange")
+                                tickets_to_remove.append(ticket)
+
+                        for ticket in tickets_to_remove:
+                            if ticket in self.active_positions:
+                                del self.active_positions[ticket]
+
+                        logger.info(f"🔄 Sincronización completada: {len(real_tickets)} posiciones reales, {len(self.active_positions)} en seguimiento")
+
+                except Exception as e:
+                    logger.warning(f"Error sincronizando posiciones reales: {e}")
+
+                # Verificar límites de posiciones después de sincronización
                 total_positions = len(self.active_positions)
-                max_positions = self.live_config.get('max_positions', 1)
-
-                if total_positions >= max_positions:
-                    logger.info(f"Límite total de posiciones alcanzado: {total_positions}/{max_positions}")
-                    return
-
-                # Contar posiciones para este símbolo específico
-                symbol_positions = sum(1 for pos in self.active_positions.values() if pos.get('symbol') == symbol)
-                max_positions_per_symbol = self.live_config.get('max_positions_per_symbol', 1)
-
-                if symbol_positions >= max_positions_per_symbol:
-                    logger.info(f"Límite de posiciones por símbolo alcanzado para {symbol}: {symbol_positions}/{max_positions_per_symbol}")
-                    return
+                enable_position_limit = self.live_config.get('enable_position_limit', False)
+                
+                if enable_position_limit:
+                    max_positions = self.live_config.get('max_positions', 100)
+                    if total_positions >= max_positions:
+                        logger.info(f"Límite total de posiciones alcanzado: {total_positions}/{max_positions}")
+                        return
+                
+                # DESACTIVADO: Límite por símbolo removido para permitir múltiples operaciones en BTC/USDT
+                # Los límites antiguos de 1 posición por símbolo bloqueaban el trading
+                # Ahora permitimos múltiples posiciones por símbolo con apalancamiento
 
                 # Extraer parámetros de risk management de la estrategia
                 order_type = OrderType.BUY if signal == 'BUY' else OrderType.SELL
@@ -725,17 +794,33 @@ class CCXTLiveTradingOrchestrator:
                 position = self.active_positions[ticket]
                 pnl = position.get('pnl', 0)
                 exit_reason = close_info.get('reason', 'unknown')
-                
+
+                # Crear datos de trade para el tracker
+                trade_data = {
+                    'symbol': position['symbol'],
+                    'side': position['type'],
+                    'entry_price': position['entry_price'],
+                    'exit_price': position.get('current_price', position['entry_price']),
+                    'quantity': position.get('quantity', position.get('size', 0)),
+                    'pnl': pnl,
+                    'open_time': position.get('open_time', datetime.now()),
+                    'close_time': datetime.now(),
+                    'exit_reason': exit_reason
+                }
+
+                # Agregar trade al LiveTradingTracker
+                self.live_tracker.add_trade(trade_data)
+
+                # Actualizar live_metrics para compatibilidad (deprecated)
+                self.live_metrics = self.live_tracker.get_comprehensive_metrics()
+
                 # Determinar emoji y mensaje según el resultado
-                # Si se cerró por trailing stop activado, SIEMPRE es ganancia (asegura profits)
-                if 'trailing_stop_activated' in exit_reason or pnl > 0:
+                if pnl > 0:
                     result_emoji = "✅"
                     result_msg = "GANANCIA"
-                    self.live_metrics['winning_trades'] += 1
                 else:
                     result_emoji = "❌"
                     result_msg = "PÉRDIDA"
-                    self.live_metrics['losing_trades'] += 1
 
                 # Log detallado del cierre
                 logger.info(f"🔒 CIERRE DE OPERACIÓN {result_emoji}")
@@ -746,29 +831,21 @@ class CCXTLiveTradingOrchestrator:
                 logger.info(f"   ⏱️ Duración: {position.get('duration', 'N/A')}")
 
                 position['exit_reason'] = exit_reason
-                self.live_metrics['total_pnl'] += pnl
                 self.position_history.append(position)
                 del self.active_positions[ticket]
 
+                # ⏳ PEQUEÑO DELAY después de cerrar una posición para evitar señales inmediatas
+                # Esto da tiempo al exchange para procesar el cierre
+                time.sleep(2)
+
     def _update_metrics(self):
         """
-        Actualiza las métricas de rendimiento en vivo.
+        Actualiza las métricas de rendimiento en vivo usando LiveTradingTracker.
         """
         try:
-            # Calcular win rate
-            total_closed = self.live_metrics['winning_trades'] + self.live_metrics['losing_trades']
-            if total_closed > 0:
-                self.live_metrics['win_rate'] = self.live_metrics['winning_trades'] / total_closed
-
-            # Calcular profit factor
-            winning_pnl = sum(p.get('pnl', 0) for p in self.position_history if p.get('pnl', 0) > 0)
-            losing_pnl = abs(sum(p.get('pnl', 0) for p in self.position_history if p.get('pnl', 0) < 0))
-
-            if losing_pnl > 0:
-                self.live_metrics['profit_factor'] = winning_pnl / losing_pnl
-
-            # Calcular tiempo de ejecución
-            self.live_metrics['runtime_minutes'] = (datetime.now() - self.live_metrics['start_time']).total_seconds() / 60
+            # El LiveTradingTracker se actualiza automáticamente cuando se agregan trades
+            # Solo necesitamos actualizar la referencia para compatibilidad
+            self.live_metrics = self.live_tracker.get_comprehensive_metrics()
 
         except Exception as e:
             logger.error(f"Error actualizando métricas: {e}")
@@ -992,6 +1069,16 @@ class CCXTLiveTradingOrchestrator:
                     # Convertir position_history a JSON serializable antes de guardar
                     serializable_history = [convert_to_json_serializable(pos) for pos in self.position_history[-20:]]
                     json.dump(serializable_history, f, indent=2)  # Guardar últimas 20 actualizaciones
+
+                # Guardar estado del tracker periódicamente
+                if self.live_tracker.should_save():
+                    results_dir = Path(__file__).parent.parent / "data" / "live_trading_results"
+                    results_dir.mkdir(parents=True, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    tracker_filename = f"live_tracker_auto_{timestamp}.json"
+                    tracker_filepath = results_dir / tracker_filename
+                    self.live_tracker.save_to_file(str(tracker_filepath))
+                    logger.info(f"Estado del tracker guardado automáticamente: {tracker_filepath}")
         
         except Exception as e:
             logger.error(f"Error guardando actualizaciones de posiciones: {e}")
@@ -1019,19 +1106,125 @@ class CCXTLiveTradingOrchestrator:
         self.running = False
         logger.info("Limpieza completada")
 
+    def _health_check(self) -> bool:
+        """
+        Realiza verificación de salud del sistema.
+        
+        Returns:
+            bool: True si el sistema está saludable
+        """
+        try:
+            issues = []
+            
+            # 1. Verificar conexión a exchange
+            if not self.data_provider.is_connected():
+                issues.append("Conexión a exchange perdida")
+            
+            # 2. Verificar uso de memoria
+            try:
+                import psutil
+                memory = psutil.virtual_memory()
+                if memory.percent > 85:
+                    issues.append(f"Uso de memoria alto: {memory.percent:.1f}%")
+            except ImportError:
+                logger.debug("psutil no disponible para verificación de memoria")
+            
+            # 3. Verificar conectividad de red y reconectar si es necesario
+            if hasattr(self.data_provider, 'check_and_reconnect'):
+                if not self.data_provider.check_and_reconnect():
+                    issues.append("Error de conectividad de red - reconexión fallida")
+            
+            # 4. Verificar tamaño del cache
+            if hasattr(self.data_provider, 'data_cache'):
+                cache_size = len(self.data_provider.data_cache)
+                if cache_size > 50:  # Límite consistente con max_cache_size en data provider
+                    issues.append(f"Cache muy grande: {cache_size} entradas (límite: 50)")
+            
+            # 5. Verificar que el logger funciona
+            try:
+                logger.debug("Health check - logger test")
+            except:
+                issues.append("Logger no funciona correctamente")
+            
+            if issues:
+                logger.warning(f"⚠️ Problemas de salud detectados: {', '.join(issues)}")
+                return False
+            
+            logger.debug("✅ Health check exitoso")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error en health check: {e}")
+            return False
+
+    def _attempt_recovery(self) -> bool:
+        """
+        Intenta recuperar el sistema de problemas de salud.
+        
+        Returns:
+            bool: True si la recuperación fue exitosa
+        """
+        try:
+            logger.info("🔧 Iniciando recuperación del sistema...")
+            
+            # 1. Intentar reconectar componentes
+            if not self.data_provider.is_connected():
+                logger.info("Reconectando data provider...")
+                if not self.data_provider.connect():
+                    logger.error("No se pudo reconectar data provider")
+                    return False
+            
+            if not self.order_executor.is_connected():
+                logger.info("Reconectando order executor...")
+                if not self.order_executor.connect():
+                    logger.error("No se pudo reconectar order executor")
+                    return False
+            
+            # 2. Limpiar cache si es muy grande
+            if hasattr(self.data_provider, 'data_cache'):
+                cache_size = len(self.data_provider.data_cache)
+                if cache_size > 50:
+                    logger.info(f"Limpiando cache ({cache_size} entradas)...")
+                    # Mantener solo las 20 entradas más recientes
+                    if hasattr(self.data_provider.data_cache, 'items'):
+                        sorted_cache = sorted(
+                            self.data_provider.data_cache.items(),
+                            key=lambda x: x[1]['timestamp'] if isinstance(x[1], dict) and 'timestamp' in x[1] else datetime.min,
+                            reverse=True
+                        )
+                        self.data_provider.data_cache = dict(sorted_cache[:20])
+                        logger.info(f"Cache reducido a {len(self.data_provider.data_cache)} entradas")
+            
+            # 3. Verificar estrategias
+            if not self.strategy_instances:
+                logger.info("Recargando estrategias...")
+                self.load_strategies()
+            
+            # 4. Sincronizar posiciones
+            logger.info("Sincronizando posiciones...")
+            self._sync_open_positions()
+            
+            logger.info("✅ Recuperación completada exitosamente")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error durante recuperación: {e}")
+            return False
+
     def _save_trading_results(self):
         """
-        Guarda los resultados del trading en vivo en un archivo JSON.
+        Guarda los resultados del trading en vivo en un archivo JSON usando LiveTradingTracker.
         """
         try:
             # Crear directorio si no existe
             results_dir = Path(__file__).parent.parent / "data" / "live_trading_results"
             results_dir.mkdir(parents=True, exist_ok=True)
 
-            # Preparar datos para guardar
+            # Preparar datos para guardar usando el LiveTradingTracker
             results = {
-                'live_metrics': self.live_metrics,
-                'position_history': self.position_history,
+                'live_metrics': self.live_tracker.get_comprehensive_metrics(),
+                'position_history': self.live_tracker.trades_history,
+                'equity_curve': self.live_tracker.equity_curve,
                 'active_positions': list(self.active_positions.values()),
                 'config': {
                     'exchange': self.exchange_name,
@@ -1051,24 +1244,64 @@ class CCXTLiveTradingOrchestrator:
 
             logger.info(f"Resultados guardados en {filepath}")
 
+            # También guardar estado del tracker para recuperación
+            tracker_filename = f"live_tracker_state_{timestamp}.json"
+            tracker_filepath = results_dir / tracker_filename
+            self.live_tracker.save_to_file(str(tracker_filepath))
+
         except Exception as e:
             logger.error(f"Error guardando resultados: {e}")
 
+    def _load_tracker_state(self):
+        """
+        Carga el estado anterior del LiveTradingTracker si existe.
+        """
+        try:
+            results_dir = Path(__file__).parent.parent / "data" / "live_trading_results"
+
+            if not results_dir.exists():
+                logger.info("No hay estado anterior del tracker para cargar")
+                return
+
+            # Buscar el archivo de estado del tracker más reciente
+            tracker_files = sorted(results_dir.glob("live_tracker_state_*.json"))
+
+            if not tracker_files:
+                logger.info("No se encontraron archivos de estado del tracker")
+                return
+
+            latest_tracker_file = tracker_files[-1]
+
+            if self.live_tracker.load_from_file(str(latest_tracker_file)):
+                logger.info(f"Estado del tracker cargado desde: {latest_tracker_file}")
+            else:
+                logger.warning(f"No se pudo cargar el estado del tracker desde: {latest_tracker_file}")
+
+        except Exception as e:
+            logger.error(f"Error cargando estado del tracker: {e}")
+
     def get_status(self) -> Dict[str, Any]:
         """
-        Obtiene el estado actual del orquestador.
+        Obtiene el estado actual del orquestador usando LiveTradingTracker.
 
         Returns:
             Dict con información del estado
         """
+        metrics = self.live_tracker.get_comprehensive_metrics()
+
         return {
             'running': self.running,
             'connected': self.data_provider.is_connected() and self.order_executor.is_connected(),
             'active_positions': len(self.active_positions),
-            'total_trades': self.live_metrics['total_trades'],
-            'win_rate': self.live_metrics['win_rate'],
-            'total_pnl': self.live_metrics['total_pnl'],
-            'runtime_minutes': self.live_metrics['runtime_minutes']
+            'total_trades': metrics['total_trades'],
+            'win_rate': metrics['win_rate'],
+            'total_pnl': metrics['total_pnl'],
+            'runtime_minutes': metrics['runtime_minutes'],
+            'current_balance': metrics['current_balance'],
+            'max_drawdown': metrics['max_drawdown'],
+            'profit_factor': metrics['profit_factor'],
+            'sharpe_ratio': metrics['sharpe_ratio'],
+            'expectancy': metrics['expectancy']
         }
 
     def _save_data_with_indicators(self, symbol: str, timeframe: str, data: pd.DataFrame) -> None:

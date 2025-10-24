@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import logging
@@ -57,6 +58,14 @@ class AdvancedDataDownloader:
         # Exchange activo preferido (prioridad en fallback)
         self.active_exchange = getattr(config, 'active_exchange', None)
 
+    async def _async_ccxt_call(self, exchange, method_name: str, *args, **kwargs):
+        """Ejecuta llamadas síncronas de CCXT en un thread pool para compatibilidad async"""
+        loop = asyncio.get_event_loop()
+        method = getattr(exchange, method_name)
+        # Usar partial para pasar kwargs correctamente a run_in_executor
+        func = partial(method, *args, **kwargs)
+        return await loop.run_in_executor(None, func)
+
     # ===================== SOPORTE Fallback Exchanges =====================
     def _get_exchange_priority_list(self) -> List[str]:
         """Devuelve la lista ordenada de exchanges a intentar.
@@ -92,7 +101,7 @@ class AdvancedDataDownloader:
         try:
             # Cargar mercados si no están cargados
             if not hasattr(exchange, 'markets') or not exchange.markets:
-                await exchange.loadMarkets()
+                await self._async_ccxt_call(exchange, 'loadMarkets')
             
             # Verificar si el símbolo existe
             return symbol in exchange.markets
@@ -114,7 +123,7 @@ class AdvancedDataDownloader:
         stalls = 0
 
         while since < end_ms:
-            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
+            ohlcv = await self._async_ccxt_call(exchange, 'fetch_ohlcv', symbol, timeframe=timeframe, since=since, limit=limit)
             if not ohlcv:
                 self.logger.warning(f"{symbol} sin datos adicionales (paginación detenida) [{exchange_name}]")
                 break
@@ -230,48 +239,56 @@ class AdvancedDataDownloader:
             # Configurar Bybit
             if 'bybit' in self.config.exchanges and self.config.exchanges['bybit'].enabled:
                 exchange_config = self.config.exchanges['bybit']
-                self.ccxt_exchanges['bybit'] = ccxt.bybit({
+                exchange = ccxt.bybit({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,
                     'timeout': exchange_config.timeout,
                 })
+                # Convertir a async para CCXT v4+
+                self.ccxt_exchanges['bybit'] = exchange
                 success_count += 1
                 self.logger.info("Bybit configurado")
 
             # Configurar Binance
             if 'binance' in self.config.exchanges and self.config.exchanges['binance'].enabled:
                 exchange_config = self.config.exchanges['binance']
-                self.ccxt_exchanges['binance'] = ccxt.binance({
+                exchange = ccxt.binance({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,
                     'timeout': exchange_config.timeout,
                 })
+                # Convertir a async para CCXT v4+
+                self.ccxt_exchanges['binance'] = exchange
                 success_count += 1
                 self.logger.info("Binance configurado")
 
             # Configurar KuCoin
             if 'kucoin' in self.config.exchanges and self.config.exchanges['kucoin'].enabled:
                 exchange_config = self.config.exchanges['kucoin']
-                self.ccxt_exchanges['kucoin'] = ccxt.kucoin({
+                exchange = ccxt.kucoin({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,
                     'timeout': exchange_config.timeout,
                 })
+                # Convertir a async para CCXT v4+
+                self.ccxt_exchanges['kucoin'] = exchange
                 success_count += 1
                 self.logger.info("KuCoin configurado")
 
             # Configurar OKX
             if 'okx' in self.config.exchanges and self.config.exchanges['okx'].enabled:
                 exchange_config = self.config.exchanges['okx']
-                self.ccxt_exchanges['okx'] = ccxt.okx({
+                exchange = ccxt.okx({
                     'apiKey': exchange_config.api_key or '',
                     'secret': exchange_config.api_secret or '',
                     'sandbox': exchange_config.sandbox,
                     'timeout': exchange_config.timeout,
                 })
+                # Convertir a async para CCXT v4+
+                self.ccxt_exchanges['okx'] = exchange
                 success_count += 1
                 self.logger.info("OKX configurado")
 
@@ -1233,7 +1250,7 @@ class AdvancedDataDownloader:
 
         try:
             # Descargar datos
-            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            ohlcv = await self._async_ccxt_call(exchange, 'fetch_ohlcv', symbol, timeframe=timeframe, limit=limit)
 
             if not ohlcv:
                 return None, {"error": "No data received"}

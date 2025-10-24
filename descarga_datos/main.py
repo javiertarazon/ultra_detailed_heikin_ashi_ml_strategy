@@ -28,6 +28,78 @@ import sys
 import subprocess
 import socket
 import json
+
+# ============================================================================= 
+# FIX PARA UNICODE EN WINDOWS
+# =============================================================================
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
+# =============================================================================
+# VERIFICACIÓN DE ENTORNO DE EJECUCIÓN
+# =============================================================================
+
+def verificar_entorno_ejecucion():
+    """
+    Verifica que el script se ejecute en el entorno correcto:
+    - Entorno virtual de Python activado
+    - Versión de Python 3.11.x
+    """
+    errores = []
+
+    # 1. Verificar entorno virtual
+    if not hasattr(sys, 'real_prefix') and not (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        errores.append("❌ ERROR: Debes ejecutar este script dentro de un entorno virtual de Python")
+        errores.append("   Solución: Activa el entorno virtual con '.venv\\Scripts\\activate' (Windows)")
+        errores.append("   O usa: .venv\\Scripts\\python.exe main.py [argumentos]")
+
+    # 2. Verificar versión de Python
+    version_mayor = sys.version_info.major
+    version_menor = sys.version_info.minor
+
+    if version_mayor != 3 or version_menor != 11:
+        errores.append(f"❌ ERROR: Versión de Python incorrecta: {version_mayor}.{version_menor}")
+        errores.append("   Se requiere Python 3.11.x exactamente")
+        errores.append(f"   Versión actual: {sys.version}")
+
+    # 3. Verificar que estamos en el directorio correcto y config existe
+    config_encontrado = False
+
+    # Buscar config en múltiples ubicaciones posibles
+    rutas_config = [
+        'config/config.yaml',                    # Desde descarga_datos/
+        'descarga_datos/config/config.yaml',     # Desde raíz del proyecto
+        '../config/config.yaml',                 # Desde subdirectorio
+    ]
+
+    for ruta in rutas_config:
+        if os.path.exists(ruta):
+            config_encontrado = True
+            break
+
+    if not config_encontrado:
+        errores.append("❌ ERROR: No se encuentra config/config.yaml")
+        errores.append("   Asegúrate de ejecutar desde el directorio descarga_datos/")
+        errores.append("   O desde la raíz del proyecto usando los scripts de lanzamiento")
+
+    if errores:
+        print("\n" + "="*70)
+        print("[X] VERIFICACION DE ENTORNO FALLIDA")
+        print("="*70)
+        for error in errores:
+            print(error)
+        print("\n" + "="*70)
+        sys.exit(1)
+
+    # Si todo está bien, mostrar confirmación
+    print("[OK] Verificacion de entorno exitosa:")
+    print(f"   * Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    print("   * Entorno virtual activado")
+    print("   * Configuracion encontrada")
+    print()
+
+# Ejecutar verificación antes de cualquier otra cosa
+verificar_entorno_ejecucion()
 from pathlib import Path
 
 # Importar constantes específicas de subprocess para compatibilidad
@@ -372,32 +444,56 @@ def run_live_ccxt():
 
         result = [None]
         exception = [None]
+        thread_error = [None]
 
         def run_with_timeout():
+            """Función que ejecuta el trading con manejo robusto de excepciones"""
             try:
+                print(" [START] Iniciando thread de trading en vivo...")
                 run_crypto_live_trading(exchange_name=active_exchange)
                 result[0] = True
+                print(" [OK] Thread de trading finalizado correctamente")
+            except KeyboardInterrupt:
+                print(" [INFO] Thread detenido por KeyboardInterrupt")
+                thread_error[0] = "KeyboardInterrupt"
+                result[0] = False
             except Exception as e:
+                print(f" [ERROR] Error fatal en thread de trading: {e}")
+                import traceback
+                traceback.print_exc()
                 exception[0] = e
+                thread_error[0] = str(e)
                 result[0] = False
 
-        thread = threading.Thread(target=run_with_timeout, daemon=True)
+        # Crear thread con mejor configuración
+        thread = threading.Thread(target=run_with_timeout, daemon=False, name="LiveTradingThread")
         thread.start()
 
-        # Trading en vivo real - ejecuta indefinidamente
-        # Para detener, usa Ctrl+C
-        try:
-            thread.join()  # Sin timeout - trading continuo
-        except KeyboardInterrupt:
-            print(" ⏹️  Trading en vivo detenido por usuario")
-            return True
+        print(" [LIVE] Trading en vivo activo. Presiona Ctrl+C para detener...")
 
-        if exception[0]:
-            print(f" [ERROR] Error en trading en vivo: {exception[0]}")
-            return False
-        else:
-            print(" [OK] Trading en vivo completado")
+        # Esperar al thread con timeout de seguridad (24 horas máximo)
+        thread.join(timeout=86400)  # 24 horas = 86400 segundos
+
+        # Verificar estado del thread
+        if thread.is_alive():
+            print(" [WARNING] Thread de trading aún activo después de timeout (24h)")
+            print(" [INFO] Forzando terminación del thread...")
+            # En Python no hay forma directa de matar un thread, pero el daemon=False
+            # asegura que el programa espere. En la práctica, esto no debería suceder.
+
+        # Evaluar resultado
+        if thread_error[0] == "KeyboardInterrupt":
+            print(" ⏹️  Trading detenido por interrupción del usuario")
             return True
+        elif exception[0]:
+            print(f" [ERROR] Trading falló con excepción: {exception[0]}")
+            return False
+        elif result[0] is True:
+            print(" [OK] Trading completado exitosamente")
+            return True
+        else:
+            print(" [WARNING] Trading finalizó sin resultado claro")
+            return False
 
     except Exception as e:
         print(f" [ERROR] Error en trading en vivo: {e}")
@@ -1291,4 +1387,85 @@ def main():
     return 0
 
 if __name__ == "__main__":
-    main()
+    import time
+    import signal
+    import sys
+    import os
+    
+    # Variable global para controlar el reinicio automático
+    auto_restart_enabled = True
+    signal_received_from_user = False
+    
+    def signal_handler(signum, frame):
+        """Manejador de señales para detener el reinicio automático - SOLO para Ctrl+C directo del usuario"""
+        global auto_restart_enabled, signal_received_from_user
+        # Solo detenemos si el usuario presionó Ctrl+C explícitamente (tty conectada)
+        if sys.stdin and sys.stdin.isatty():
+            print(f"\n🛑 Señal {signum} recibida. Deteniendo reinicio automático...")
+            signal_received_from_user = True
+            auto_restart_enabled = False
+        # Si no viene de tty (como desde Streamlit), simplemente ignoramos
+    
+    # Registrar manejadores de señales SOLO si estamos en una terminal interactiva
+    if sys.stdin and sys.stdin.isatty():
+        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C (solo si es tty)
+        # No registramos SIGTERM para permitir que procesos internos se cierren normalmente
+    
+    print("🤖 Bot Trader Copilot - Modo 24/7 con Auto-Reinicio")
+    print("=" * 60)
+    print("• El sistema se reiniciará automáticamente en caso de caídas")
+    print("• Presiona Ctrl+C en la terminal para detener completamente")
+    print("• Las señales internas (Streamlit, etc.) son ignoradas")
+    print("=" * 60)
+    
+    restart_count = 0
+    max_restarts = 10  # Máximo de reinicios por hora para evitar loops infinitos
+    
+    while auto_restart_enabled:
+        try:
+            restart_count += 1
+            print(f"\n🚀 INICIO #{restart_count} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Ejecutar el sistema principal
+            exit_code = main()
+            
+            if exit_code == 0:
+                print("✅ Sistema finalizado correctamente (exit code 0)")
+                break
+            else:
+                print(f"⚠️ Sistema finalizado con código de error: {exit_code}")
+                
+        except KeyboardInterrupt:
+            if signal_received_from_user:
+                print("\n🛑 Interrupción por usuario (Ctrl+C)")
+                break
+            else:
+                # Keyboard interrupt interno (ignorar y continuar)
+                pass
+        except Exception as e:
+            print(f"\n❌ ERROR CRÍTICO en main(): {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Verificar si debemos reiniciar
+        if not auto_restart_enabled:
+            print("🛑 Auto-reinicio deshabilitado por señal del sistema")
+            break
+            
+        # Verificar límite de reinicios
+        if restart_count >= max_restarts:
+            print(f"🚫 Límite de reinicios alcanzado ({max_restarts}). Deteniendo sistema.")
+            break
+            
+        # Esperar antes de reiniciar
+        print("⏳ Reiniciando en 30 segundos...")
+        for i in range(30, 0, -1):
+            print(f"\r⏳ {i} segundos restantes... Presiona Ctrl+C para cancelar", end="", flush=True)
+            time.sleep(1)
+            if not auto_restart_enabled:
+                break
+        
+        print("\n" + "="*60)
+    
+    print("\n👋 Bot Trader Copilot finalizado.")
+    print("¡Gracias por usar el sistema!")

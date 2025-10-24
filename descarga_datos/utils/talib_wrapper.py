@@ -21,12 +21,28 @@ class TalibWrapper:
 
     @staticmethod
     def RSI(data, timeperiod=14):
-        """Relative Strength Index"""
-        delta = pd.Series(data).diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=timeperiod).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=timeperiod).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
+        """Relative Strength Index - Implementación correcta siguiendo estándar TALIB"""
+        data = pd.Series(data)
+        delta = data.diff()
+        
+        # Calcular ganancias y pérdidas
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
+        
+        # Usar EMA para gain y loss (como en TALIB)
+        avg_gain = gain.ewm(alpha=1/timeperiod, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1/timeperiod, adjust=False).mean()
+        
+        # Calcular RS
+        rs = avg_gain / avg_loss
+        
+        # Manejar casos donde avg_loss es 0 (evitar división por cero)
+        rs = rs.where(avg_loss != 0, 100.0)
+        
+        # Calcular RSI
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
 
     @staticmethod
     def ATR(high, low, close, timeperiod=14):
@@ -126,6 +142,113 @@ class TalibWrapper:
         histogram = macd_line - signal_line
         
         return macd_line, signal_line, histogram
+
+    @staticmethod
+    def STOCH(high, low, close, fastk_period=14, slowk_period=3, slowd_period=3):
+        """Stochastic Oscillator"""
+        high = pd.Series(high)
+        low = pd.Series(low)
+        close = pd.Series(close)
+        
+        # Calcular %K rápido
+        lowest_low = low.rolling(window=fastk_period).min()
+        highest_high = high.rolling(window=fastk_period).max()
+        fast_k = 100 * ((close - lowest_low) / (highest_high - lowest_low))
+        
+        # Calcular %K lento (SMA del %K rápido)
+        slow_k = fast_k.rolling(window=slowk_period).mean()
+        
+        # Calcular %D (SMA del %K lento)
+        slow_d = slow_k.rolling(window=slowd_period).mean()
+        
+        return slow_k, slow_d
+
+    @staticmethod
+    def MACD(data, fastperiod=12, slowperiod=26, signalperiod=9):
+        """MACD (Moving Average Convergence Divergence)"""
+        data = pd.Series(data)
+        
+        # Calcular EMA rápida y lenta
+        fast_ema = data.ewm(span=fastperiod, adjust=False).mean()
+        slow_ema = data.ewm(span=slowperiod, adjust=False).mean()
+        
+        # Calcular línea MACD
+        macd_line = fast_ema - slow_ema
+        
+        # Calcular línea de señal (EMA de la línea MACD)
+        macd_signal = macd_line.ewm(span=signalperiod, adjust=False).mean()
+        
+        # Calcular histograma
+        macd_hist = macd_line - macd_signal
+        
+        return macd_line, macd_signal, macd_hist
+
+    @staticmethod
+    def STOCH(high, low, close, fastk_period=14, slowk_period=3, slowd_period=3):
+        """Stochastic Oscillator"""
+        high = pd.Series(high)
+        low = pd.Series(low)
+        close = pd.Series(close)
+        
+        # Calcular %K rápido
+        lowest_low = low.rolling(window=fastk_period).min()
+        highest_high = high.rolling(window=fastk_period).max()
+        
+        # Evitar división por cero
+        denominator = highest_high - lowest_low
+        fastk = pd.Series(50.0, index=close.index)  # Valor neutral por defecto
+        valid_mask = denominator != 0
+        fastk[valid_mask] = 100 * ((close[valid_mask] - lowest_low[valid_mask]) / denominator[valid_mask])
+        
+        # Calcular %K lento (SMA de %K rápido)
+        slowk = fastk.rolling(window=slowk_period).mean()
+        
+        # Calcular %D (SMA de %K lento)
+        slowd = slowk.rolling(window=slowd_period).mean()
+        
+        return slowk, slowd
+
+    @staticmethod
+    def CCI(high, low, close, timeperiod=14):
+        """Commodity Channel Index - Implementación simplificada"""
+        high = pd.Series(high)
+        low = pd.Series(low)
+        close = pd.Series(close)
+        
+        # Calcular Typical Price
+        tp = (high + low + close) / 3
+        
+        # Calcular SMA del Typical Price
+        sma_tp = tp.rolling(window=timeperiod).mean()
+        
+        # Calcular Mean Deviation: promedio de |TP - SMA_TP| en la ventana
+        deviations = (tp - sma_tp).abs()
+        mean_deviation = deviations.rolling(window=timeperiod).mean()
+        
+        # Calcular CCI
+        cci = (tp - sma_tp) / (0.015 * mean_deviation)
+        
+        # Reemplazar inf y -inf con NaN, luego fillna con 0
+        cci = cci.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        
+        return cci
+
+    @staticmethod
+    def BBANDS(data, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0):
+        """Bollinger Bands"""
+        data = pd.Series(data)
+        
+        # Calcular SMA
+        middle = data.rolling(window=timeperiod).mean()
+        
+        # Calcular desviación estándar
+        std = data.rolling(window=timeperiod).std()
+        
+        # Calcular bandas superior e inferior
+        upper = middle + (std * nbdevup)
+        lower = middle - (std * nbdevdn)
+        
+        return upper, middle, lower
 
 # Crear instancia singleton para usar como talib
 talib = TalibWrapper()

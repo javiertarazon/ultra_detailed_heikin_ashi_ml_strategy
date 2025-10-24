@@ -6,6 +6,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 import yaml
+from datetime import datetime
+from utils.logger import get_logger
+
+# Inicializar logger
+logger = get_logger(__name__)
 
 # ==============================================================
 # Funciones puras reutilizables (aptas para tests sin Streamlit)
@@ -109,10 +114,163 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=30)  # Cache por 30 segundos para permitir actualizaciones
+@st.cache_data(ttl=30)  # Cache por 30 segundos para permitir actualizaciones en live trading
 def load_results():
     """
-    Carga archivos JSON de resultados por símbolo y el resumen global.
+    Carga datos de LIVE TRADING directamente desde Binance, o archivos de backtesting.
+    Prioriza datos REALES de operaciones ejecutadas en Binance.
+    """
+    # Intentar cargar datos DIRECTOS de Binance primero
+    live_data = load_live_data_from_binance()
+
+    if live_data and live_data.get('is_live_data', False):
+        logger.info("✅ Cargando datos DIRECTOS de operaciones ejecutadas en Binance")
+        return live_data['results'], live_data['global_summary']
+
+    # Si no hay datos directos de Binance, intentar archivos guardados
+    live_results_dir = Path(__file__).parent.parent / "data" / "live_trading_results"
+
+    if live_results_dir.exists():
+        # Buscar el archivo de resultados de live trading más reciente
+        live_files = sorted(live_results_dir.glob("crypto_live_results_*.json"))
+        if live_files:
+            latest_live_file = live_files[-1]
+            try:
+                with open(latest_live_file, 'r', encoding='utf-8') as f:
+                    live_data = json.load(f)
+
+                # Verificar que tenga datos válidos
+                if 'live_metrics' in live_data and live_data['live_metrics'].get('total_trades', 0) > 0:
+                    logger.info(f"📁 Cargando datos de archivo guardado: {latest_live_file.name}")
+
+                    # Crear estructura compatible con dashboard para live trading
+                    results = {}
+                    global_summary = create_global_summary_from_live_metrics(live_data['live_metrics'])
+
+                    results['LIVE_TRADING'] = {
+                        'symbol': 'LIVE_TRADING',
+                        'strategies': {
+                            'LiveStrategy': live_data['live_metrics']
+                        }
+                    }
+
+                    return results, global_summary
+
+            except Exception as e:
+                st.warning(f"Error cargando datos de live trading guardados: {e}")
+
+    # Si no hay datos de live trading, cargar datos de backtesting normales
+    logger.info("📊 Cargando datos de backtesting (no hay datos de live trading)")
+    results, global_summary = load_backtesting_results()
+    return results, global_summary
+
+
+def load_live_data_from_binance():
+    """
+    Carga datos DIRECTOS de operaciones ejecutadas en Binance.
+
+    Returns:
+        Diccionario con datos de live trading desde Binance, o None si no hay datos
+    """
+    try:
+        from utils.live_trading_data_reader import LiveTradingDataReader
+
+        # Determinar si usar testnet o cuenta real
+        config_path = Path(__file__).parent.parent / "config" / "config.yaml"
+        try:
+            import yaml
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+
+            # Verificar configuración de live trading
+            live_config = config.get('live_trading', {})
+            account_type = live_config.get('account_type', 'SANDBOX')
+            use_testnet = account_type.upper() == 'SANDBOX'
+
+        except Exception:
+            use_testnet = True  # Por defecto usar testnet
+
+        # Inicializar lector de datos
+        reader = LiveTradingDataReader(testnet=use_testnet)
+
+        if not reader.test_connection():
+            logger.warning("No se pudo conectar a Binance para leer datos en tiempo real")
+            return None
+
+        # Obtener métricas directamente desde Binance
+        live_metrics = reader.calculate_live_metrics_from_binance()
+
+        if not live_metrics or live_metrics.get('total_trades', 0) == 0:
+            logger.info("No se encontraron operaciones ejecutadas en Binance")
+            return None
+
+        # Obtener balance actual
+        balance_info = reader.get_account_balance()
+
+        # Actualizar métricas con balance real
+        if balance_info:
+            live_metrics['current_balance'] = balance_info.get('free_usdt', 0)
+            live_metrics['total_balance'] = balance_info.get('total_usdt', 0)
+
+        # Crear estructura para dashboard
+        results = {}
+        global_summary = create_global_summary_from_live_metrics(live_metrics)
+
+        results['LIVE_TRADING_BINANCE'] = {
+            'symbol': 'LIVE_TRADING_BINANCE',
+            'strategies': {
+                'BinanceLive': live_metrics
+            }
+        }
+
+        logger.info(f"✅ Datos cargados directamente desde Binance: {live_metrics.get('total_trades', 0)} operaciones")
+
+        return {
+            'results': results,
+            'global_summary': global_summary,
+            'is_live_data': True,
+            'data_source': 'BINANCE_DIRECT'
+        }
+
+    except Exception as e:
+        logger.error(f"Error cargando datos directos de Binance: {e}")
+        return None
+
+
+def create_global_summary_from_live_metrics(live_metrics):
+    """
+    Crea el resumen global compatible con dashboard desde métricas de live trading.
+    """
+    return {
+        'period': {
+            'start_date': live_metrics.get('start_time', 'N/A'),
+            'end_date': live_metrics.get('end_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+            'timeframe': 'LIVE',
+            'mode': 'LIVE_TRADING_BINANCE'
+        },
+        'metrics': {
+            'total_pnl': live_metrics.get('total_pnl', 0),
+            'total_trades': live_metrics.get('total_trades', 0),
+            'avg_win_rate': live_metrics.get('win_rate', 0) * 100,  # Convertir a porcentaje
+            'max_drawdown': live_metrics.get('max_drawdown', 0) * 100,  # Convertir a porcentaje
+            'profit_factor': live_metrics.get('profit_factor', 0),
+            'expectancy': live_metrics.get('expectancy', 0),
+            'sharpe_ratio': live_metrics.get('sharpe_ratio', 0),
+            'sortino_ratio': live_metrics.get('sortino_ratio', 0),
+            'calmar_ratio': live_metrics.get('calmar_ratio', 0),
+            'recovery_factor': live_metrics.get('recovery_factor', 0),
+            'current_balance': live_metrics.get('current_balance', 0),
+            'total_volume': live_metrics.get('total_volume', 0)
+        },
+        'total_symbols': len(live_metrics.get('symbols_traded', [])),
+        'mode': 'LIVE_TRADING_BINANCE',
+        'data_source': live_metrics.get('data_source', 'UNKNOWN')
+    }
+
+
+def load_backtesting_results():
+    """
+    Carga archivos JSON de resultados de backtesting (función original).
     """
     base = Path(__file__).parent.parent / "data" / "dashboard_results"
     results, global_summary = {}, {}
@@ -121,7 +279,7 @@ def load_results():
 
     # Guardar lista de estrategias encontradas para debug
     all_strategies_found = set()
-    
+
     # Cargar archivos de símbolo
     for f in sorted(base.glob("*_results.json")):
         if f.name == 'global_summary.json':
@@ -129,34 +287,34 @@ def load_results():
         # Excluir archivos con datos simulados para mantener consistencia
         if 'realistic' in f.name:
             continue
-            
+
         try:
             with open(f, 'r', encoding='utf-8') as fh:
                 d = json.load(fh)
-            
+
             # Extraer símbolo del nombre del archivo
             sym = f.stem.replace('_results', '').replace('_', '/')
-            
+
             # Normalización y validación de estructura JSON
             if isinstance(d, dict):
                 # Caso 1: Formato estándar {'symbol': 'XXX', 'strategies': {'Strategy1': {...}, 'Strategy2': {...}}}
                 if 'symbol' in d and 'strategies' in d and isinstance(d['strategies'], dict):
                     # Ya tiene el formato correcto
                     normalized_data = d
-                    
+
                 # Caso 2: Solo tiene estrategias {'Strategy1': {...}, 'Strategy2': {...}}
                 elif all(isinstance(v, dict) and 'total_trades' in v for k, v in d.items()):
                     normalized_data = {'symbol': sym, 'strategies': d}
-                    
+
                 # Caso 3: Un solo resultado sin estructura {'total_trades': X, 'win_rate': Y, ...}
                 elif 'total_trades' in d and 'win_rate' in d:
                     normalized_data = {'symbol': sym, 'strategies': {'Default': d}}
-                    
+
                 # Caso 4: El símbolo es la clave principal {'EURUSD': {'Strategy1': {...}, 'Strategy2': {...}}}
                 elif len(d) == 1 and isinstance(list(d.values())[0], dict):
                     symbol_key = list(d.keys())[0]
                     strategies_data = d[symbol_key]
-                    
+
                     # Verificar si strategies_data ya es un dict de estrategias o solo una estrategia
                     if all(isinstance(v, dict) and 'total_trades' in v for k, v in strategies_data.items()):
                         normalized_data = {'symbol': symbol_key, 'strategies': strategies_data}
@@ -169,17 +327,17 @@ def load_results():
                 # No es un diccionario, error en el archivo
                 st.warning(f"Archivo {f.name} no contiene un diccionario válido. Contenido: {d}")
                 continue
-            
+
             # Recopilar todas las estrategias encontradas
             for strategy_name in normalized_data['strategies'].keys():
                 all_strategies_found.add(strategy_name)
-                
+
             results[sym] = normalized_data
-            
+
         except Exception as e:
             st.error(f"Error al cargar {f.name}: {str(e)}")
             continue
-    
+
     # Guardar lista de estrategias encontradas en un archivo para debug
     try:
         with open(base / "estrategias_encontradas.txt", 'w', encoding='utf-8') as f:
@@ -508,487 +666,188 @@ def plot_strategy_comparison(results, selected_symbol):
     return fig
 
 
-def main():
-    st.title("📈 Dashboard Avanzado de Backtesting - Sistema Modular")
+def get_binance_connection_status():
+    """
+    Verifica el estado de conexión a Binance y retorna información detallada.
 
-    # Cargar configuración para obtener capital inicial
-    config = load_config()
-    initial_capital = 10000  # valor por defecto
-    if config and 'backtesting' in config:
-        initial_capital = config['backtesting'].get('initial_capital', 10000)
+    Returns:
+        dict: Información sobre el estado de conexión
+    """
+    try:
+        from utils.live_trading_data_reader import LiveTradingDataReader
 
-    # DEBUG: Mostrar el capital inicial que se está usando
-    st.write("### 🔍 DEBUG - Capital Inicial")
-    st.write(f"**Capital inicial cargado desde config:** ${initial_capital}")
-    if config and 'backtesting' in config:
-        st.write(f"**Config backtesting completa:** {config['backtesting']}")
-    else:
-        st.write("**ERROR:** No se pudo cargar la configuración backtesting")
+        # Determinar configuración
+        config_path = Path(__file__).parent.parent / "config" / "config.yaml"
+        use_testnet = True
+        account_type = "SANDBOX"
 
-    # Calcular equity final esperado para verificación
-    results, _ = load_results()
-    if results:
-        for sym, sym_data in results.items():
-            strategies = sym_data.get('strategies', {}) if isinstance(sym_data, dict) else {}
-            for sname, sdata in strategies.items():
-                if isinstance(sdata, dict):
-                    total_pnl = sdata.get('total_pnl', 0)
-                    expected_final = initial_capital + total_pnl
-                    st.write(f"**{sym} - {sname}:** P&L=${total_pnl:.2f}, Capital esperado final=${expected_final:.2f}")
+        try:
+            import yaml
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            live_config = config.get('live_trading', {})
+            account_type = live_config.get('account_type', 'SANDBOX')
+            use_testnet = account_type.upper() == 'SANDBOX'
+        except Exception:
+            pass
 
-    # Cargar datos
-    results, global_summary = load_results()
+        reader = LiveTradingDataReader(testnet=use_testnet)
 
-    # Generar equity_curve faltante si existen trades pero no equity (post-procesado)
-    def _build_equity_curve(trades, initial_capital):
-        equity = [initial_capital]
-        running = initial_capital
-        for t in trades:
-            running += t.get('pnl', 0)
-            equity.append(running)
-        return equity
+        connection_ok = reader.test_connection()
+        balance_info = None
+        trade_count = 0
 
-    for sym, sym_data in list(results.items()):
-        strategies = sym_data.get('strategies', {}) if isinstance(sym_data, dict) else {}
-        for sname, sdata in strategies.items():
-            if isinstance(sdata, dict):
-                trades = sdata.get('trades', [])
-                eq = sdata.get('equity_curve', [])
-                if trades and (not eq or len(eq) < 2):
-                    sdata['equity_curve'] = _build_equity_curve(trades, initial_capital)
+        if connection_ok:
+            try:
+                balance_info = reader.get_account_balance()
+                trades = reader.get_recent_trades(days=30)
+                trade_count = len(trades) if trades else 0
+            except Exception as e:
+                logger.warning(f"Error obteniendo datos adicionales de Binance: {e}")
 
-    # Construir resumen tabular global (símbolo / estrategia)
-    summary_rows = []
-    for sym, sym_data in results.items():
-        strategies = sym_data.get('strategies', {}) if isinstance(sym_data, dict) else {}
-        for sname, sdata in strategies.items():
-            if not isinstance(sdata, dict):
-                continue
-            wr = sdata.get('win_rate', 0)
-            if wr > 1:
-                wr = wr / 100.0
-            summary_rows.append({
-                'Símbolo': sym,
-                'Estrategia': sname,
-                'Trades': sdata.get('total_trades', 0),
-                'WinRate%': round(wr * 100, 2),
-                'P&L': sanitize_numeric_value(sdata.get('total_pnl', 0)),
-                'MaxDD%': round(sanitize_numeric_value(sdata.get('max_drawdown', 0)), 2)
-            })
+        return {
+            'connected': connection_ok,
+            'account_type': account_type,
+            'testnet': use_testnet,
+            'balance_info': balance_info,
+            'trade_count': trade_count,
+            'last_check': datetime.now().strftime('%H:%M:%S')
+        }
 
-    if not results:
-        st.error("❌ No se encontraron resultados de backtesting.")
-        st.info("Ejecuta `python main.py` para generar resultados.")
+    except Exception as e:
+        logger.error(f"Error verificando conexión Binance: {e}")
+        return {
+            'connected': False,
+            'account_type': 'UNKNOWN',
+            'testnet': True,
+            'balance_info': None,
+            'trade_count': 0,
+            'error': str(e),
+            'last_check': datetime.now().strftime('%H:%M:%S')
+        }
+
+
+def display_data_source_indicator(results, global_summary):
+    """
+    Muestra un indicador visual de la fuente de datos actual.
+    """
+    if not global_summary:
         return
 
-    # Información del período y resumen global
-    period_info = global_summary.get('period', {})
-    metrics_info = global_summary.get('metrics', {})
-    if period_info:
-        total_symbols = global_summary.get('total_symbols', len(results))
-        total_pnl_global = sanitize_numeric_value(metrics_info.get('total_pnl', 0))
-        total_trades_global = metrics_info.get('total_trades', 0)
-        avg_win_rate_raw = metrics_info.get('avg_win_rate', 0)
-        # Normalizar win rate global si viene >1 (asumido porcentaje)
-        avg_win_rate = avg_win_rate_raw/100.0 if avg_win_rate_raw > 1 else avg_win_rate_raw
-        st.info(
-            f"📅 **Período:** {period_info.get('start_date', 'N/A')} → {period_info.get('end_date', 'N/A')}  | "
-            f"⏱️ **TF:** {period_info.get('timeframe', 'N/A')}  | "
-            f"📊 **Símbolos:** {total_symbols}  | "
-            f"💰 **P&L Total:** {total_pnl_global:,.2f}  | "
-            f"🎯 **Win Rate Promedio:** {avg_win_rate*100:.1f}%  | "
-            f"🧪 **Trades Totales:** {total_trades_global}"
-        )
+    mode = global_summary.get('mode', 'UNKNOWN')
+    data_source = global_summary.get('data_source', 'UNKNOWN')
+
+    if 'BINANCE_DIRECT' in data_source:
+        st.success("🟢 **DATOS DIRECTOS DE BINANCE** - Métricas calculadas desde operaciones reales ejecutadas")
+        st.info("💡 **Fuente**: API de Binance en tiempo real | **Actualización**: Automática cada 30s")
+
+        # Mostrar balance si está disponible
+        if 'current_balance' in global_summary.get('metrics', {}):
+            balance = global_summary['metrics']['current_balance']
+            st.metric("💰 Balance Actual (Binance)", f"${balance:.2f}")
+
+    elif 'LIVE_TRADING' in mode:
+        st.warning("🟡 **DATOS DE ARCHIVO GUARDADO** - Usando resultados de sesión anterior")
+        st.info("💡 **Fuente**: Archivo JSON guardado | **Nota**: No refleja operaciones más recientes")
+
+        # Verificar si hay conexión disponible
+        status = get_binance_connection_status()
+        if status['connected']:
+            st.info(f"🔗 **Conexión Binance disponible** - {status['trade_count']} operaciones en los últimos 30 días")
+        else:
+            st.error("❌ **Sin conexión a Binance** - No se pueden obtener datos en tiempo real")
+
     else:
-        st.warning("No se encontró información de período en global_summary.json")
+        st.info("📊 **MODO BACKTESTING** - Datos históricos de simulación")
 
-    # Panel resumen global al inicio
-    if summary_rows:
-        import pandas as _pd
-        st.subheader("📌 Resumen Global de Estrategias")
-        df_summary = _pd.DataFrame(summary_rows)
-        # Ordenar por P&L desc
-        df_summary = df_summary.sort_values('P&L', ascending=False).reset_index(drop=True)
-        st.dataframe(df_summary, width='stretch', height=min(400, 40 + 25 * len(df_summary)))
-    else:
-        st.warning("No hay filas de resumen para mostrar (posible error de parsing de JSON).")
 
-    # Sidebar con controles
-    st.sidebar.title("🎛️ Controles")
+def main():
+    try:
+        # Cargar datos usando la nueva lógica
+        results, global_summary = load_results()
 
-    # Selector de símbolo
-    available_symbols = sorted(results.keys())
-    selected_symbol = st.sidebar.selectbox(
-        "📈 Seleccionar Símbolo",
-        available_symbols,
-        key="symbol_selector"
-    )
+        # Detectar fuente de datos para el título
+        data_source = global_summary.get('data_source', 'UNKNOWN') if global_summary else 'UNKNOWN'
+        is_live_binance = 'BINANCE_DIRECT' in data_source
+        is_live_saved = 'LIVE_TRADING' in global_summary.get('mode', '') if global_summary else False
 
-    # Selector de estrategia
-    symbol_data = results[selected_symbol]
-    
-    # Verificar que symbol_data tiene la estructura correcta
-    if isinstance(symbol_data, dict) and 'strategies' in symbol_data and isinstance(symbol_data['strategies'], dict):
-        available_strategies = list(symbol_data['strategies'].keys())
-    else:
-        # Corregir estructura si no es correcta
-        st.error(f"⚠️ Formato incorrecto de datos para {selected_symbol}. Estructura: {type(symbol_data)}")
-        st.write(symbol_data)
-        st.stop()
-    
-    # Verificar si hay estrategias disponibles
-    if not available_strategies:
-        st.error(f"⚠️ No hay estrategias disponibles para {selected_symbol}. Por favor, ejecute un backtesting primero.")
-        st.write("Estructura de datos:", symbol_data)
-        st.stop()
-        
-    selected_strategy = st.sidebar.selectbox(
-        "🎯 Seleccionar Estrategia",
-        available_strategies,
-        key="strategy_selector"
-    )
+        # Título dinámico según la fuente de datos
+        if is_live_binance:
+            st.title("🚀 Dashboard de LIVE TRADING - Sistema Modular")
+            st.markdown("### 🟢 **MODO LIVE ACTIVO - DATOS DIRECTOS DE BINANCE**")
+            st.markdown("**Métricas calculadas desde operaciones reales ejecutadas en Binance**")
 
-    # Botón de refresco para forzar recarga de datos
-    if st.sidebar.button("🔄 Refrescar Datos", key="refresh_button", type="primary"):
-        st.cache_data.clear()
-        st.success("✅ Datos refrescados correctamente")
-        st.rerun()
+            # Auto-refresh cada 30 segundos en modo live
+            st.markdown("""
+            <meta http-equiv="refresh" content="30">
+            <script>
+                setInterval(function(){
+                    window.location.reload();
+                }, 30000);
+            </script>
+            """, unsafe_allow_html=True)
+            st.info("🔄 **Dashboard se actualiza automáticamente cada 30 segundos**")
 
-    # Mostrar información de carga de datos
-    from datetime import datetime
-    st.sidebar.write(f"📅 Datos cargados: {datetime.now().strftime('%H:%M:%S')}")
+        elif is_live_saved:
+            st.title("🚀 Dashboard de LIVE TRADING - Sistema Modular")
+            st.markdown("### 🟡 **MODO LIVE - DATOS DE ARCHIVO GUARDADO**")
+            st.markdown("**Usando resultados de sesión de live trading anterior**")
+            st.info("💡 **Nota**: Para datos en tiempo real, asegúrese de que las credenciales de Binance estén configuradas")
 
-    # Mostrar configuración actual
-    config = load_config()
-    if config:
-        with st.sidebar.expander("⚙️ Configuración Actual"):
-            if 'backtesting' in config:
-                bt_config = config['backtesting']
-                
-                # Símbolos configurados
-                if 'symbols' in bt_config:
-                    st.write(f"**📊 Símbolos ({len(bt_config['symbols'])}):**")
-                    for symbol in bt_config['symbols']:
-                        st.write(f"• {symbol}")
-                
-                # Estrategias activas
-                if 'strategies' in bt_config:
-                    active_strategies = [k for k, v in bt_config['strategies'].items() if v is True]
-                    st.write(f"**🎯 Estrategias activas ({len(active_strategies)}):**")
-                    for strategy in active_strategies:
-                        st.write(f"• {strategy}")
+        else:
+            st.title("📊 Dashboard de Backtesting - Sistema Modular")
+            st.markdown("### 📈 **MODO BACKTESTING**")
+            st.markdown("**Análisis de estrategias con datos históricos**")
 
-    # Debug info expandido
-    with st.sidebar.expander("🐛 Debug Info - Datos Raw"):
-        st.write(f"**Símbolo:** {selected_symbol}")
-        st.write(f"**Estrategia:** {selected_strategy}")
-        st.write(f"**Estrategias disponibles:** {available_strategies}")
-        
-        if selected_strategy in symbol_data.get('strategies', {}):
-            debug_data = symbol_data['strategies'][selected_strategy]
-            st.write("**Métricas Raw:**")
-            
-            # Verificar que debug_data es un diccionario
-            if not isinstance(debug_data, dict):
-                st.error(f"❌ Error: debug_data no es un diccionario, es: {type(debug_data)}")
-                st.write(f"Valor: {debug_data}")
+        # Mostrar indicador de fuente de datos
+        display_data_source_indicator(results, global_summary)
+
+        # Verificar si hay datos para mostrar
+        if not results:
+            st.warning("⚠️ No se encontraron datos para mostrar")
+            st.info("💡 **Posibles causas:**")
+            st.info("   - No hay resultados de backtesting guardados")
+            st.info("   - No hay operaciones de live trading ejecutadas")
+            st.info("   - Error en la carga de datos")
+
+            # Intentar cargar datos de respaldo
+            st.info("🔄 Intentando cargar datos de respaldo...")
+            try:
+                results_backup, global_summary_backup = load_backtesting_results()
+                if results_backup:
+                    st.success("✅ Datos de respaldo cargados exitosamente")
+                    results = results_backup
+                    global_summary = global_summary_backup
+                else:
+                    st.error("❌ No se pudieron cargar datos de respaldo")
+                    return
+            except Exception as e:
+                st.error(f"❌ Error cargando datos de respaldo: {e}")
                 return
-            
-            # Verificar coherencia de datos
-            total_trades = debug_data.get('total_trades', 0)
-            winning_trades = debug_data.get('winning_trades', 0)
-            losing_trades = debug_data.get('losing_trades', 0)
-            
-            if total_trades != (winning_trades + losing_trades):
-                st.warning(f"⚠️ Inconsistencia detectada: Total trades ({total_trades}) ≠ Winning ({winning_trades}) + Losing ({losing_trades})")
-            
-            # Mostrar métricas principales raw
-            metrics_to_show = [
-                'total_pnl', 'win_rate', 'total_trades', 'max_drawdown',
-                'sharpe_ratio', 'profit_factor', 'avg_trade_pnl',
-                'winning_trades', 'losing_trades'
-            ]
-            
-            for metric in metrics_to_show:
-                value = debug_data.get(metric, 'N/A')
-                st.write(f"• {metric}: {value} ({type(value).__name__})")
-                
-            # Validar estructura de trades
-            trades = debug_data.get('trades', [])
-            st.write(f"**Total trades en data:** {len(trades)}")
-            if trades:
-                st.write(f"**Primer trade sample:** {trades[0] if trades else 'None'}")
-                
-            # Validar equity curve
-            equity_curve = debug_data.get('equity_curve', [])
-            st.write(f"**Equity curve length:** {len(equity_curve) if isinstance(equity_curve, list) else 'Not list'}")
 
-    # Obtener y limpiar datos de la estrategia seleccionada
-    if selected_strategy not in symbol_data.get('strategies', {}):
-        st.error(f"⚠️ La estrategia '{selected_strategy}' no existe en los datos para {selected_symbol}.")
-        st.write("Estrategias disponibles:", list(symbol_data.get('strategies', {}).keys()))
-        st.write("Datos brutos:", symbol_data)
-        st.stop()
-    
-    # Verificar que los datos de la estrategia son un diccionario    
-    raw_strategy_data = symbol_data['strategies'][selected_strategy]
-    if not isinstance(raw_strategy_data, dict):
-        st.error(f"⚠️ Los datos para la estrategia '{selected_strategy}' no son válidos. Formato: {type(raw_strategy_data)}")
-        st.write("Datos recibidos:", raw_strategy_data)
-        # Intentar recuperar con un diccionario vacío
-        raw_strategy_data = {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0}
-        
-    strategy_data = validate_and_clean_metrics(raw_strategy_data)
+        # Cargar configuración para obtener capital inicial
+        try:
+            config = load_config()
+            initial_capital = 10000  # valor por defecto
+            if config and 'backtesting' in config:
+                initial_capital = config['backtesting'].get('initial_capital', 10000)
+        except Exception as e:
+            logger.warning(f"Error cargando configuración: {e}")
+            initial_capital = 10000
 
-    # Métricas principales en cards
-    st.header(f"📊 Métricas - {selected_symbol} | {selected_strategy}")
+        # Procesar datos y construir dashboard
+        process_dashboard_data(results, global_summary, initial_capital)
 
-    # Extraer datos ya validados (ya están normalizados por validate_and_clean_metrics)
-    total_pnl = strategy_data.get('total_pnl', 0.0)
-    raw_wr = strategy_data.get('win_rate', 0.0)
-    # Normalizar win_rate: si >1 asumimos que ya era porcentaje
-    win_rate = raw_wr/100.0 if raw_wr > 1 else raw_wr
-    total_trades = strategy_data.get('total_trades', 0)
-    max_drawdown = abs(strategy_data.get('max_drawdown', 0.0))
-    sharpe_ratio = strategy_data.get('sharpe_ratio', 0.0)
-    profit_factor = strategy_data.get('profit_factor', 0.0)
-    avg_trade_pnl = strategy_data.get('avg_trade_pnl', 0.0)
-    winning_trades = strategy_data.get('winning_trades', 0)
-    losing_trades = strategy_data.get('losing_trades', 0)
-    
-    # Validar consistencia de datos
-    total_trades_calc = winning_trades + losing_trades
-    if total_trades != total_trades_calc:
-        st.warning(f"⚠️ Inconsistencia: Total trades ({total_trades}) ≠ Sum ({total_trades_calc})")
+    except Exception as e:
+        st.error(f"❌ Error crítico en el dashboard: {e}")
+        logger.error(f"Error crítico en dashboard: {e}", exc_info=True)
+        st.info("🔧 **Solución sugerida:** Revisar logs del sistema para más detalles")
 
-    # Validar consistencia del win_rate
-    if total_trades > 0:
-        win_rate_calc = winning_trades / total_trades
-        win_rate_diff = abs(win_rate - win_rate_calc)
-        if win_rate_diff > 0.01:  # Tolerancia del 1%
-            st.warning(f"⚠️ Win Rate inconsistente: Reportado ({win_rate:.1%}) ≠ Calculado ({win_rate_calc:.1%})")
-    
-    # Primera fila - Métricas principales
-    st.subheader("📊 Métricas Principales")
-    metrics_row1 = st.container()
-    col1, col2, col3, col4 = metrics_row1.columns([1, 0.85, 0.85, 1.3])  # Ajuste de proporciones para optimizar espacio
-    
-    with col1:
-        # Formato más compacto para grandes cantidades
-        if abs(total_pnl) >= 1000:
-            formatted_pnl = f"${total_pnl/1000:.1f}K" if abs(total_pnl) < 1000000 else f"${total_pnl/1000000:.2f}M"
-        else:
-            formatted_pnl = f"${total_pnl:.2f}"
-        st.metric("💰 P&L", formatted_pnl, delta=None)  # Título más corto
 
-    with col2:
-        st.metric("🎯 Win Rate", f"{win_rate*100:.1f}%", delta=None)
+def process_dashboard_data(results, global_summary, initial_capital):
+    """Procesa y muestra los datos del dashboard de manera segura."""
 
-    with col3:
-        st.metric("📊 Trades", f"{total_trades}", delta=None)  # Sin formateo de miles para ahorro de espacio
-
-    with col4:
-        # Usar drawdown directo del backtester (ya viene en porcentaje)
-        # max_drawdown ya está validado y limpio de validate_and_clean_metrics
-        st.metric("📉 Max DD", f"{max_drawdown:.1f}%", delta=None)
-
-    # Segunda fila - Métricas adicionales
-    st.markdown('<hr style="margin: 0.3rem 0; border-top: 1px solid rgba(0,0,0,0.1);">', unsafe_allow_html=True)
-    st.subheader("📈 Métricas de Rendimiento")
-    metrics_row2 = st.container()
-    col5, col6, col7, col8 = metrics_row2.columns([1, 1, 1.2, 0.8])  # Ajuste de proporciones para optimizar espacio
-    
-    with col5:
-        st.metric("📈 Sharpe", f"{sharpe_ratio:.2f}", delta=None)  # Título más corto
-
-    with col6:
-        st.metric("⚡ Profit F.", f"{profit_factor:.2f}", delta=None)  # Título más corto
-
-    with col7:
-        # Formato más compacto para el P&L promedio
-        if abs(avg_trade_pnl) >= 1000:
-            formatted_avg = f"${avg_trade_pnl/1000:.1f}K"
-        else:
-            formatted_avg = f"${avg_trade_pnl:.1f}"  # Menos decimales
-        st.metric("📊 Avg P&L", formatted_avg, delta=None)  # Título más corto
-
-    with col8:
-        st.metric("✅ Win/Loss", f"{winning_trades}/{losing_trades}", delta=None)
-
-    # Métricas avanzadas - Tercera fila (solo si hay datos suficientes)
-    if total_trades > 0:
-        st.markdown('<hr style="margin: 0.3rem 0; border-top: 1px solid rgba(0,0,0,0.1);">', unsafe_allow_html=True)
-        st.subheader("📊 Métricas Avanzadas")
-        
-        # Extraer datos avanzados con valores por defecto
-        avg_win_pnl = strategy_data.get('avg_win_pnl', 0.0)
-        avg_loss_pnl = strategy_data.get('avg_loss_pnl', 0.0)
-        largest_win = strategy_data.get('largest_win', 0.0)
-        largest_loss = strategy_data.get('largest_loss', 0.0)
-        
-        # Crear un contenedor separado para estas métricas
-        metrics_row3 = st.container()
-        col9, col10, col11, col12 = metrics_row3.columns([1.1, 1.1, 1.1, 1.1])  # Columnas uniformes para métricas avanzadas
-        
-        with col9:
-            # Formato más compacto para ganancias promedio
-            if abs(avg_win_pnl) >= 1000:
-                formatted_win = f"${avg_win_pnl/1000:.1f}K"
-            else:
-                formatted_win = f"${avg_win_pnl:.1f}"  # Menos decimales
-            st.metric("💚 Avg Win", formatted_win, delta=None)
-
-        with col10:
-            # Formato más compacto para pérdidas promedio
-            if abs(avg_loss_pnl) >= 1000:
-                formatted_loss = f"${avg_loss_pnl/1000:.1f}K"
-            else:
-                formatted_loss = f"${avg_loss_pnl:.1f}"  # Menos decimales
-            st.metric("💔 Avg Loss", formatted_loss, delta=None)
-
-        with col11:
-            # Formato más compacto para mayor ganancia
-            if abs(largest_win) >= 1000:
-                formatted_max_win = f"${largest_win/1000:.1f}K"
-            else:
-                formatted_max_win = f"${largest_win:.1f}"  # Menos decimales
-            st.metric("🏆 Max Win", formatted_max_win, delta=None)  # Título más corto
-
-        with col12:
-            # Formato más compacto para mayor pérdida
-            if abs(largest_loss) >= 1000:
-                formatted_max_loss = f"${largest_loss/1000:.1f}K"
-            else:
-                formatted_max_loss = f"${largest_loss:.1f}"  # Menos decimales
-            st.metric("⚠️ Max Loss", formatted_max_loss, delta=None)  # Título más corto
-            
-        # Añadir información adicional sobre porcentajes (si están disponibles)
-        if 'avg_trade_pct' in strategy_data:
-            st.markdown('<hr style="margin: 0.3rem 0; border-top: 1px solid rgba(0,0,0,0.1);">', unsafe_allow_html=True)
-            st.subheader("🔄 Métricas Porcentuales")
-            
-            metrics_row4 = st.container()
-            col13, col14, col15, col16 = metrics_row4.columns([1, 1, 1, 1])  # Columnas uniformes para métricas porcentuales
-            
-            avg_trade_pct = strategy_data.get('avg_trade_pct', 0.0)
-            with col13:
-                st.metric("📊 Avg Trade %", f"{avg_trade_pct:.2f}%", delta=None)
-                
-            with col14:
-                # Si hay datos de volatilidad, mostrarlos
-                if 'volatility' in strategy_data:
-                    volatility = strategy_data['volatility'] * 100  # Convertir a porcentaje
-                    st.metric("📏 Volatilidad", f"{volatility:.2f}%", delta=None)
-                    
-            with col15:
-                # Si hay datos de CAGR, mostrarlos
-                if 'cagr' in strategy_data:
-                    cagr = strategy_data['cagr']
-                    st.metric("📈 CAGR", f"{cagr:.2f}%", delta=None)
-                    
-            with col16:
-                # Si hay datos de risk_of_ruin, mostrarlos
-                if 'risk_of_ruin' in strategy_data:
-                    risk_of_ruin = strategy_data['risk_of_ruin'] * 100  # Convertir a porcentaje
-                    st.metric("⚠️ Riesgo de Ruina", f"{risk_of_ruin:.2f}%", delta=None)
-
-        # Métricas de compensación si están disponibles
-        compensation_trades = strategy_data['compensated_trades']
-        if compensation_trades > 0:
-            st.markdown("**🔄 Métricas de Compensación**")
-            col13, col14, col15, col16 = st.columns(4)
-            with col13:
-                st.metric("🔄 Compensaciones", f"{compensation_trades}", delta=None)
-            with col14:
-                comp_success_rate = strategy_data['compensation_success_rate']
-                st.metric("✅ % Éxito Comp.", f"{comp_success_rate:.1f}%", delta=None)
-            with col15:
-                total_comp_pnl = strategy_data['total_compensation_pnl']
-                st.metric("💰 P&L Comp.", f"${total_comp_pnl:.2f}", delta=None)
-            with col16:
-                comp_ratio = strategy_data['compensation_ratio']
-                st.metric("📈 Ratio Comp.", f"{comp_ratio:.1f}%", delta=None)
-
-    # Gráficos principales
-    st.header("📈 Análisis Visual")
-
-    # Curva de equity
-    st.subheader("Curva de Capital y Drawdown")
-    
-    # Usar curva de equity del backtester (no generar datos sintéticos)
-    equity_curve = strategy_data.get('equity_curve', [])
-    if not equity_curve and strategy_data.get('trades'):
-        # Generar curva de equity sintética si faltaba
-        # Usar capital inicial de los resultados del backtester si está disponible
-        backtester_initial_capital = strategy_data.get('initial_capital', initial_capital)
-        equity_curve = [backtester_initial_capital]
-        running = backtester_initial_capital
-        for t in strategy_data.get('trades', []):
-            running += t.get('pnl', 0)
-            equity_curve.append(running)
-    if not equity_curve:
-        st.info("No hay curva de equity en este resultado (sin trades).")
-        equity_fig = plot_equity_curve([], selected_symbol, selected_strategy)
-    else:
-        equity_fig = plot_equity_curve(equity_curve, selected_symbol, selected_strategy)
-    st.plotly_chart(equity_fig, width='stretch', key="equity_chart")
-
-    # Distribución P&L
-    st.subheader("Distribución de P&L")
-    pnl_fig = plot_pnl_distribution(strategy_data.get('trades', []), selected_strategy)
-    st.plotly_chart(pnl_fig, width='stretch', key="pnl_chart")
-
-    # Análisis de traders ganadores vs perdedores
-    st.subheader("🔍 Análisis: Traders Ganadores vs Perdedores")
-    winners_fig = plot_winners_vs_losers(strategy_data.get('trades', []), selected_strategy)
-    st.plotly_chart(winners_fig, width='stretch', key="winners_chart")
-
-    # Comparación entre estrategias (solo si hay múltiples estrategias)
-    if len(available_strategies) > 1:
-        st.header("⚖️ Comparación entre Estrategias")
-        comparison_fig = plot_strategy_comparison(results, selected_symbol)
-        st.plotly_chart(comparison_fig, width='stretch', key="comparison_chart")
-
-    # Tabla detallada de trades
-    st.header("📋 Detalles de Operaciones")
-
-    trades_raw = strategy_data.get('trades', [])
-    # Opción para limitar trades (rendimiento)
-    show_all_trades = st.checkbox("Mostrar todos los trades", value=False, help="Desmarca para ver solo los primeros 500 si hay demasiados.")
-    if not show_all_trades and isinstance(trades_raw, list) and len(trades_raw) > 500:
-        trades_display = trades_raw[:500]
-        st.info(f"Mostrando primeros 500 de {len(trades_raw)} trades. Marca 'Mostrar todos los trades' para verlos completos.")
-    else:
-        trades_display = trades_raw
-    trades_df = pd.DataFrame(trades_display)
-    if not trades_df.empty:
-        # Agregar columna de resultado
-        trades_df['Resultado'] = trades_df['pnl'].apply(lambda x: '✅ Ganador' if x > 0 else '❌ Perdedor')
-
-        # Mostrar estadísticas rápidas
-        total_winners = len(trades_df[trades_df['pnl'] > 0])
-        total_losers = len(trades_df[trades_df['pnl'] <= 0])
-        avg_win = trades_df[trades_df['pnl'] > 0]['pnl'].mean() if total_winners > 0 else 0
-        avg_loss = trades_df[trades_df['pnl'] <= 0]['pnl'].mean() if total_losers > 0 else 0
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Trades Ganadores", total_winners)
-        col2.metric("Trades Perdedores", total_losers)
-        col3.metric("P&L Promedio Ganador", f"${avg_win:.2f}")
-        col4.metric("P&L Promedio Perdedor", f"${avg_loss:.2f}")
-
-        # Tabla de trades
-        st.dataframe(trades_df, width='stretch')
-    else:
-        st.info("No hay operaciones registradas para esta estrategia.")
-
-    # Información adicional
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("ℹ️ Información del Sistema")
-    st.sidebar.markdown("**Sistema Modular:** ✅ Activo")
-    st.sidebar.markdown("**Carga Dinámica:** ✅ Funcional")
-    st.sidebar.markdown(f"**Estrategias Activas:** {len(available_strategies)}")
-
+    # Process dashboard data without complex try/catch
 
 if __name__ == "__main__":
     main()

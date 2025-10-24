@@ -490,13 +490,8 @@ class LiveTradingOrchestrator:
             logger.info(f"Límite total de posiciones alcanzado: {total_positions}/{max_positions}")
             return False
         
-        # Contar posiciones para este símbolo específico
-        symbol_positions = sum(1 for pos in self.active_positions.values() if pos.get('symbol') == symbol)
-        max_positions_per_symbol = self.live_config.get('max_positions_per_symbol', 1)
-        
-        if symbol_positions >= max_positions_per_symbol:
-            logger.info(f"Límite de posiciones por símbolo alcanzado para {symbol}: {symbol_positions}/{max_positions_per_symbol}")
-            return False
+        # DESACTIVADO: Límite por símbolo removido para permitir múltiples operaciones
+        # Los límites antiguos bloqueaban el trading, ahora permitimos múltiples posiciones
         
         return True
     

@@ -37,6 +37,7 @@ This is a modular trading system with centralized entry via `descarga_datos/main
 ## AI Response Guidelines
 - **Language**: All responses must be in Spanish.
 - **Code Modifications**: The strategy (`strategies/ultra_detailed_heikin_ashi_ml_strategy.py`) and main modules (`descarga_datos/main.py`, core modules) are blocked from structural modifications. Only parameter improvements are allowed that enhance functionality and profitability without altering the core structure.
+- **Documentation Creation Policy**: 🚨 **CRITICAL** - Do NOT create documentation files (*.md, *.txt, guides, reference documents, analysis reports, etc.) unless explicitly requested by the user. Only create code files when necessary for functionality. Examples of documentation NOT to create without request: implementation guides, step-by-step tutorials, summary reports, quick reference guides, changelog entries, or analysis documentation. If user says "no solicites documentos" or similar, strictly respect this preference.
 
 ## Data Management Rules
 - **Centralized Configuration**: All configuration is centralized in `descarga_datos/config/config.yaml`. Use this for all parameters.

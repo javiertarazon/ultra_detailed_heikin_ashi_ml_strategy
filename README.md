@@ -1,30 +1,36 @@
 # 🤖 Bot Trader Copilot - Sistema de Trading Automatizado con ML
 
-**Versión:** 4.5 | **Fecha:** 21 de octubre de 2025 | **Estado:** ✅ OPERATIVO Y RENTABLE - LIVE TRADING ACTIVO
+**Versión:** 4.7 | **Fecha:** 24 de octubre de 2025 | **Estado:** ✅ DEPURADO, ORGANIZADO Y LISTO PARA LIVE TRADING
 
+Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad en múltiples mercados. 
 
-
-Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad. Sistema completamente estabilizado con todas las correcciones críticas v4.0 implementadas.Un sistema modular de trading automatizado que combina estrategias técnicas avanzadas con Machine Learning para generar señales de trading de alta calidad en múltiples mercados. **SISTEMA ESTABILIZADO** con correcciones críticas aplicadas para funcionamiento 24/7 en modo live.
-
-
+**✅ SISTEMA COMPLETAMENTE DEPURADO v4.7:**
+- Archivos fundamentales protegidos con checksums
+- Scripts de test/debug organizados
+- Documentación de 92 archivos clasificada en 12 categorías
+- Sistema de validación automática implementado
+- 100% listo para operación en vivo
 
 ------
 
+## 📚 DOCUMENTACIÓN COMPLETA v4.7
 
+### 🎯 Inicio Rápido
+- **[GUIA_RAPIDA_v47.md](GUIA_RAPIDA_v47.md)** - Referencia rápida de operación
+- **[PROYECTO_COMPLETADO_v47.md](PROYECTO_COMPLETADO_v47.md)** - Resumen ejecutivo completo
+- **[ESTRUCTURA_DEPURADA.md](ESTRUCTURA_DEPURADA.md)** - Arquitectura del proyecto
 
-## 📚 DOCUMENTACIÓN COMPLETA## 🚀 Características Principales - Versión 3.5
+### 🔒 Seguridad y Protección
+- **[ARCHIVOS_PROTEGIDOS.md](ARCHIVOS_PROTEGIDOS.md)** - Lista de archivos core protegidos
+- **Validar:** `python validate_protected_files.py`
 
+### 📖 Documentación Clasificada
+→ **[Todos los archivos MD en: descarga_datos/ARCHIVOS MD/](descarga_datos/ARCHIVOS%20MD/INDICE_MAESTRO_v47.md)**
+- 12 categorías temáticas
+- 92 archivos organizados
+- Búsqueda por categoría facilitada
 
-
-**→ [Ver índice maestro de documentación](descarga_datos/ARCHIVOS%20MD/00_INDICE_MAESTRO_v4.md)**### **🤖 Inteligencia Artificial Optimizada**
-
-- **RandomForest ML** para predicción de señales BUY/SELL con 76.7% accuracy
-
-Toda la documentación organizada por categorías está en: `descarga_datos/ARCHIVOS MD/`- **Auto-optimización Optuna** con control de drawdown <15%
-
-- **Validación cruzada** para robustez del modelo
-
----- **Parámetros optimizados aplicados**: 1,666 operaciones backtest validadas
+------
 
 
 
@@ -416,7 +422,53 @@ botcopilot-sar/### **5. Ejecutar Live Trading**
 
 │   ├── tests/
 
-│   │   └── test_quick_backtest.py## 🎯 Modos de Operación
+│   │   └── test_quick_backtest.py
+│   └── .env                            # 🔐 Credenciales (no compartir)
+
+---
+
+## 🚀 **Ejecución Segura del Sistema**
+
+### **Scripts de Lanzamiento Automáticos**
+
+Para garantizar que el sistema se ejecute únicamente en el entorno correcto (Python 3.11.x + entorno virtual), utiliza los scripts de lanzamiento incluidos:
+
+#### **Windows (.bat)**
+```cmd
+# Desde la raíz del proyecto
+run_bot.bat --backtest
+run_bot.bat --optimize
+run_bot.bat --live
+```
+
+#### **Linux/Mac (.sh)**
+```bash
+# Desde la raíz del proyecto
+chmod +x descarga_datos/run_bot.sh
+./descarga_datos/run_bot.sh --backtest
+./descarga_datos/run_bot.sh --optimize
+./descarga_datos/run_bot.sh --live
+```
+
+### **Verificaciones Automáticas**
+Los scripts de lanzamiento verifican automáticamente:
+- ✅ **Entorno virtual activado** (.venv)
+- ✅ **Versión Python 3.11.x** exacta
+- ✅ **Archivo de configuración** presente
+- ✅ **Dependencias instaladas**
+
+### **Ejecución Manual (Solo para desarrollo)**
+Si necesitas ejecutar manualmente (no recomendado para producción):
+```bash
+# Activar entorno virtual primero
+.venv\Scripts\activate  # Windows
+source .venv/bin/activate  # Linux/Mac
+
+# Luego ejecutar
+python descarga_datos/main.py --backtest
+```
+
+## 🎯 Modos de Operación
 
 │   └── .env                            # 🔐 Credenciales (no compartir)
 
